@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# 虚拟环境
+.venv/
+venv/
+.env/
+.conda/
+
+# 环境 / 密钥
+.env
+.env.*
+!.env.example
+
+# 编辑器 / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 本地预览 / 临时图
+*_preview.png
+preview.png
+real_preview.png
+simulator_preview.png
+fish_icon_large.png
+
+# 测试 / 覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

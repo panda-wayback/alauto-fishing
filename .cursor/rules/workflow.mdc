@@ -1,0 +1,44 @@
+---
+description: >-
+  方案先行、何时 Read Skill、读代码路径。
+  写/改 Skill 另遵 skill-writing.mdc。
+alwaysApply: true
+---
+
+# 项目工作流硬约束
+
+写/改 `.cursor/skills/**` → 先遵 `skill-writing.mdc`。
+
+## 方案先行
+
+```text
+讨论 → 确认 → 写 docs/ → 再按 docs 写代码
+```
+
+1. 新功能 / 改产品逻辑或架构：禁止先写代码；先讨论并确认后写入 `docs/`。
+2. 实现以当前 `docs/` 为准；禁止未讨论就改已定方案。
+3. 实现中发现方案问题 → 先讨论 → `改 docs → 改代码`；禁止偷偷改设计。
+4. 可直接改代码：Bug / 重构 / 性能 / 测试 / 不影响方案与契约的实现调整。
+5. `方案问题 → docs`；`实现问题 → code`。保持简单，不堆多余流程。
+6. 文档必须合理；禁止不合理或未确认内容入档。判定不合理 → 坚持合理做法，禁止迎合。
+
+## 何时 Read Skill
+
+### `doc-node-graph`
+
+探讨方案、写/改 `docs/**`、选下一步、docs 收敛 → Read `.cursor/skills/doc-node-graph/SKILL.md`。  
+产品正文只写在 `docs/`，禁止写进该 Skill。
+
+### `ai-friendly-codebase`
+
+写/审 `AI.md`、按索引找代码、判上层是否过厚 → Read `.cursor/skills/ai-friendly-codebase/SKILL.md`。
+
+## 读 / 改代码
+
+```text
+docs/（方案）→ 根 AI.md 全树 → 叶子 AI.md → 实现文件
+```
+
+- 禁止无目标通读代码树。
+- 改完且测试通过 → 更新相关 `AI.md`；新目录补叶子并在根全树加一行。
+- `docs/` = 方案；`AI.md` = 代码索引；行为以代码 + 测试 + docs 为准。
