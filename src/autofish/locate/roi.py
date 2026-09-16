@@ -6,8 +6,9 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_ROI_PATH = _ROOT / "data" / "roi.json"
+DEFAULT_BAR_TEMPLATE = _ROOT / "assets" / "tension_bar.png"
 
 
 @dataclass(frozen=True)

@@ -3,46 +3,63 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
 
-from vision.roi import Roi
+from autofish.locate.roi import Roi
 
 try:
     import mss
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 mss：pip install mss") from exc
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_SCREEN_PATH = _ROOT / "data" / "screen.png"
 
 # 复用单例，避免每次新建实例（新建会明显变慢）
+# mss 非线程安全：Locator / Capture 并发 grab 会卡住，必须串行。
 _sct: mss.mss | None = None
+_sct_lock = threading.RLock()
 
 
 def _session() -> mss.mss:
     global _sct
-    if _sct is None:
-        _sct = mss.mss()
-    return _sct
+    with _sct_lock:
+        if _sct is None:
+            _sct = mss.mss()
+        return _sct
+
+
+def warmup() -> None:
+    """预热 mss，避免冷启动首帧异常慢。"""
+    with _sct_lock:
+        sct = _session()
+        mon = sct.monitors[1]
+        sct.grab(
+            {
+                "left": int(mon["left"]),
+                "top": int(mon["top"]),
+                "width": 8,
+                "height": 8,
+            }
+        )
 
 
 def detect_scale() -> float:
     """物理像素 / 逻辑点 倍率（Retina=2）。"""
-    mon = _session().monitors[1]
-    logical_w = int(mon["width"])
-    # 抓一次判断物理宽
-    shot = _session().grab({"left": mon["left"], "top": mon["top"], "width": 1, "height": 1})
-    # 用整屏法：抓 1 逻辑宽拿不到全宽，改抓整个 mon 一次
-    return _primary_scale_once(mon)
+    with _sct_lock:
+        mon = _session().monitors[1]
+        return _primary_scale_once(mon)
 
 
 _scale_cache: float | None = None
 
 
 def _primary_scale_once(mon: dict) -> float:
+    """调用方须已持有 `_sct_lock`。"""
     global _scale_cache
     if _scale_cache is not None:
         return _scale_cache
@@ -67,27 +84,31 @@ def grab_primary() -> ScreenGrab:
     """截主屏，缩放到逻辑点空间（供显示与框选），scale 记录物理/逻辑倍率。"""
     import cv2
 
-    mon = _session().monitors[1]
-    shot = _session().grab(mon)
-    bgra = np.asarray(shot, dtype=np.uint8)
-    rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
-    scale = _primary_scale_once(mon)
+    with _sct_lock:
+        mon = _session().monitors[1]
+        shot = _session().grab(mon)
+        bgra = np.asarray(shot, dtype=np.uint8)
+        rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+        scale = _primary_scale_once(mon)
+        origin_left = int(mon["left"])
+        origin_top = int(mon["top"])
     w = max(1, round(rgb.shape[1] / scale))
     h = max(1, round(rgb.shape[0] / scale))
     pts = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
     return ScreenGrab(
         rgb=pts,
-        origin_left=int(mon["left"]),
-        origin_top=int(mon["top"]),
+        origin_left=origin_left,
+        origin_top=origin_top,
         scale=scale,
     )
 
 
 def grab_roi(roi: Roi) -> np.ndarray:
     """截 ROI（逻辑点），返回物理像素 RGB，shape=(H, W, 3)。"""
-    shot = _session().grab(roi.as_mss())
-    bgra = np.asarray(shot, dtype=np.uint8)
-    return np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+    with _sct_lock:
+        shot = _session().grab(roi.as_mss())
+        bgra = np.asarray(shot, dtype=np.uint8)
+        return np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
 
 
 def save_screen(grab: ScreenGrab, path: Path | None = None) -> Path:

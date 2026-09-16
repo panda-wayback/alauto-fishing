@@ -12,9 +12,9 @@ _SRC = Path(__file__).resolve().parent.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from vision.bobber import BobberHit, find_bobber, green_zone_mask
-from vision.capture import grab_roi
-from vision.roi import DEFAULT_ROI_PATH, load_roi
+from autofish.detect.bobber import BobberHit, find_bobber, green_zone_mask
+from autofish.capture.screen import grab_roi
+from autofish.locate.roi import DEFAULT_ROI_PATH, load_roi
 
 
 def _save_preview(rgb: np.ndarray, out: Path) -> BobberHit | None:
@@ -60,9 +60,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.ui:
-        from vision.app import VisionApp
+        from tools.preview_app import PreviewApp
 
-        return VisionApp(roi_path=args.roi).run()
+        return PreviewApp(roi_path=args.roi).run()
 
     if args.image is not None:
         from PIL import Image

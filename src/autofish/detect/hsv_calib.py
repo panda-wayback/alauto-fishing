@@ -13,9 +13,9 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
-from vision.bobber import DEFAULT_LOWER_ZONE, DEFAULT_UPPER_ZONE
+from autofish.detect.bobber import DEFAULT_LOWER_ZONE, DEFAULT_UPPER_ZONE
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
+_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 DEFAULT_HSV_PATH = _ROOT / "data" / "hsv_zone.json"
 
 # AutoFishing auto_hsv 默认容差

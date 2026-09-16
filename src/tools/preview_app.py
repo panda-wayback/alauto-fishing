@@ -1,4 +1,4 @@
-"""统一窗口四步：①截全屏 ②框选区 ③开监控 ④持续读数；右侧附模拟器。"""
+"""调试预览窗：真机标定 + 可选并排模拟器。属 tools 编排，非 autofish 五段。"""
 
 from __future__ import annotations
 
@@ -16,8 +16,8 @@ if str(_SRC) not in sys.path:
 from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
-from vision.bobber import BobberHit, find_bobber, pixel_to_pos
-from vision.capture import (
+from autofish.detect.bobber import BobberHit, find_bobber, pixel_to_pos
+from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
     ScreenGrab,
     grab_primary,
@@ -25,9 +25,9 @@ from vision.capture import (
     load_screen,
     save_screen,
 )
-from vision.hsv_calib import load_zone_hsv, sample_zone_hsv, save_zone_hsv
-from vision.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
-from vision.smooth import PosSmoother
+from autofish.detect.hsv_calib import load_zone_hsv, sample_zone_hsv, save_zone_hsv
+from autofish.locate.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
+from autofish.detect.smooth import PosSmoother
 
 # ---- 三区布局 ----
 WIN_W = 1280
@@ -125,7 +125,7 @@ def _overlay_vision(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
     return vis
 
 
-class VisionApp:
+class PreviewApp:
     def __init__(self, roi_path: Path = DEFAULT_ROI_PATH) -> None:
         self.roi_path = roi_path
         self.roi: Roi | None = None
@@ -561,7 +561,11 @@ class VisionApp:
 
 
 def main() -> int:
-    return VisionApp().run()
+    return PreviewApp().run()
+
+
+# 兼容旧名
+AutofishApp = PreviewApp
 
 
 if __name__ == "__main__":

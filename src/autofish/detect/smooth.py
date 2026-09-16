@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 
-from vision.bobber import BobberHit, pixel_to_pos
+from autofish.detect.bobber import BobberHit, pixel_to_pos
 
 
 class PosSmoother:

@@ -1,13 +1,14 @@
-"""真机感知：截屏框选 ROI + AF 式绿条空洞跟漂（0～100）。"""
+"""真机自动拉鱼：五段实现（locate / capture / detect / decide / act）。"""
 
-from vision.bobber import (
+from autofish.bus import AutofishBus, AutofishSnapshot
+from autofish.detect import (
     BobberHit,
     find_bobber,
     green_zone_mask,
     orange_mask,
     pixel_to_pos,
 )
-from vision.capture import (
+from autofish.capture import (
     DEFAULT_SCREEN_PATH,
     ScreenGrab,
     grab_primary,
@@ -15,14 +16,21 @@ from vision.capture import (
     load_screen,
     save_screen,
 )
-from vision.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
+from autofish.locate import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
+from autofish.pipeline import AutofishPipeline
+from autofish.topics import FishingState, Topic
 
 __all__ = [
+    "AutofishBus",
+    "AutofishPipeline",
+    "AutofishSnapshot",
     "BobberHit",
     "DEFAULT_ROI_PATH",
     "DEFAULT_SCREEN_PATH",
+    "FishingState",
     "Roi",
     "ScreenGrab",
+    "Topic",
     "find_bobber",
     "grab_primary",
     "grab_roi",

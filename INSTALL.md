@@ -34,28 +34,25 @@ python3 -m venv .venv   # 或使用已有 .conda
 | R | 重开（保留当前等级） |
 | Esc | 退出 |
 
-玩法说明见 `docs/README.md`，难度见 `docs/difficulty/`，算法测试分包见 `docs/algo-test/`。手感基准参数见 `src/sim/config.py`。
+玩法说明见 `docs/simulator/`，难度见 `docs/simulator/difficulty/`，算法测试分包见 `docs/simulator/algo-test/`。手感基准参数见 `src/sim/config.py`。
 
 ## 算法侧（无头）
 
 包在 `src/` 下；直接脚本请带上 `PYTHONPATH=src`（`main.py` 已自动处理）。
 
 ```bash
-PYTHONPATH=src .conda/bin/python -c "from algo.runner import run_episode; ..."
+PYTHONPATH=src .conda/bin/python -m algo --tier 4 --episodes 50
 ```
 
 ```python
-from algo.runner import run_episode, run_batch
-from sim.api import Observation
+from algo import ThresholdHoldPolicy, run_batch
 
-class MyPolicy:
-    def decide(self, obs: Observation) -> bool:
-        # True=按住收线，False=松开
-        ...
-
-run_episode(MyPolicy(), tier=4)
-run_batch(MyPolicy(), episodes=100, tier=4)
+run_batch(ThresholdHoldPolicy(), episodes=100, tier=4)
 ```
+
+策略：绿区内相对 pos（左绿=0，右绿=100）&lt;50 按住，&gt;90 松开；切换至少 0.2s + 约 0.1s 随机。测策略只走模拟器，不点真鼠标。
+
+依赖列表见根目录 `requirements.txt`（pygame、mss、numpy、opencv-python-headless、Pillow）。
 
 ## 真机感知（截图 + 色块）
 
@@ -65,7 +62,7 @@ run_batch(MyPolicy(), episodes=100, tier=4)
 4. 离线重框：对已有 `data/screen.png` 按 **C**，无需再截。
 
 ```bash
-PYTHONPATH=src .conda/bin/python -m vision.preview --ui
+PYTHONPATH=src .conda/bin/python -m autofish.preview --ui
 ```
 
-读数 **0～100**（ROI 最左=0，最右=100）。窗口上方大号为**真机读数**，左侧真机截图，右侧模拟器。方案见 `docs/vision/`。
+读数 **0～100**（ROI 最左=0，最右=100）。窗口上方大号为**真机读数**，左侧真机截图，右侧模拟器。功能架构见 `docs/autofish/`。
