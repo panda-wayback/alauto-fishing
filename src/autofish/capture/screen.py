@@ -1,4 +1,4 @@
-"""截屏（mss，复用实例约 50fps）。坐标统一为逻辑点；返回物理像素图。"""
+"""截屏（mss，复用实例约 50fps）。坐标与输出均为逻辑点；ROI 帧宽高=手框。"""
 
 from __future__ import annotations
 
@@ -104,11 +104,21 @@ def grab_primary() -> ScreenGrab:
 
 
 def grab_roi(roi: Roi) -> np.ndarray:
-    """截 ROI（逻辑点），返回物理像素 RGB，shape=(H, W, 3)。"""
+    """截 ROI（逻辑点），返回与手框同尺寸的逻辑像素 RGB，shape=(height, width, 3)。"""
+    import cv2
+
     with _sct_lock:
+        mon = _session().monitors[1]
         shot = _session().grab(roi.as_mss())
         bgra = np.asarray(shot, dtype=np.uint8)
-        return np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+        rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+        scale = _primary_scale_once(mon)
+    # Retina 等：物理缓冲须缩回逻辑点，与框选宽高一致，禁止比手框「虚大」
+    if abs(scale - 1.0) > 1e-3 or rgb.shape[1] != roi.width or rgb.shape[0] != roi.height:
+        rgb = cv2.resize(
+            rgb, (roi.width, roi.height), interpolation=cv2.INTER_AREA
+        )
+    return rgb
 
 
 def save_screen(grab: ScreenGrab, path: Path | None = None) -> Path:

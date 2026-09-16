@@ -13,8 +13,8 @@ from autofish.worker_base import WorkerBase
 
 class DetectorWorker(WorkerBase):
     """
-    消费 Frame → 发 Pos（绿端+5% 内找白）。
-    latest-wins；Pos 携带被分析的那一帧，保证 UI 读数与画面同频。
+    订 Frame → 在手框画面内找白发 Pos。
+    不改 mss / ROI。latest-wins；Pos 携分析帧。
     """
 
     def __init__(self, bus: AutofishBus) -> None:

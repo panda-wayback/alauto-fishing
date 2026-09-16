@@ -27,7 +27,7 @@ from autofish.capture.screen import (
 )
 from autofish.locate.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
 from autofish.pipeline import AutofishPipeline
-from autofish.topics import ActionIntentEvent, PosEvent, Topic
+from autofish.topics import ActionIntentEvent, FrameEvent, PosEvent, Topic
 
 WIN_W = 1320
 PAD = 10
@@ -185,7 +185,9 @@ class PreviewApp:
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
             pipe = AutofishPipeline(auto_locate=False, capture_fps=45.0)
-            # 只订 POS：画面与读数同帧同频（不订 FRAME，避免 mss 快、读数慢的撕裂）
+            # Frame：监控画面（避免无漂时一直「等待帧」）
+            # Pos：读数；有帧时与读数同频覆盖画面
+            pipe.subscribe(Topic.FRAME, self._on_frame)
             pipe.subscribe(Topic.POS, self._on_pos)
             pipe.subscribe(Topic.ACTION_INTENT, self._on_intent)
             self._pipe = pipe
@@ -195,6 +197,7 @@ class PreviewApp:
         pipe = self._pipe
         if pipe is None:
             return
+        pipe.unsubscribe(Topic.FRAME, self._on_frame)
         pipe.unsubscribe(Topic.POS, self._on_pos)
         pipe.unsubscribe(Topic.ACTION_INTENT, self._on_intent)
         pipe.stop()
@@ -204,11 +207,13 @@ class PreviewApp:
         self._holding = None
         self._log("流水线已全部停止")
 
+    def _on_frame(self, event: FrameEvent) -> None:
+        self.frame = event.frame
+
     def _on_pos(self, event: PosEvent) -> None:
         if event.frame is not None:
             self.frame = event.frame
         self.hit = event.hit
-
     def _on_intent(self, event: ActionIntentEvent) -> None:
         self._holding = event.holding
         self._intent_reason = event.reason
@@ -311,7 +316,7 @@ class PreviewApp:
         self.roi = roi
         self.phase = READY
         self._drag_start = self._drag_end = None
-        self._log(f"手框 {roi.width}x{roi.height}")
+        self._log(f"手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
         self.hint = "M监控 S策略 A操作"
 
     def _view_to_image(self, pos: tuple[int, int]) -> tuple[int, int] | None:

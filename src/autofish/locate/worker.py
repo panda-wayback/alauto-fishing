@@ -6,7 +6,7 @@ import time
 
 from autofish.bus import AutofishBus
 from autofish.capture.screen import grab_primary
-from autofish.detect.bobber import find_green_bar, green_zone_mask
+from autofish.detect.bobber import find_green_span, green_zone_mask
 from autofish.locate.roi import Roi, save_roi
 from autofish.topics import RoiEvent
 from autofish.worker_base import WorkerBase
@@ -17,21 +17,35 @@ def roi_from_green_rgb(
     *,
     origin_left: int = 0,
     origin_top: int = 0,
-    pad_x: int = 8,
+    pad_x: int = 4,
     pad_y: int | None = None,
+    clamp: Roi | None = None,
 ) -> tuple[Roi, float] | None:
-    """在 RGB 图上找绿条 → 屏幕绝对 ROI；竖直多留边以容纳鱼漂。"""
+    """
+    在 RGB 图上找**原始绿条** → 屏幕绝对 ROI。
+    仅小幅 pad 容纳鱼漂；若给 clamp（手框），结果必须落在 clamp 内，禁止撑破。
+    """
     mask = green_zone_mask(rgb)
-    bar = find_green_bar(rgb, mask)
+    bar = find_green_span(rgb, mask)
     if bar is None:
         return None
     x, y, w, h = bar
     ih, iw = rgb.shape[:2]
-    py = pad_y if pad_y is not None else max(48, int(h * 1.2))
+    py = pad_y if pad_y is not None else max(12, int(h * 0.35))
     x0 = max(0, x - pad_x)
     y0 = max(0, y - py)
     x1 = min(iw, x + w + pad_x)
     y1 = min(ih, y + h + py)
+    if clamp is not None:
+        # clamp 相对本图：图已是 clamp 裁切时 origin=0；否则用绝对坐标差
+        cx0 = max(0, clamp.left - origin_left)
+        cy0 = max(0, clamp.top - origin_top)
+        cx1 = min(iw, cx0 + clamp.width)
+        cy1 = min(ih, cy0 + clamp.height)
+        x0 = max(x0, cx0)
+        y0 = max(y0, cy0)
+        x1 = min(x1, cx1)
+        y1 = min(y1, cy1)
     rw, rh = x1 - x0, y1 - y0
     if rw < 8 or rh < 4:
         return None
@@ -46,7 +60,7 @@ def roi_from_green_rgb(
 
 
 class LocatorWorker(WorkerBase):
-    """固定绿 HSV 找绿条 → 发布 ROI（低频）。"""
+    """固定绿 HSV 找绿条 → 发布 ROI（低频）。不覆盖手动 ROI。"""
 
     def __init__(
         self,
@@ -61,6 +75,9 @@ class LocatorWorker(WorkerBase):
         self._version = 0
 
     def locate_once(self) -> RoiEvent | None:
+        snap = self.bus.snapshot()
+        if snap.roi_ceiling is not None:
+            return None
         grab = grab_primary()
         found = roi_from_green_rgb(
             grab.rgb,

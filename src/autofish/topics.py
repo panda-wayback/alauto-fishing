@@ -31,7 +31,7 @@ class RoiEvent:
     roi: Roi | None
     version: int
     ts: float
-    source: str  # "manual" | "green" | "clear"
+    source: str  # "manual" | "green" | "cv_shrink" | "cv_resync" | "clear"
     score: float = 0.0
 
 

@@ -8,9 +8,9 @@
 
 ## 目录清单
 
-- `locate/` — 段1 圈定范围
-- `capture/` — 段2 mss 截图
-- `detect/` — 段3 完整绿条两端+5% → 找白 → 0～100（不越手框）
+- `locate/` — 段1 手框 ROI（存盘 + 同步 mss）
+- `capture/` — 段2 按手框 ROI mss 截帧
+- `detect/` — 段3 手框画面内绿+5% 找白 → Pos（**不改 mss**）
 - `decide/` — 段4 策略
 - `act/` — 段5 真鼠标
 - `topics.py` / `bus.py` / `fishing_fsm.py` / `pipeline.py` / `worker_base.py`
@@ -21,11 +21,13 @@
 - `AutofishPipeline` — `start_monitor` / `start_decide` / `start_act` 及对应 stop
 - `Topic.ACTION_INTENT` / `ActionIntentEvent`
 - `DecideWorker` / `ActWorker` / `ThresholdPosPolicy`
+- 总线：`roi` = 手框 = mss 范围；Detect 不发布 ROI
 
 ## 约束
 
-- Detect：完整绿条两端各+5% 为 0/100（略含近端橙）；找白；不越 ROI；无模板/吸色/青框。
-- 手框 ROI = 监控 = CV；监控原画面，只标命中。
+- 手框唯一决定 mss；Detect 只读数，禁止缩/改 ROI。
+- Detect：绿+5% 找白；订 Frame；不做模板定框 / 吸色。
+- 壳订 Frame（画面）+ Pos（读数）。
 - Decide 不点鼠标；Act 不决策。
 - 禁止依赖 `sim` / `ui` / `algo`。
 - 行为以 `docs/autofish/` 为准。

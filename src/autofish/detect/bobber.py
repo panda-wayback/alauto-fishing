@@ -1,4 +1,4 @@
-"""完整绿条两端各+5% → 找白 → 0～100（不越出 ROI/帧）。"""
+"""绿端+5% 找白 → 0～100（帧=手框；不改 mss）。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,9 @@ _WHITE_UPPER = np.array([179, 70, 255], dtype=np.uint8)
 _MIN_BAR_W = 60
 _MIN_WHITE_PX = 24
 _EDGE_PAD_RATIO = 0.05
+_CLOSE_KX_CAP = 121
+_MIN_BAR_ASPECT = 5.0
+_MIN_BAR_WIDTH_FRAC = 0.28
 
 
 @dataclass(frozen=True)
@@ -69,14 +72,40 @@ def white_mask(rgb: np.ndarray) -> np.ndarray:
 
 
 def _green_row_band(gmask: np.ndarray) -> tuple[int, int] | None:
+    """绿行峰附近薄带（张力条高度）。"""
     row = (gmask > 0).sum(axis=1)
-    peak = int(row.max()) if row.size else 0
-    if peak < 40:
+    if row.size == 0:
         return None
-    ys = np.where(row >= max(20, peak // 4))[0]
-    if ys.size < 4:
+    peak = int(row.max())
+    fw = gmask.shape[1]
+    fh = gmask.shape[0]
+    if peak < max(40, int(fw * 0.12)):
         return None
-    return int(ys[0]), int(ys[-1]) + 1
+    peak_y = int(np.argmax(row))
+    thr = max(20, int(peak * 0.55))
+    y0 = peak_y
+    while y0 > 0 and int(row[y0 - 1]) >= thr:
+        y0 -= 1
+    y1 = peak_y
+    while y1 < row.size - 1 and int(row[y1 + 1]) >= thr:
+        y1 += 1
+    y1 += 1
+    zh = y1 - y0
+    if zh < 4 or zh > max(120, int(fh * 0.30)):
+        return None
+    return y0, y1
+
+
+def _is_tension_bar_span(gw: int, gh: int, fw: int, fh: int) -> bool:
+    if gw < _MIN_BAR_W or gh < 4:
+        return False
+    if gw < int(fw * _MIN_BAR_WIDTH_FRAC):
+        return False
+    if gh > max(120, int(fh * 0.30)):
+        return False
+    if gw / max(1, gh) < _MIN_BAR_ASPECT:
+        return False
+    return True
 
 
 def _green_ends_via_orange(
@@ -115,11 +144,9 @@ def _green_ends_via_orange(
 
 
 def _green_ends_via_close(gmask: np.ndarray, y0: int, y1: int) -> tuple[int, int] | None:
-    """完整绿水平跨度：强横闭运算桥接鱼漂空洞。"""
+    """闭运算桥接鱼漂空洞，取完整绿水平跨度。"""
     zh = max(1, y1 - y0)
-    fw = gmask.shape[1]
-    # 核宽按帧宽，足以盖住鱼漂挖断，且不随鱼漂位置乱跳
-    kx = max(61, min(fw // 4, max(zh * 3, 81)))
+    kx = max(41, min(_CLOSE_KX_CAP, zh * 5 + 21))
     if kx % 2 == 0:
         kx += 1
     closed = cv2.morphologyEx(
@@ -133,13 +160,11 @@ def _green_ends_via_close(gmask: np.ndarray, y0: int, y1: int) -> tuple[int, int
     return int(xs[0]), int(xs[-1]) + 1
 
 
-def find_green_bar(
+def find_green_span(
     rgb: np.ndarray,
     mask: np.ndarray | None = None,
 ) -> tuple[int, int, int, int] | None:
-    """
-    读数区间 (x,y,w,h)：完整绿端 + 左右各 5% 绿宽，裁在帧内（=手框内）。
-    """
+    """完整绿条 (x,y,w,h)：优先双橙内侧定端，否则闭运算；须像张力横条。"""
     if rgb.ndim != 3:
         return None
     gmask = mask if mask is not None else green_zone_mask(rgb)
@@ -148,20 +173,33 @@ def find_green_bar(
         return None
     y0, y1 = band
     zh = y1 - y0
-    # 绿端优先闭运算（稳）；橙交界作校验兜底
-    ends = _green_ends_via_close(gmask, y0, y1)
+    # 橙端优先 → 完整绿长，避免只抠到中间纯绿一小段
+    ends = _green_ends_via_orange(rgb, gmask, y0, y1)
     if ends is None:
-        ends = _green_ends_via_orange(rgb, gmask, y0, y1)
+        ends = _green_ends_via_close(gmask, y0, y1)
     if ends is None:
         return None
     gx0, gx1 = ends
     gw = gx1 - gx0
-    if gw < _MIN_BAR_W:
+    fh, fw = rgb.shape[:2]
+    if not _is_tension_bar_span(gw, zh, fw, fh):
         return None
+    return gx0, y0, gw, zh
+
+
+def find_green_bar(
+    rgb: np.ndarray,
+    mask: np.ndarray | None = None,
+) -> tuple[int, int, int, int] | None:
+    """读数区间：完整绿端 + 左右各 5% 绿宽，裁在帧内。"""
+    span = find_green_span(rgb, mask)
+    if span is None:
+        return None
+    gx0, y0, gw, zh = span
     pad = max(1, int(round(gw * _EDGE_PAD_RATIO)))
     fw = rgb.shape[1]
     x0 = max(0, gx0 - pad)
-    x1 = min(fw, gx1 + pad)
+    x1 = min(fw, gx0 + gw + pad)
     if x1 - x0 < _MIN_BAR_W:
         return None
     return x0, y0, x1 - x0, zh
@@ -173,7 +211,7 @@ def find_bobber(
     lower: np.ndarray | None = None,
     upper: np.ndarray | None = None,
 ) -> BobberHit | None:
-    """绿条两端+5% 内找白 → 0～100。"""
+    """绿条两端+5% 内找白 → 0～100；搜索范围不得越出帧。"""
     gmask = green_zone_mask(rgb, lower=lower, upper=upper)
     bar = find_green_bar(rgb, gmask)
     if bar is None:
@@ -183,6 +221,8 @@ def find_bobber(
     y0 = max(0, zy - max(4, int(zh * 0.55)))
     y1 = min(fh, zy + zh + max(2, int(zh * 0.12)))
     x0, x1 = max(0, zx), min(fw, zx + zw)
+    if x1 <= x0 or y1 <= y0:
+        return None
     crop = rgb[y0:y1, x0:x1]
     wm = cv2.morphologyEx(white_mask(crop), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     min_px = max(_MIN_WHITE_PX, int(zh * 0.8))
@@ -202,6 +242,8 @@ def find_bobber(
         cx = float(x0 + m["m10"] / m["m00"])
         cy = float(y0 + m["m01"] / m["m00"])
         if cx < zx or cx > zx + zw:
+            continue
+        if cy < 0 or cy >= fh or cx < 0 or cx >= fw:
             continue
         dist = abs(cy - bar_cy) / max(1.0, float(zh))
         score = area / (1.0 + dist * 3.0)
