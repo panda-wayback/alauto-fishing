@@ -48,13 +48,6 @@ def warmup() -> None:
         )
 
 
-def detect_scale() -> float:
-    """物理像素 / 逻辑点 倍率（Retina=2）。"""
-    with _sct_lock:
-        mon = _session().monitors[1]
-        return _primary_scale_once(mon)
-
-
 _scale_cache: float | None = None
 
 

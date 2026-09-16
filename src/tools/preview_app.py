@@ -266,6 +266,7 @@ class PreviewApp:
     def _capture_fullscreen(self) -> None:
         if self._pipe and self._pipe.monitor_on:
             self._pipe.stop_monitor()
+            self._log("监控 OFF · 准备框选")
         pygame.display.iconify()
         time.sleep(0.35)
         try:
@@ -282,6 +283,11 @@ class PreviewApp:
             pygame.display.set_mode((WIN_W, WIN_H))
 
     def _load_screen_for_select(self) -> None:
+        if self._pipe and self._pipe.monitor_on:
+            self._pipe.stop_monitor()
+            self.frame = None
+            self.hit = None
+            self._log("监控 OFF · 准备重框")
         try:
             self.screen_grab = load_screen(DEFAULT_SCREEN_PATH)
             self.phase = SELECT
@@ -316,6 +322,9 @@ class PreviewApp:
         self.roi = roi
         self.phase = READY
         self._drag_start = self._drag_end = None
+        # 必须推到总线，否则 Capture 仍用旧 ROI
+        pipe = self._ensure_pipe()
+        pipe.set_roi_manual(roi)
         self._log(f"手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
         self.hint = "M监控 S策略 A操作"
 

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
 
 import numpy as np
 
@@ -31,7 +30,7 @@ class RoiEvent:
     roi: Roi | None
     version: int
     ts: float
-    source: str  # "manual" | "green" | "cv_shrink" | "cv_resync" | "clear"
+    source: str  # "manual" | "green" | "clear"
     score: float = 0.0
 
 
@@ -71,6 +70,3 @@ class ActionIntentEvent:
     ts: float
     reason: str = ""
     pos: float | None = None
-
-
-Subscriber = Any

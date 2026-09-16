@@ -12,21 +12,22 @@ from autofish.worker_base import WorkerBase
 
 
 class DetectorWorker(WorkerBase):
-    """
-    订 Frame → 在手框画面内找白发 Pos。
-    不改 mss / ROI。latest-wins；Pos 携分析帧。
-    """
+    """订 Frame → 找白发 Pos；不改 ROI。latest-wins。"""
 
     def __init__(self, bus: AutofishBus) -> None:
         super().__init__(bus, "autofish-detector")
         self._last_seq = -1
         self._pending: FrameEvent | None = None
         self._cond = threading.Condition()
-        bus.subscribe(Topic.FRAME, self._on_frame)
+
+    def start(self) -> None:
+        self.bus.subscribe(Topic.FRAME, self._on_frame)
+        super().start()
 
     def stop(self, timeout: float = 2.0) -> None:
         self.bus.unsubscribe(Topic.FRAME, self._on_frame)
         with self._cond:
+            self._pending = None
             self._cond.notify_all()
         super().stop(timeout=timeout)
 

@@ -59,6 +59,3 @@ class FishingStateMachine:
             self._set(FishingState.LOST, "pos_miss")
         elif self._state == FishingState.LOST and self._miss >= self._idle_after:
             self._set(FishingState.IDLE, "pos_gone")
-        elif self._state == FishingState.IDLE and self._miss < self._lost_after:
-            # 仍无有效读数，保持 IDLE
-            pass

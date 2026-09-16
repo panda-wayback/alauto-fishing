@@ -31,29 +31,6 @@ class Roi:
             "height": self.height,
         }
 
-    def area(self) -> int:
-        return self.width * self.height
-
-
-def roi_contained(inner: Roi, outer: Roi) -> bool:
-    return (
-        inner.left >= outer.left
-        and inner.top >= outer.top
-        and inner.left + inner.width <= outer.left + outer.width
-        and inner.top + inner.height <= outer.top + outer.height
-    )
-
-
-def roi_intersect(a: Roi, b: Roi) -> Roi | None:
-    left = max(a.left, b.left)
-    top = max(a.top, b.top)
-    right = min(a.left + a.width, b.left + b.width)
-    bottom = min(a.top + a.height, b.top + b.height)
-    w, h = right - left, bottom - top
-    if w < 8 or h < 4:
-        return None
-    return Roi(left=left, top=top, width=w, height=h)
-
 
 def load_roi(path: Path | None = None) -> Roi:
     p = path or DEFAULT_ROI_PATH

@@ -13,7 +13,7 @@
 ## 对外契约
 
 - `PreviewApp`
-- `PreviewApp`：`M/S/A` 开关；空格截屏后**手框** ROI（=监控=CV）；`C` 重框；无找绿入口
+- `PreviewApp`：`M/S/A` 开关；空格截屏后**手框** ROI（=监控=CV）；`C` 重框；确认时**必须** `set_roi_manual` 同步总线；框选前停监控
 - 监控显示原画面；叠层只标鱼漂命中（不画青框/青缘）
 - 禁止把 Act 状态写入 `FishingGame`
 

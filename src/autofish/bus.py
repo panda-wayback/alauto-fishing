@@ -5,13 +5,13 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
 from common.pubsub import EventBus
 from autofish.detect.bobber import BobberHit
-from autofish.locate.roi import Roi, roi_contained
+from autofish.locate.roi import Roi
 from autofish.topics import (
     ActionIntentEvent,
     FishingState,
@@ -25,12 +25,7 @@ from autofish.topics import (
 
 @dataclass
 class AutofishSnapshot:
-    """只读聚合：UI/算法可 pull。"""
-
     roi: Roi | None = None
-    """当前 mss 截图范围（可被 CV 缩小）。"""
-    roi_ceiling: Roi | None = None
-    """手框天花板；CV 不得超出。"""
     roi_version: int = 0
     roi_score: float = 0.0
     roi_source: str = ""
@@ -48,8 +43,6 @@ class AutofishSnapshot:
 
 
 class AutofishBus:
-    """感知域总线：状态在本类；推送走 EventBus。"""
-
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._events = EventBus()
@@ -64,65 +57,29 @@ class AutofishBus:
     def snapshot(self) -> AutofishSnapshot:
         with self._lock:
             s = self._snap
-            return AutofishSnapshot(
-                roi=s.roi,
-                roi_ceiling=s.roi_ceiling,
-                roi_version=s.roi_version,
-                roi_score=s.roi_score,
-                roi_source=s.roi_source,
-                frame=None if s.frame is None else s.frame.copy(),
-                frame_ts=s.frame_ts,
-                pos=s.pos,
-                hit=s.hit,
-                pos_ts=s.pos_ts,
-                fishing_state=s.fishing_state,
-                fishing_detail=s.fishing_detail,
-                state_ts=s.state_ts,
-                holding=s.holding,
-                intent_reason=s.intent_reason,
-                intent_ts=s.intent_ts,
-            )
+            return replace(s, frame=None if s.frame is None else s.frame.copy())
 
     def current_roi(self) -> tuple[Roi | None, int]:
-        """Capture 热路径：只取当前 ROI + 版本，不拷帧。"""
         with self._lock:
             return self._snap.roi, self._snap.roi_version
 
     def publish_roi(self, event: RoiEvent) -> None:
         with self._lock:
-            src = event.source
-            if event.roi is None:
-                self._snap.roi = None
-                self._snap.roi_ceiling = None
-            elif src == "manual":
-                self._snap.roi_ceiling = event.roi
-                self._snap.roi = event.roi
-            elif src in ("cv_shrink", "cv_resync"):
-                # Detect 不得改 mss；忽略
+            # 已有手框时，禁止 green 覆盖
+            if (
+                event.roi is not None
+                and event.source == "green"
+                and self._snap.roi is not None
+                and self._snap.roi_source == "manual"
+            ):
                 return
-            elif src in ("green",):
-                ceiling = self._snap.roi_ceiling
-                if ceiling is not None and not roi_contained(event.roi, ceiling):
-                    return
-                if ceiling is None:
-                    self._snap.roi_ceiling = event.roi
-                self._snap.roi = event.roi
-            else:
-                if self._snap.roi_ceiling is not None and not roi_contained(
-                    event.roi, self._snap.roi_ceiling
-                ):
-                    return
-                self._snap.roi = event.roi
+            self._snap.roi = event.roi
             self._snap.roi_version = event.version
             self._snap.roi_score = event.score
-            self._snap.roi_source = src
+            self._snap.roi_source = event.source
             self._snap.frame = None
             self._snap.frame_ts = 0.0
         self._events.publish(Topic.ROI, event)
-
-    def next_roi_version(self) -> int:
-        with self._lock:
-            return self._snap.roi_version + 1
 
     def publish_frame(self, event: FrameEvent) -> None:
         with self._lock:
