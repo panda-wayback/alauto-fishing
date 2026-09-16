@@ -23,7 +23,7 @@ class DecideWorker:
         bus: AutofishBus,
         *,
         low: float = 50.0,
-        high: float = 90.0,
+        high: float = 80.0,
     ) -> None:
         self.bus = bus
         self._policy = ThresholdPosPolicy(low=low, high=high)
@@ -31,6 +31,12 @@ class DecideWorker:
         self._state = FishingState.IDLE
         self._last_holding: bool | None = None
         self._active = False
+
+    def set_thresholds(self, low: float, high: float) -> None:
+        if low >= high:
+            raise ValueError("low must be < high")
+        self._policy.low = float(low)
+        self._policy.high = float(high)
 
     def start(self) -> None:
         if self._active:
@@ -41,6 +47,8 @@ class DecideWorker:
         self.bus.subscribe(Topic.POS, self._on_pos)
         self.bus.subscribe(Topic.FISHING_STATE, self._on_state)
         self._active = True
+        # 立刻按当前快照出意图，避免「已有 POS 但要等下一次变化才控鼠」
+        self._sync_from_snapshot()
 
     def stop(self) -> None:
         if not self._active:
@@ -53,6 +61,11 @@ class DecideWorker:
     def _now(self) -> float:
         return time.perf_counter() - self._t0
 
+    def _sync_from_snapshot(self) -> None:
+        snap = self.bus.snapshot()
+        self._state = snap.fishing_state
+        self._apply_pos(snap.pos)
+
     def _on_state(self, event: FishingStateEvent) -> None:
         self._state = event.state
         if event.state != FishingState.FISHING:
@@ -60,11 +73,14 @@ class DecideWorker:
             self._emit(False, f"state_{event.state.value}", None)
 
     def _on_pos(self, event: PosEvent) -> None:
-        if self._state != FishingState.FISHING or event.pos is None:
-            self._emit(False, "no_pos", event.pos)
+        self._apply_pos(event.pos)
+
+    def _apply_pos(self, pos: float | None) -> None:
+        if self._state != FishingState.FISHING or pos is None:
+            self._emit(False, "no_pos", pos)
             return
-        holding, reason = self._policy.decide(event.pos, self._now())
-        self._emit(holding, reason, event.pos)
+        holding, reason = self._policy.decide(pos, self._now())
+        self._emit(holding, reason, pos)
 
     def _emit(self, holding: bool, reason: str, pos: float | None) -> None:
         if self._last_holding is not None and holding == self._last_holding:

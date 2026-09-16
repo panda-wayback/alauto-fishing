@@ -1,22 +1,47 @@
-"""调试壳：监控 / 策略 / 操作独立开关；模拟器仅手玩，零业务耦合。"""
+"""调试壳（PySide6）：监控 / 策略 / 操作勾选；模拟器手玩嵌窗；无快捷键。"""
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from collections import deque
 from pathlib import Path
 
 import numpy as np
-import pygame
+
+# 模拟器离屏渲染，避免与 Qt 抢显示
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 _SRC = Path(__file__).resolve().parent.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
+from PySide6.QtCore import QObject, QPoint, QRect, QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QColor
+from PySide6.QtWidgets import (
+    QApplication,
+    QCheckBox,
+    QComboBox,
+    QDoubleSpinBox,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QPlainTextEdit,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
+
+import pygame
+
 from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
+from autofish.act.mouse import os_left_down
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -29,261 +54,711 @@ from autofish.locate.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
 from autofish.pipeline import AutofishPipeline
 from autofish.topics import ActionIntentEvent, FrameEvent, PosEvent, Topic
 
-WIN_W = 1320
-PAD = 10
-GAP = 8
-HEADER_H = 78
-PANEL_H = 400
-LOG_H = 140
-FOOTER_H = 28
-WIN_H = PAD + HEADER_H + GAP + PANEL_H + GAP + LOG_H + GAP + FOOTER_H + PAD
-COL_W = (WIN_W - PAD * 2 - GAP) // 2
-
-BG = (18, 19, 22)
-PANEL = (28, 30, 34)
-PANEL_EDGE = (55, 58, 64)
-HEADER_BG = (22, 24, 28)
-TEXT = (220, 222, 218)
-MUTED = (120, 124, 128)
-ACCENT = (232, 168, 60)
-OK = (72, 180, 110)
-BAD = (210, 78, 70)
-HOLD_ON = (255, 140, 40)
-HOLD_OFF = (70, 74, 80)
-MARK = (0, 210, 230)
-SELECT_COLOR = (70, 160, 230)
-LOG_BG = (16, 17, 20)
-ON = (64, 160, 96)
-OFF = (48, 50, 54)
-
-_TIER_KEYS = {
-    pygame.K_1: 1,
-    pygame.K_2: 2,
-    pygame.K_3: 3,
-    pygame.K_4: 4,
-    pygame.K_5: 5,
-    pygame.K_6: 6,
-    pygame.K_7: 7,
-    pygame.K_8: 8,
-}
-
 IDLE = "idle"
 SELECT = "select"
 READY = "ready"
 
 
-def _font(size: int, bold: bool = False) -> pygame.font.Font:
-    for name in ("SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Heiti SC"):
-        path = pygame.font.match_font(name, bold=bold)
-        if path:
-            return pygame.font.Font(path, size)
-    return pygame.font.SysFont(None, size, bold=bold)
-
-
-def _rgb_to_surface(rgb: np.ndarray) -> pygame.Surface:
+def _rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
+    rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
     h, w = rgb.shape[:2]
-    return pygame.image.frombuffer(
-        np.ascontiguousarray(rgb).tobytes(), (w, h), "RGB"
-    ).convert()
+    qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+    return QPixmap.fromImage(qimg)
 
 
-def _fit(surf: pygame.Surface, max_w: int, max_h: int) -> tuple[pygame.Surface, float]:
-    sw, sh = surf.get_size()
-    scale = min(max_w / max(1, sw), max_h / max(1, sh), 1.0)
-    if scale >= 0.999:
-        return surf, 1.0
-    nw, nh = max(1, int(sw * scale)), max(1, int(sh * scale))
-    return pygame.transform.smoothscale(surf, (nw, nh)), scale
-
-
-def _panel(screen, rect: pygame.Rect, title: str, font) -> pygame.Rect:
-    pygame.draw.rect(screen, PANEL, rect)
-    pygame.draw.rect(screen, PANEL_EDGE, rect, width=1)
-    pygame.draw.line(
-        screen, PANEL_EDGE, (rect.x, rect.y + 26), (rect.right - 1, rect.y + 26), 1
-    )
-    screen.blit(font.render(title, True, MUTED), (rect.x + 10, rect.y + 6))
-    return pygame.Rect(rect.x + 8, rect.y + 30, rect.w - 16, rect.h - 38)
-
-
-def _overlay_vision(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
-    """原画面叠层：只标鱼漂命中（不画青框/青缘，避免干扰判断）。"""
+def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
     vis = rgb.copy()
     if hit is None:
         return vis
     x, y = int(hit.x), int(hit.y)
     x0 = max(0, min(vis.shape[1] - 1, x))
     y0 = max(0, int(hit.bar_top) - 6)
-    y1 = min(
-        vis.shape[0],
-        int(hit.bar_top + max(hit.bar_height, 8)) + 6,
-    )
+    y1 = min(vis.shape[0], int(hit.bar_top + max(hit.bar_height, 8)) + 6)
     vis[y0:y1, x0 : x0 + 1] = np.clip(
         vis[y0:y1, x0 : x0 + 1].astype(np.int16) + np.array([0, 40, 50], dtype=np.int16),
         0,
         255,
     ).astype(np.uint8)
-    vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = MARK
+    vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
     return vis
 
 
-class PreviewApp:
+class BusBridge(QObject):
+    """后台线程 → UI 线程。"""
+
+    frame = Signal(object)
+    pos = Signal(object)
+    intent = Signal(object)
+
+
+class ImageCanvas(QLabel):
+    """显示 RGB；框选模式下拖拽出 ROI。"""
+
+    selection_changed = Signal()
+
+    def __init__(self, title: str, parent=None) -> None:
+        super().__init__(parent)
+        self._title = title
+        self.setMinimumSize(320, 200)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background:#1c1e22; color:#888; border:1px solid #373a40;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._rgb: np.ndarray | None = None
+        self._pixmap = QPixmap()
+        self._selecting = False
+        self._drag_start: QPoint | None = None
+        self._drag_end: QPoint | None = None
+        self._scale = 1.0
+        self._offset = QPoint(0, 0)
+        self.setText(title)
+
+    def set_rgb(self, rgb: np.ndarray | None) -> None:
+        self._rgb = None if rgb is None else np.ascontiguousarray(rgb)
+        self._rebuild()
+
+    def set_selecting(self, on: bool) -> None:
+        self._selecting = on
+        if not on:
+            self._drag_start = self._drag_end = None
+        self.update()
+
+    def selection_in_image(self) -> tuple[int, int, int, int] | None:
+        """返回图像坐标 (left, top, width, height)。"""
+        if self._rgb is None or self._drag_start is None or self._drag_end is None:
+            return None
+        a = self._widget_to_image(self._drag_start)
+        b = self._widget_to_image(self._drag_end)
+        if a is None or b is None:
+            return None
+        x0, y0 = min(a[0], b[0]), min(a[1], b[1])
+        x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+        if x1 - x0 < 8 or y1 - y0 < 8:
+            return None
+        return x0, y0, x1 - x0, y1 - y0
+
+    def _rebuild(self) -> None:
+        if self._rgb is None:
+            self._pixmap = QPixmap()
+            self.setText(self._title)
+            return
+        self.setText("")
+        self._pixmap = _rgb_to_pixmap(self._rgb)
+        self._layout_pixmap()
+        self.update()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if not self._pixmap.isNull():
+            self._layout_pixmap()
+
+    def _layout_pixmap(self) -> None:
+        if self._pixmap.isNull():
+            return
+        pw, ph = self._pixmap.width(), self._pixmap.height()
+        cw, ch = max(1, self.width()), max(1, self.height())
+        self._scale = min(cw / pw, ch / ph, 1.0)
+        nw, nh = max(1, int(pw * self._scale)), max(1, int(ph * self._scale))
+        self._offset = QPoint((cw - nw) // 2, (ch - nh) // 2)
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        super().paintEvent(event)
+        if self._pixmap.isNull():
+            return
+        p = QPainter(self)
+        nw = max(1, int(self._pixmap.width() * self._scale))
+        nh = max(1, int(self._pixmap.height() * self._scale))
+        target = QRect(self._offset.x(), self._offset.y(), nw, nh)
+        p.drawPixmap(target, self._pixmap)
+        if self._selecting and self._drag_start and self._drag_end:
+            pen = QPen(QColor(70, 160, 230), 2, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawRect(QRect(self._drag_start, self._drag_end).normalized())
+        p.end()
+
+    def _widget_to_image(self, pos: QPoint) -> tuple[int, int] | None:
+        if self._rgb is None or self._scale <= 0:
+            return None
+        x = int((pos.x() - self._offset.x()) / self._scale)
+        y = int((pos.y() - self._offset.y()) / self._scale)
+        h, w = self._rgb.shape[:2]
+        if x < 0 or y < 0 or x >= w or y >= h:
+            return None
+        return x, y
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._selecting and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_start = self._drag_end = event.position().toPoint()
+            self.update()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._selecting and self._drag_start is not None:
+            self._drag_end = event.position().toPoint()
+            self.update()
+            self.selection_changed.emit()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._selecting and event.button() == Qt.MouseButton.LeftButton:
+            self._drag_end = event.position().toPoint()
+            self.update()
+            self.selection_changed.emit()
+        else:
+            super().mouseReleaseEvent(event)
+
+
+class SimCanvas(QLabel):
+    """模拟器画面；仅 PLAYING 时出图；按下开始/拉杆。"""
+
+    press = Signal()
+    release = Signal()
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setMinimumSize(320, 200)
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setStyleSheet("background:#1c1e22; color:#888; border:1px solid #373a40;")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self._last_rgb: np.ndarray | None = None
+        self._accept_input = True
+        self.show_idle("点击开始手玩")
+
+    def set_accept_input(self, ok: bool) -> None:
+        self._accept_input = ok
+
+    def show_idle(self, text: str = "点击开始手玩") -> None:
+        self._last_rgb = None
+        self.setPixmap(QPixmap())
+        self.setText(text)
+
+    def set_rgb(self, rgb: np.ndarray) -> None:
+        self._last_rgb = rgb
+        self.setText("")
+        pm = _rgb_to_pixmap(rgb)
+        self.setPixmap(
+            pm.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+        )
+
+    def resizeEvent(self, event) -> None:  # noqa: N802
+        super().resizeEvent(event)
+        if self._last_rgb is not None:
+            self.set_rgb(self._last_rgb)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if (
+            self._accept_input
+            and event.button() == Qt.MouseButton.LeftButton
+        ):
+            self.press.emit()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.release.emit()
+        else:
+            super().mouseReleaseEvent(event)
+
+
+def _hold_word(on: bool | None) -> str:
+    if on is None:
+        return "—"
+    return "按下" if on else "松开"
+
+
+class PreviewApp(QMainWindow):
     def __init__(self, roi_path: Path = DEFAULT_ROI_PATH) -> None:
+        super().__init__()
+        self.setWindowTitle("Albion 拉鱼 · 调试壳 (PySide6)")
+        self.resize(1280, 760)
+
         self.roi_path = roi_path
         self.roi: Roi | None = None
         self.hit: BobberHit | None = None
         self.frame: np.ndarray | None = None
-        self.hint = "空格截屏 → 拖拽框选 · C重框 · M监控 S策略 A操作"
-
         self.phase = IDLE
         self.screen_grab: ScreenGrab | None = None
-        self._drag_start: tuple[int, int] | None = None
-        self._drag_end: tuple[int, int] | None = None
-        self._img_blit_rect: pygame.Rect | None = None
-        self._img_scale = 1.0
-        self._sim_area = pygame.Rect(0, 0, 1, 1)
-
-        self.game = FishingGame()
-        self._sim_holding_mouse = False
-
         self._pipe: AutofishPipeline | None = None
         self._holding: bool | None = None
         self._intent_reason = ""
-        self._logs: deque[str] = deque(maxlen=12)
+        self._mouse_mismatch_logged = False
+        self._logs: deque[str] = deque(maxlen=80)
+        self._bridge = BusBridge()
+        self._bridge.frame.connect(self._on_frame_ui)
+        self._bridge.pos.connect(self._on_pos_ui)
+        self._bridge.intent.connect(self._on_intent_ui)
 
-        self._reload_roi()
         pygame.init()
-        self.screen = pygame.display.set_mode((WIN_W, WIN_H))
-        pygame.display.set_caption("Albion 拉鱼 · 调试壳（段独立）")
-        self.clock = pygame.time.Clock()
-        self.font_title = _font(12)
-        self.font_pos = _font(40, bold=True)
-        self.font_sub = _font(16, bold=True)
-        self.font_body = _font(14)
-        self.font_small = _font(12)
-        self.font_log = _font(12)
-
+        pygame.display.set_mode((1, 1))
+        self.game = FishingGame()
         self._sim_buf = pygame.Surface(
             (sim_config.WINDOW_WIDTH, sim_config.WINDOW_HEIGHT)
         ).convert()
         self._sim_renderer = Renderer(self._sim_buf)
+        self._sim_holding = False
 
-        if self.roi is not None:
-            self.phase = READY
-            self.hint = "ROI 已载入 · M监控 · S策略 · A操作"
+        self._build_ui()
+        self._reload_roi()
+        self._sync_buttons()
+
+        self._timer = QTimer(self)
+        self._timer.timeout.connect(self._on_tick)
+        self._timer.start(int(1000 / max(1, sim_config.FPS)))
+
+    def _build_ui(self) -> None:
+        root = QWidget()
+        self.setCentralWidget(root)
+        layout = QVBoxLayout(root)
+
+        # —— 感知：POS + 监控 + 框选 ——
+        sense = QGroupBox("感知")
+        sense_l = QHBoxLayout(sense)
+        self.lbl_pos = QLabel("无漂")
+        self.lbl_pos.setStyleSheet("font-size:28px; font-weight:600; color:#d24e46;")
+        self.lbl_pos.setMinimumWidth(100)
+        sense_l.addWidget(QLabel("POS"))
+        sense_l.addWidget(self.lbl_pos)
+        self.chk_monitor = QCheckBox("监控")
+        self.chk_monitor.toggled.connect(self._on_monitor_toggled)
+        sense_l.addWidget(self.chk_monitor)
+        sense_l.addStretch(1)
+        self.btn_capture = QPushButton("截屏框选")
+        self.btn_rebox = QPushButton("重框")
+        self.btn_confirm = QPushButton("确认框选")
+        self.btn_cancel = QPushButton("取消框选")
+        self.btn_capture.clicked.connect(self._capture_fullscreen)
+        self.btn_rebox.clicked.connect(self._load_screen_for_select)
+        self.btn_confirm.clicked.connect(self._confirm_selection)
+        self.btn_cancel.clicked.connect(self._cancel_selection)
+        for b in (self.btn_capture, self.btn_rebox, self.btn_confirm, self.btn_cancel):
+            sense_l.addWidget(b)
+        layout.addWidget(sense)
+
+        # —— 策略：阈值 + 实时意图（要不要点）——
+        strat = QGroupBox("策略（只决策，不点鼠标）")
+        strat_l = QVBoxLayout(strat)
+        row1 = QHBoxLayout()
+        self.chk_decide = QCheckBox("启用策略")
+        self.chk_decide.toggled.connect(self._on_decide_toggled)
+        row1.addWidget(self.chk_decide)
+        row1.addWidget(QLabel("pos <"))
+        self.spin_low = QDoubleSpinBox()
+        self.spin_low.setRange(0.0, 99.0)
+        self.spin_low.setDecimals(0)
+        self.spin_low.setValue(50.0)
+        self.spin_low.setSuffix(" → 要按住")
+        row1.addWidget(self.spin_low)
+        row1.addWidget(QLabel("pos >"))
+        self.spin_high = QDoubleSpinBox()
+        self.spin_high.setRange(1.0, 100.0)
+        self.spin_high.setDecimals(0)
+        self.spin_high.setValue(80.0)
+        self.spin_high.setSuffix(" → 要松开")
+        row1.addWidget(self.spin_high)
+        self.btn_apply_policy = QPushButton("应用")
+        self.btn_apply_policy.clicked.connect(self._apply_policy)
+        row1.addWidget(self.btn_apply_policy)
+        row1.addWidget(QLabel("中间保持"))
+        row1.addStretch(1)
+        strat_l.addLayout(row1)
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("实时输出："))
+        self.lbl_intent = QLabel("未启用")
+        self.lbl_intent.setStyleSheet("font-size:18px; font-weight:600; color:#787c80;")
+        self.lbl_intent.setMinimumWidth(160)
+        row2.addWidget(self.lbl_intent)
+        self.lbl_strat_detail = QLabel("")
+        self.lbl_strat_detail.setStyleSheet("color:#787c80;")
+        row2.addWidget(self.lbl_strat_detail, 1)
+        strat_l.addLayout(row2)
+        layout.addWidget(strat)
+
+        # —— 操作：执行策略 → 真鼠标 ——
+        act = QGroupBox("操作（执行策略：控制鼠标）")
+        act_l = QVBoxLayout(act)
+        row_act = QHBoxLayout()
+        self.chk_act = QCheckBox("启用操作")
+        self.chk_act.setToolTip("勾选后按策略意图对当前光标按下/松开左键")
+        self.chk_act.toggled.connect(self._on_act_toggled)
+        row_act.addWidget(self.chk_act)
+        row_act.addWidget(QLabel("实时："))
+        self.lbl_mouse = QLabel("…")
+        self.lbl_mouse.setStyleSheet("font-size:16px; font-weight:600; color:#787c80;")
+        self.lbl_mouse.setMinimumWidth(420)
+        row_act.addWidget(self.lbl_mouse, 1)
+        row_act.addWidget(QLabel("（光标请放在游戏窗口上）"))
+        act_l.addLayout(row_act)
+        self.lbl_mouse_diag = QLabel("")
+        self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
+        act_l.addWidget(self.lbl_mouse_diag)
+        layout.addWidget(act)
+
+        # —— 中栏：监控 | 模拟 ——
+        mid = QHBoxLayout()
+        left = QVBoxLayout()
+        left.addWidget(QLabel("MONITOR"))
+        self.monitor = ImageCanvas("MONITOR · 等待截屏/监控")
+        left.addWidget(self.monitor, 1)
+        mid.addLayout(left, 1)
+
+        right = QVBoxLayout()
+        sim_bar = QHBoxLayout()
+        sim_bar.addWidget(QLabel("SIMULATOR · 手玩（点按才出画面）"))
+        self.lbl_sim_pos = QLabel("—")
+        self.lbl_sim_pos.setStyleSheet("color:#48b46e; font-weight:600;")
+        sim_bar.addWidget(self.lbl_sim_pos)
+        self.cmb_tier = QComboBox()
+        for t in range(1, 9):
+            self.cmb_tier.addItem(f"T{t}", t)
+        self.cmb_tier.setCurrentIndex(3)
+        self.cmb_tier.currentIndexChanged.connect(self._on_tier_changed)
+        sim_bar.addWidget(self.cmb_tier)
+        self.btn_sim_reset = QPushButton("关局")
+        self.btn_sim_reset.clicked.connect(self._sim_reset)
+        self.btn_sim_reset.setToolTip("结束手玩并关闭画面（操作启用时建议关掉手玩）")
+        sim_bar.addWidget(self.btn_sim_reset)
+        right.addLayout(sim_bar)
+        self.sim = SimCanvas()
+        self.sim.press.connect(self._sim_press)
+        self.sim.release.connect(self._sim_release)
+        right.addWidget(self.sim, 1)
+        mid.addLayout(right, 1)
+        layout.addLayout(mid, 1)
+
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.log.setMaximumHeight(140)
+        self.log.setStyleSheet("background:#101114; color:#dcdeda;")
+        layout.addWidget(self.log)
+
+        self.lbl_hint = QLabel("截屏框选 → 确认 → 监控 → 策略 → 操作")
+        self.lbl_hint.setStyleSheet("color:#787c80;")
+        layout.addWidget(self.lbl_hint)
 
     def _log(self, msg: str) -> None:
-        self._logs.appendleft(f"{time.strftime('%H:%M:%S')}  {msg}")
+        line = f"{time.strftime('%H:%M:%S')}  {msg}"
+        self._logs.appendleft(line)
+        self.log.setPlainText("\n".join(self._logs))
 
     def _reload_roi(self) -> None:
         try:
             self.roi = load_roi(self.roi_path) if self.roi_path.exists() else None
+            if self.roi is not None:
+                self.phase = READY
+                self.lbl_hint.setText("ROI 已载入 · 可勾选监控")
+                self._log(f"载入 ROI {self.roi.width}x{self.roi.height}")
         except Exception as exc:  # noqa: BLE001
             self.roi = None
-            self.hint = f"ROI 失败：{exc}"
+            self.lbl_hint.setText(f"ROI 失败：{exc}")
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
             pipe = AutofishPipeline(auto_locate=False, capture_fps=45.0)
-            # Frame：监控画面（避免无漂时一直「等待帧」）
-            # Pos：读数；有帧时与读数同频覆盖画面
-            pipe.subscribe(Topic.FRAME, self._on_frame)
-            pipe.subscribe(Topic.POS, self._on_pos)
-            pipe.subscribe(Topic.ACTION_INTENT, self._on_intent)
+            pipe.subscribe(Topic.FRAME, self._on_frame_bus)
+            pipe.subscribe(Topic.POS, self._on_pos_bus)
+            pipe.subscribe(Topic.ACTION_INTENT, self._on_intent_bus)
             self._pipe = pipe
         return self._pipe
 
-    def _shutdown_pipe(self) -> None:
-        pipe = self._pipe
-        if pipe is None:
+    def _on_frame_bus(self, event: FrameEvent) -> None:
+        self._bridge.frame.emit(event)
+
+    def _on_pos_bus(self, event: PosEvent) -> None:
+        self._bridge.pos.emit(event)
+
+    def _on_intent_bus(self, event: ActionIntentEvent) -> None:
+        self._bridge.intent.emit(event)
+
+    def _on_frame_ui(self, event: FrameEvent) -> None:
+        if self.phase == SELECT:
             return
-        pipe.unsubscribe(Topic.FRAME, self._on_frame)
-        pipe.unsubscribe(Topic.POS, self._on_pos)
-        pipe.unsubscribe(Topic.ACTION_INTENT, self._on_intent)
-        pipe.stop()
-        self._pipe = None
-        self.frame = None
-        self.hit = None
-        self._holding = None
-        self._log("流水线已全部停止")
-
-    def _on_frame(self, event: FrameEvent) -> None:
         self.frame = event.frame
+        self._refresh_monitor()
 
-    def _on_pos(self, event: PosEvent) -> None:
-        if event.frame is not None:
+    def _on_pos_ui(self, event: PosEvent) -> None:
+        if event.frame is not None and self.phase != SELECT:
             self.frame = event.frame
         self.hit = event.hit
-    def _on_intent(self, event: ActionIntentEvent) -> None:
+        self._refresh_pos()
+        self._refresh_monitor()
+        if self._pipe is not None and self._pipe.decide_on:
+            self._refresh_strategy(event.pos, self._intent_reason)
+
+    def _on_intent_ui(self, event: ActionIntentEvent) -> None:
         self._holding = event.holding
         self._intent_reason = event.reason
+        self._refresh_strategy(event.pos, event.reason)
         pos_s = "—" if event.pos is None else f"{event.pos:.1f}"
-        self._log(
-            f"意图 {'HOLD' if event.holding else 'RELEASE'} pos={pos_s} {event.reason}"
-        )
+        want = "要按住" if event.holding else "要松开"
+        self._log(f"策略 {want} pos={pos_s} {event.reason}")
+        self._refresh_mouse()
 
-    def _toggle_monitor(self) -> None:
+    def _refresh_strategy(
+        self, pos: float | None = None, reason: str = ""
+    ) -> None:
+        pipe = self._pipe
+        if pipe is None or not pipe.decide_on:
+            self.lbl_intent.setText("未启用")
+            self.lbl_intent.setStyleSheet(
+                "font-size:18px; font-weight:600; color:#787c80;"
+            )
+            self.lbl_strat_detail.setText("")
+            return
+        if self._holding is None:
+            self.lbl_intent.setText("等待…")
+            self.lbl_intent.setStyleSheet(
+                "font-size:18px; font-weight:600; color:#787c80;"
+            )
+        elif self._holding:
+            self.lbl_intent.setText("要按住（点击）")
+            self.lbl_intent.setStyleSheet(
+                "font-size:18px; font-weight:600; color:#ff8c28;"
+            )
+        else:
+            self.lbl_intent.setText("要松开")
+            self.lbl_intent.setStyleSheet(
+                "font-size:18px; font-weight:600; color:#48b46e;"
+            )
+        low = self.spin_low.value()
+        high = self.spin_high.value()
+        pos_s = "—" if pos is None else f"{pos:.1f}"
+        detail = f"POS={pos_s} · 规则 <{low:.0f} 按住 / >{high:.0f} 松开"
+        if reason:
+            detail += f" · {reason}"
+        self.lbl_strat_detail.setText(detail)
+
+    def _refresh_pos(self) -> None:
+        if self.hit is not None:
+            self.lbl_pos.setText(f"{self.hit.pos:.1f}")
+            self.lbl_pos.setStyleSheet(
+                "font-size:28px; font-weight:600; color:#48b46e;"
+            )
+        else:
+            self.lbl_pos.setText("无漂")
+            self.lbl_pos.setStyleSheet(
+                "font-size:28px; font-weight:600; color:#d24e46;"
+            )
+
+    def _refresh_monitor(self) -> None:
+        if self.phase == SELECT and self.screen_grab is not None:
+            self.monitor.set_rgb(self.screen_grab.rgb)
+            self.monitor.set_selecting(True)
+            return
+        self.monitor.set_selecting(False)
+        if self.frame is None:
+            self.monitor.set_rgb(None)
+            return
+        self.monitor.set_rgb(_overlay_hit(self.frame, self.hit))
+
+    def _sync_buttons(self) -> None:
+        selecting = self.phase == SELECT
+        self.btn_confirm.setEnabled(selecting)
+        self.btn_cancel.setEnabled(selecting)
+        self.btn_capture.setEnabled(not selecting)
+        self.btn_rebox.setEnabled(not selecting and DEFAULT_SCREEN_PATH.exists())
+
+    def _block_checks(self, block: bool) -> None:
+        for chk in (self.chk_monitor, self.chk_decide, self.chk_act):
+            chk.blockSignals(block)
+
+    def _on_monitor_toggled(self, checked: bool) -> None:
         if self.roi is None:
-            self.hint = "先框选 ROI"
+            self._block_checks(True)
+            self.chk_monitor.setChecked(False)
+            self._block_checks(False)
+            self.lbl_hint.setText("先截屏框选 ROI")
             return
         pipe = self._ensure_pipe()
-        if pipe.monitor_on:
-            pipe.stop_monitor()
-            self.frame = None
-            self.hit = None
-            self._log("监控 OFF")
-            self.hint = "监控已关"
-        else:
+        if checked and not pipe.monitor_on:
             pipe.set_roi_manual(self.roi)
             pipe.start_monitor()
             self._log("监控 ON · Capture+Detect")
-            self.hint = "监控中 · S开策略 · A开操作"
+            self.lbl_hint.setText("监控中")
+        elif not checked and pipe.monitor_on:
+            pipe.stop_monitor()
+            self.frame = None
+            self.hit = None
+            self._refresh_pos()
+            self._refresh_monitor()
+            self._log("监控 OFF")
+            self.lbl_hint.setText("监控已关")
 
-    def _toggle_decide(self) -> None:
+    def _on_decide_toggled(self, checked: bool) -> None:
         pipe = self._ensure_pipe()
-        if pipe.decide_on:
+        if checked and not pipe.decide_on:
+            if not self._apply_policy():
+                self._block_checks(True)
+                self.chk_decide.setChecked(False)
+                self._block_checks(False)
+                return
+            if not pipe.monitor_on:
+                self.lbl_hint.setText("建议先开监控")
+            pipe.start_decide()
+            self._refresh_strategy(
+                None if self.hit is None else self.hit.pos
+            )
+            self._log(
+                f"策略 ON · <{self.spin_low.value():.0f} 按住 "
+                f">{self.spin_high.value():.0f} 松开"
+            )
+        elif not checked and pipe.decide_on:
             pipe.stop_decide()
             self._holding = None
-            self._intent_reason = ""
+            self._refresh_strategy()
             self._log("策略 OFF")
-        else:
-            if not pipe.monitor_on:
-                self.hint = "建议先开监控(M)，否则无新 Pos"
-            pipe.start_decide()
-            self._log("策略 ON · Decide")
+            self._refresh_mouse()
 
-    def _toggle_act(self) -> None:
+    def _on_act_toggled(self, checked: bool) -> None:
         pipe = self._ensure_pipe()
-        if pipe.act_on:
-            pipe.stop_act()
-            self._log("操作 OFF · 已松开")
-        else:
+        if checked and not pipe.act_on:
             if not pipe.decide_on:
-                self.hint = "建议先开策略(S)，否则无意图"
+                self.lbl_hint.setText("建议先开策略")
             pipe.start_act()
-            self._log("操作 ON · 真鼠标 · 光标放目标窗")
+            self._log("操作 ON · 无 POS 时不会按住；光标放游戏上")
+        elif not checked and pipe.act_on:
+            pipe.stop_act()
+            self._log("操作 OFF")
+        self._refresh_mouse()
+
+    def _apply_policy(self) -> bool:
+        low = float(self.spin_low.value())
+        high = float(self.spin_high.value())
+        if low >= high:
+            self.lbl_hint.setText("策略无效：按住阈值须小于松开阈值")
+            QMessageBox.warning(self, "策略", "「按住」阈值必须小于「松开」阈值")
+            return False
+        pipe = self._ensure_pipe()
+        pipe.set_decide_thresholds(low, high)
+        self._log(f"策略已应用 · <{low:.0f} 按住 · >{high:.0f} 松开")
+        self.lbl_hint.setText(f"策略 <{low:.0f} 按住 / >{high:.0f} 松开")
+        if pipe.decide_on:
+            pos = None if self.hit is None else self.hit.pos
+            self._refresh_strategy(pos, self._intent_reason)
+        return True
+
+    def _refresh_mouse(self) -> None:
+        pipe = self._pipe
+        act_on = pipe is not None and pipe.act_on
+        if act_on and pipe is not None:
+            pipe.act.poll()
+        prog = None if pipe is None else pipe.act.pressed
+        yielding = bool(act_on and pipe is not None and pipe.act.yielding)
+        os_down = os_left_down()
+        intent = self._holding
+        snap_pos = None if pipe is None else pipe.bus.snapshot().pos
+        has_pos = snap_pos is not None or self.hit is not None
+        free = act_on and not has_pos and not yielding
+
+        if not act_on:
+            prog_s = "未启用"
+        elif yielding:
+            prog_s = "让位"
+        elif free:
+            prog_s = "自由"
+        else:
+            prog_s = _hold_word(prog)
+
+        parts = [
+            f"意图 {_hold_word(intent) if intent is not None else '—'}",
+            f"程序 {prog_s}",
+            f"系统 {_hold_word(os_down)}",
+        ]
+        self.lbl_mouse.setText(" · ".join(parts))
+
+        issues: list[str] = []
+        controlling = act_on and not free and not yielding
+        if (
+            controlling
+            and intent is not None
+            and prog is not None
+            and intent != prog
+        ):
+            issues.append("意图≠程序")
+        if (
+            controlling
+            and prog is not None
+            and os_down is not None
+            and prog != os_down
+        ):
+            issues.append("程序≠系统")
+        if os_down is None:
+            issues.append("系统态不可读（检查辅助功能权限）")
+
+        if issues:
+            self.lbl_mouse.setStyleSheet(
+                "font-size:16px; font-weight:600; color:#d24e46;"
+            )
+            self.lbl_mouse_diag.setText("异常：" + " / ".join(issues))
+            self.lbl_mouse_diag.setStyleSheet("color:#d24e46;")
+            if not self._mouse_mismatch_logged:
+                self._mouse_mismatch_logged = True
+                self._log(
+                    "鼠标异常 "
+                    + " / ".join(issues)
+                    + f" · 意图={_hold_word(intent)}"
+                    + f" 程序={prog_s}"
+                    + f" 系统={_hold_word(os_down)}"
+                )
+        else:
+            if yielding:
+                color = "#c9a227"
+            elif free:
+                color = "#787c80"
+            elif act_on and prog:
+                color = "#ff8c28"
+            elif act_on:
+                color = "#48b46e"
+            else:
+                color = "#787c80"
+            self.lbl_mouse.setStyleSheet(
+                f"font-size:16px; font-weight:600; color:{color};"
+            )
+            if not act_on:
+                diag = "操作未启用 · 仍监视系统左键"
+            elif yielding:
+                diag = "系统优先 · 等你松开鼠标后程序再接管"
+            elif free:
+                diag = "自由态 · 无 POS，不碰你的鼠标"
+            else:
+                diag = "控鼠中 · 有 POS，按策略按/松"
+            self.lbl_mouse_diag.setText(diag)
+            self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
+            self._mouse_mismatch_logged = False
 
     def _capture_fullscreen(self) -> None:
         if self._pipe and self._pipe.monitor_on:
+            self._block_checks(True)
+            self.chk_monitor.setChecked(False)
+            self._block_checks(False)
             self._pipe.stop_monitor()
             self._log("监控 OFF · 准备框选")
-        pygame.display.iconify()
-        time.sleep(0.35)
+        self.lbl_hint.setText("截屏中…")
+        QApplication.processEvents()
         try:
             grab = grab_primary()
             save_screen(grab)
             self.screen_grab = grab
             self.phase = SELECT
-            self._drag_start = self._drag_end = None
-            self.hint = "拖拽框选张力条区域 → Enter 确认"
+            self.monitor.set_rgb(grab.rgb)
+            self.monitor.set_selecting(True)
+            self.lbl_hint.setText("拖拽框选张力条 → 确认框选")
             self._log("已截全屏 · 请手框 ROI")
         except Exception as exc:  # noqa: BLE001
-            self.hint = f"截图失败：{exc}"
-        finally:
-            pygame.display.set_mode((WIN_W, WIN_H))
+            self.lbl_hint.setText(f"截图失败：{exc}")
+            QMessageBox.warning(self, "截屏失败", str(exc))
+        self._sync_buttons()
 
     def _load_screen_for_select(self) -> None:
         if self._pipe and self._pipe.monitor_on:
+            self._block_checks(True)
+            self.chk_monitor.setChecked(False)
+            self._block_checks(False)
             self._pipe.stop_monitor()
             self.frame = None
             self.hit = None
@@ -291,53 +766,43 @@ class PreviewApp:
         try:
             self.screen_grab = load_screen(DEFAULT_SCREEN_PATH)
             self.phase = SELECT
-            self._drag_start = self._drag_end = None
-            self.hint = "拖拽框选 → Enter"
+            self.monitor.set_rgb(self.screen_grab.rgb)
+            self.monitor.set_selecting(True)
+            self.lbl_hint.setText("拖拽框选 → 确认框选")
         except Exception as exc:  # noqa: BLE001
-            self.hint = f"读截图失败：{exc}"
-
-    def _selection_roi(self) -> Roi | None:
-        if self.screen_grab is None or self._drag_start is None or self._drag_end is None:
-            return None
-        x0, y0 = self._drag_start
-        x1, y1 = self._drag_end
-        left, right = min(x0, x1), max(x0, x1)
-        top, bottom = min(y0, y1), max(y0, y1)
-        if right - left < 8 or bottom - top < 8:
-            return None
-        g = self.screen_grab
-        return Roi(
-            left=g.origin_left + left,
-            top=g.origin_top + top,
-            width=right - left,
-            height=bottom - top,
-        )
+            self.lbl_hint.setText(f"读截图失败：{exc}")
+        self._sync_buttons()
 
     def _confirm_selection(self) -> None:
-        roi = self._selection_roi()
-        if roi is None:
-            self.hint = "框太小"
+        sel = self.monitor.selection_in_image()
+        if sel is None or self.screen_grab is None:
+            self.lbl_hint.setText("框太小")
             return
+        left, top, w, h = sel
+        g = self.screen_grab
+        roi = Roi(
+            left=g.origin_left + left,
+            top=g.origin_top + top,
+            width=w,
+            height=h,
+        )
         save_roi(roi, self.roi_path)
         self.roi = roi
         self.phase = READY
-        self._drag_start = self._drag_end = None
-        # 必须推到总线，否则 Capture 仍用旧 ROI
+        self.monitor.set_selecting(False)
         pipe = self._ensure_pipe()
         pipe.set_roi_manual(roi)
         self._log(f"手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
-        self.hint = "M监控 S策略 A操作"
+        self.lbl_hint.setText("可勾选监控")
+        self._sync_buttons()
+        self._refresh_monitor()
 
-    def _view_to_image(self, pos: tuple[int, int]) -> tuple[int, int] | None:
-        if self._img_blit_rect is None or self.screen_grab is None:
-            return None
-        r = self._img_blit_rect
-        if not r.collidepoint(pos):
-            return None
-        ix = int((pos[0] - r.x) / self._img_scale)
-        iy = int((pos[1] - r.y) / self._img_scale)
-        h, w = self.screen_grab.rgb.shape[:2]
-        return max(0, min(w - 1, ix)), max(0, min(h - 1, iy))
+    def _cancel_selection(self) -> None:
+        self.phase = READY if self.roi is not None else IDLE
+        self.monitor.set_selecting(False)
+        self.lbl_hint.setText("已取消框选")
+        self._sync_buttons()
+        self._refresh_monitor()
 
     def _sim_pos(self) -> float:
         span = float(sim_config.SAFE_RIGHT - sim_config.SAFE_LEFT)
@@ -348,273 +813,85 @@ class PreviewApp:
             min(
                 100.0,
                 100.0
-                * (self.game.bobber_x - float(sim_config.SAFE_LEFT))
+                * (self.game.bobber_x - sim_config.SAFE_LEFT)
                 / span,
             ),
         )
 
-    def _draw_toggle(
-        self, x: int, y: int, label: str, on: bool, key: str
-    ) -> None:
-        bg = ON if on else OFF
-        pygame.draw.rect(self.screen, bg, pygame.Rect(x, y, 72, 22))
-        pygame.draw.rect(self.screen, PANEL_EDGE, pygame.Rect(x, y, 72, 22), 1)
-        t = self.font_small.render(f"{key}:{label}", True, TEXT if on else MUTED)
-        self.screen.blit(t, t.get_rect(center=(x + 36, y + 11)))
+    def _on_tier_changed(self) -> None:
+        tier = int(self.cmb_tier.currentData())
+        self.game.set_tier(tier)
 
-    def _draw_header(self, rect: pygame.Rect) -> None:
-        pygame.draw.rect(self.screen, HEADER_BG, rect)
-        pygame.draw.rect(self.screen, PANEL_EDGE, rect, width=1)
-        pipe = self._pipe
+    def _sim_close(self, idle_text: str = "点击开始手玩") -> None:
+        """结束手玩并关闭画面，松开本地按住态。"""
+        self._sim_holding = False
+        self.game.set_holding(False)
+        self.game.reset()
+        self.sim.set_accept_input(True)
+        self.sim.show_idle(idle_text)
+        self.lbl_sim_pos.setText(f"—  T{self.game.tier}")
 
-        self.screen.blit(
-            self.font_title.render("POS", True, MUTED), (rect.x + 12, rect.y + 6)
-        )
-        if self.hit is not None:
-            live_s, live_c = f"{self.hit.pos:.1f}", ACCENT
-        elif pipe and pipe.monitor_on:
-            live_s, live_c = "无漂", BAD
+    def _sim_reset(self) -> None:
+        self._sim_close("点击开始手玩")
+        self._log("手玩已关")
+
+    def _sim_press(self) -> None:
+        if self.game.state == State.PLAYING:
+            self.game.set_holding(True)
         else:
-            live_s, live_c = "—", MUTED
-        self.screen.blit(
-            self.font_pos.render(live_s, True, live_c), (rect.x + 12, rect.y + 22)
-        )
+            self.game.start()
+            self.game.set_holding(True)
+        self._sim_holding = True
 
-        # 三开关
-        tx = rect.x + 200
-        self.screen.blit(
-            self.font_title.render("SWITCHES", True, MUTED), (tx, rect.y + 6)
-        )
-        self._draw_toggle(tx, rect.y + 28, "监控", bool(pipe and pipe.monitor_on), "M")
-        self._draw_toggle(tx + 80, rect.y + 28, "策略", bool(pipe and pipe.decide_on), "S")
-        self._draw_toggle(tx + 160, rect.y + 28, "操作", bool(pipe and pipe.act_on), "A")
-        self.screen.blit(
-            self.font_small.render("操作默认关 · 勾选才真鼠标", True, MUTED),
-            (tx, rect.y + 54),
-        )
+    def _sim_release(self) -> None:
+        if self._sim_holding:
+            self.game.set_holding(False)
+            self._sim_holding = False
 
-        # 意图
-        ix = rect.x + 520
-        self.screen.blit(
-            self.font_title.render("INTENT", True, MUTED), (ix, rect.y + 6)
-        )
-        if self._holding is True:
-            lamp, lab = HOLD_ON, "HOLD"
-        elif self._holding is False:
-            lamp, lab = HOLD_OFF, "RELEASE"
-        else:
-            lamp, lab = HOLD_OFF, "—"
-        pygame.draw.rect(self.screen, lamp, pygame.Rect(ix, rect.y + 28, 90, 24))
-        self.screen.blit(
-            self.font_sub.render(lab, True, TEXT), (ix + 8, rect.y + 30)
-        )
-        self.screen.blit(
-            self.font_small.render(self._intent_reason[:24] or "—", True, MUTED),
-            (ix + 100, rect.y + 34),
-        )
-
-        # 模拟器只读状态
-        sx = rect.right - 160
-        self.screen.blit(
-            self.font_title.render("SIM (手玩)", True, MUTED), (sx, rect.y + 6)
-        )
-        sim_s = f"{self._sim_pos():.1f}" if self.game.state == State.PLAYING else "—"
-        self.screen.blit(
-            self.font_sub.render(sim_s, True, OK if self.game.state == State.PLAYING else MUTED),
-            (sx, rect.y + 28),
-        )
-        self.screen.blit(
-            self.font_small.render(
-                f"T{self.game.tier} {self.game.progress * 100:.0f}%", True, MUTED
-            ),
-            (sx, rect.y + 52),
-        )
-
-    def _draw_vision(self, rect: pygame.Rect) -> None:
-        mon = bool(self._pipe and self._pipe.monitor_on)
-        title = "MONITOR · 实时" if mon else (
-            "MONITOR · 框选" if self.phase == SELECT else "MONITOR"
-        )
-        area = _panel(self.screen, rect, title, self.font_title)
-        self._img_blit_rect = None
-
-        if self.phase == IDLE and not mon:
-            tip = self.font_body.render("空格截全屏", True, MUTED)
-            self.screen.blit(tip, tip.get_rect(center=area.center))
-            return
-
-        if self.phase == SELECT and self.screen_grab is not None:
-            surf, scale = _fit(_rgb_to_surface(self.screen_grab.rgb), area.w, area.h)
-            blit = surf.get_rect(center=area.center)
-            self.screen.blit(surf, blit)
-            self._img_blit_rect = blit
-            self._img_scale = scale
-            if self._drag_start and self._drag_end and scale > 0:
-                x0, y0 = self._drag_start
-                x1, y1 = self._drag_end
-                sel = pygame.Rect(
-                    blit.x + int(min(x0, x1) * scale),
-                    blit.y + int(min(y0, y1) * scale),
-                    max(1, int(abs(x1 - x0) * scale)),
-                    max(1, int(abs(y1 - y0) * scale)),
-                )
-                pygame.draw.rect(self.screen, SELECT_COLOR, sel, 1)
-            return
-
-        if mon:
-            if self.frame is None:
-                tip = self.font_body.render("等待帧…", True, MUTED)
-                self.screen.blit(tip, tip.get_rect(center=area.center))
-            else:
-                vis = _overlay_vision(self.frame, self.hit)
-                surf, _ = _fit(_rgb_to_surface(vis), area.w, area.h - 16)
-                self.screen.blit(surf, surf.get_rect(midtop=(area.centerx, area.y)))
-            bar = pygame.Rect(area.x + 4, area.bottom - 10, area.w - 8, 5)
-            pygame.draw.rect(self.screen, PANEL_EDGE, bar)
-            if self.hit is not None:
-                px = int(bar.left + (self.hit.pos / 100.0) * bar.w)
-                pygame.draw.rect(
-                    self.screen, ACCENT, pygame.Rect(px - 2, bar.y - 2, 4, 9)
-                )
-            return
-
-        if self.screen_grab is not None and self.roi is not None:
-            g = self.screen_grab.rgb
-            x = self.roi.left - self.screen_grab.origin_left
-            y = self.roi.top - self.screen_grab.origin_top
-            w, h = self.roi.width, self.roi.height
-            if 0 <= x and 0 <= y and x + w <= g.shape[1] and y + h <= g.shape[0]:
-                crop = g[y : y + h, x : x + w].copy()
-                surf, _ = _fit(_rgb_to_surface(crop), area.w, area.h - 8)
-                self.screen.blit(surf, surf.get_rect(center=area.center))
-
-    def _draw_sim(self, rect: pygame.Rect) -> None:
-        area = _panel(
-            self.screen, rect, "SIMULATOR · 独立手玩（不跟策略）", self.font_title
-        )
-        self._sim_area = area
-        self._sim_renderer.draw(self.game)
-        fitted, _ = _fit(self._sim_buf, area.w, area.h)
-        self.screen.blit(fitted, fitted.get_rect(center=area.center))
-
-    def _draw_log(self, rect: pygame.Rect) -> None:
-        pygame.draw.rect(self.screen, LOG_BG, rect)
-        pygame.draw.rect(self.screen, PANEL_EDGE, rect, width=1)
-        pygame.draw.line(
-            self.screen, PANEL_EDGE, (rect.x, rect.y + 22), (rect.right - 1, rect.y + 22), 1
-        )
-        self.screen.blit(
-            self.font_title.render("LOG", True, MUTED), (rect.x + 10, rect.y + 5)
-        )
-        y = rect.y + 28
-        for line in self._logs:
-            self.screen.blit(
-                self.font_log.render(line[:110], True, TEXT), (rect.x + 10, y)
+    def _on_tick(self) -> None:
+        dt = 1.0 / max(1, sim_config.FPS)
+        was_playing = self.game.state == State.PLAYING
+        self.game.update(dt)
+        if self.game.state == State.PLAYING:
+            self._sim_renderer.draw(self.game)
+            raw = pygame.surfarray.array3d(self._sim_buf)
+            rgb = np.transpose(raw, (1, 0, 2)).copy()
+            self.sim.set_rgb(rgb)
+            self.lbl_sim_pos.setText(
+                f"{self._sim_pos():.1f}  T{self.game.tier}"
             )
-            y += 15
-            if y > rect.bottom - 6:
-                break
+        elif was_playing:
+            # 成功/失败：立刻关画面，避免按住态继续吃鼠标
+            ended = (
+                "成功" if self.game.state == State.SUCCESS else "失败"
+            )
+            self._sim_close(f"{ended} · 点击再开")
+            self._log(f"手玩{ended} · 画面已关")
+        else:
+            self.lbl_sim_pos.setText(f"—  T{self.game.tier}")
+        self._refresh_mouse()
 
-    def _draw_footer(self, rect: pygame.Rect) -> None:
-        tip = "空格截屏 · C重框 · M监控 S策略 A操作 · R重开模拟 · 1-8档 · Esc退出"
-        self.screen.blit(
-            self.font_small.render(f"{self.hint}  |  {tip}"[:130], True, MUTED),
-            (rect.x + 4, rect.y + 6),
-        )
-
-    def draw(self) -> None:
-        self.screen.fill(BG)
-        y = PAD
-        self._draw_header(pygame.Rect(PAD, y, WIN_W - PAD * 2, HEADER_H))
-        y += HEADER_H + GAP
-        self._draw_vision(pygame.Rect(PAD, y, COL_W, PANEL_H))
-        self._draw_sim(pygame.Rect(PAD + COL_W + GAP, y, COL_W, PANEL_H))
-        y += PANEL_H + GAP
-        self._draw_log(pygame.Rect(PAD, y, WIN_W - PAD * 2, LOG_H))
-        y += LOG_H + GAP
-        self._draw_footer(pygame.Rect(PAD, y, WIN_W - PAD * 2, FOOTER_H))
-
-    def _handle_sim_input(self, event: pygame.event.Event) -> None:
-        """模拟器只吃本窗鼠标，与 Act 无关。"""
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            if self._sim_area.collidepoint(event.pos):
-                if self.game.state == State.PLAYING:
-                    self.game.set_holding(True)
-                else:
-                    self.game.start()
-                    self.game.set_holding(True)
-                self._sim_holding_mouse = True
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            if self._sim_holding_mouse:
-                self.game.set_holding(False)
-                self._sim_holding_mouse = False
-
-    def _on_select_mouse(self, event: pygame.event.Event) -> None:
-        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-            pt = self._view_to_image(event.pos)
-            if pt:
-                self._drag_start = self._drag_end = pt
-        elif event.type == pygame.MOUSEMOTION and self._drag_start is not None:
-            if event.buttons[0]:
-                pt = self._view_to_image(event.pos)
-                if pt:
-                    self._drag_end = pt
-        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
-            pt = self._view_to_image(event.pos)
-            if pt and self._drag_start is not None:
-                self._drag_end = pt
+    def closeEvent(self, event) -> None:  # noqa: N802
+        if self._pipe is not None:
+            self._pipe.unsubscribe(Topic.FRAME, self._on_frame_bus)
+            self._pipe.unsubscribe(Topic.POS, self._on_pos_bus)
+            self._pipe.unsubscribe(Topic.ACTION_INTENT, self._on_intent_bus)
+            self._pipe.stop()
+            self._pipe = None
+        self._timer.stop()
+        pygame.quit()
+        super().closeEvent(event)
 
     def run(self) -> int:
-        running = True
-        while running:
-            dt = self.clock.tick(sim_config.FPS) / 1000.0
-            for event in pygame.event.get():
-                if event.type == pygame.QUIT:
-                    running = False
-                elif event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_ESCAPE:
-                        if self.phase == SELECT:
-                            self.phase = IDLE
-                            self.hint = "已取消框选"
-                            self._drag_start = self._drag_end = None
-                        else:
-                            running = False
-                    elif event.key == pygame.K_SPACE:
-                        self._capture_fullscreen()
-                    elif event.key == pygame.K_m:
-                        self._toggle_monitor()
-                    elif event.key == pygame.K_s:
-                        self._toggle_decide()
-                    elif event.key == pygame.K_a:
-                        self._toggle_act()
-                    elif event.key == pygame.K_c:
-                        if DEFAULT_SCREEN_PATH.exists():
-                            self._load_screen_for_select()
-                        else:
-                            self.hint = "尚无截图"
-                    elif event.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        if self.phase == SELECT:
-                            self._confirm_selection()
-                    elif event.key == pygame.K_r:
-                        self.game.reset()
-                    elif event.key in _TIER_KEYS:
-                        self.game.set_tier(_TIER_KEYS[event.key])
-                elif self.phase == SELECT:
-                    self._on_select_mouse(event)
-                else:
-                    self._handle_sim_input(event)
-
-            self.game.update(dt)
-            self.draw()
-            pygame.display.flip()
-
-        self._shutdown_pipe()
-        pygame.quit()
-        return 0
+        self.show()
+        return QApplication.instance().exec()
 
 
 def main() -> int:
-    return PreviewApp().run()
+    app = QApplication.instance() or QApplication(sys.argv)
+    win = PreviewApp()
+    win.show()
+    return app.exec()
 
 
 AutofishApp = PreviewApp

@@ -3,7 +3,7 @@
 ## 环境
 
 - Python 3.10+
-- 依赖：见 `requirements.txt`（pygame、mss、numpy、opencv-python-headless、Pillow）
+- 依赖：见 `requirements.txt`（pygame、mss、numpy、opencv、Pillow、PySide6、pynput）
 
 ## 安装
 
@@ -52,7 +52,7 @@ run_batch(ThresholdHoldPolicy(), episodes=100, tier=4)
 
 策略：绿区内相对 pos（左绿=0，右绿=100）&lt;50 按住，&gt;90 松开；切换至少 0.2s + 约 0.1s 随机。测策略只走模拟器，不点真鼠标。
 
-依赖列表见根目录 `requirements.txt`（pygame、mss、numpy、opencv-python-headless、Pillow）。
+依赖列表见根目录 `requirements.txt`（含 PySide6 调试壳）。
 
 ## 真机感知（截图 + 色块）
 

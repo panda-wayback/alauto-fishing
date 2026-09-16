@@ -82,6 +82,9 @@ class AutofishPipeline:
         self._roi_version = self.bus.snapshot().roi_version
         self.locator._version = self._roi_version
 
+    def set_decide_thresholds(self, low: float, high: float) -> None:
+        self.decide.set_thresholds(low, high)
+
     def locate_now(self) -> RoiEvent | None:
         return self.locator.locate_once()
 

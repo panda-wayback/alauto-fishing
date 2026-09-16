@@ -23,7 +23,7 @@ Albion 拉鱼：**模拟器**测算法 + **真机自动拉鱼**。方案索引�
 | `src/common/` | 无业务通用库 → `src/common/AI.md` |
 | `src/common/pubsub/` | 进程内 EventBus → `src/common/pubsub/AI.md` |
 | `src/autofish/` | 真机五段实现 → `src/autofish/AI.md` |
-| `src/tools/` | 调试编排（预览窗等）→ `src/tools/AI.md` |
+| `src/tools/` | 调试壳（PySide6）→ `src/tools/AI.md` |
 | `assets/` | 运行时素材与几何 metrics |
 | `data/` | ROI / 截图 / 调试输出 |
 | `docs/` | 方案索引 |

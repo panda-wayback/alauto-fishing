@@ -13,9 +13,9 @@
 
 ## 对外契约
 
-- `ActWorker.start/stop` — 订阅意图；停时强制松开
-- `ActWorker.pressed` — 当前是否按下
-- `MouseActuator.set_holding(bool)`
+- `ActWorker.start/stop/poll` — 订意图；`poll` 每帧处理系统让位/接管
+- `ActWorker.pressed` / `yielding` — 程序是否按下；是否因系统占用让位
+- `os_left_down()` / `MouseActuator.set_holding` / `force_release`
 
 ## 约束
 

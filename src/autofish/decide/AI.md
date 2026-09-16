@@ -8,12 +8,13 @@
 
 ## 目录清单
 
-- `policy.py` — `ThresholdPosPolicy`（&lt;50 按住 / &gt;90 松开 + 切换间隔）
-- `worker.py` — `DecideWorker`
+- `policy.py` — `ThresholdPosPolicy`（&lt;low 按住 / &gt;high 松开 + 切换间隔；默认 50/80）
+- `worker.py` — `DecideWorker`（`set_thresholds` 可运行时改阈值）
 
 ## 对外契约
 
-- `DecideWorker.start/stop` — 订阅/退订；停时发松开意图
+- `DecideWorker.start/stop` — 订阅/退订；启动时按快照立即出意图；停时发松开
+- `DecideWorker.set_thresholds(low, high)`
 - `ThresholdPosPolicy.decide(pos, t) -> (holding, reason)`
 
 ## 约束

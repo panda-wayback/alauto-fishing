@@ -60,9 +60,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.ui:
+        from PySide6.QtWidgets import QApplication
         from tools.preview_app import PreviewApp
 
-        return PreviewApp(roi_path=args.roi).run()
+        app = QApplication.instance() or QApplication(sys.argv)
+        win = PreviewApp(roi_path=args.roi)
+        win.show()
+        return app.exec()
 
     if args.image is not None:
         from PIL import Image

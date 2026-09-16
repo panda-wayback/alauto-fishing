@@ -15,7 +15,7 @@ class ThresholdPosPolicy:
         self,
         *,
         low: float = 50.0,
-        high: float = 90.0,
+        high: float = 80.0,
         min_interval: float = 0.2,
         jitter: float = 0.1,
         seed: int | None = None,

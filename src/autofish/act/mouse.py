@@ -8,6 +8,30 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 pynput：pip install pynput") from exc
 
 
+def os_left_down() -> bool | None:
+    """读系统左键是否按下；失败返回 None。"""
+    try:
+        from Quartz import (  # type: ignore[import-untyped]
+            CGEventSourceButtonState,
+            kCGEventSourceStateCombinedSessionState,
+            kCGMouseButtonLeft,
+        )
+
+        return bool(
+            CGEventSourceButtonState(
+                kCGEventSourceStateCombinedSessionState,
+                kCGMouseButtonLeft,
+            )
+        )
+    except Exception:
+        try:
+            from AppKit import NSEvent  # type: ignore[import-untyped]
+
+            return bool(NSEvent.pressedMouseButtons() & 1)
+        except Exception:
+            return None
+
+
 class MouseActuator:
     """系统级左键按住 / 松开。"""
 
@@ -28,4 +52,5 @@ class MouseActuator:
             self._down = False
 
     def force_release(self) -> None:
+        """仅当我们曾按下时才松开；未控鼠则不碰系统。"""
         self.set_holding(False)
