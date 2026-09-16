@@ -16,6 +16,7 @@ class CaptureWorker(WorkerBase):
     def __init__(self, bus: AutofishBus, *, fps: float = 30.0) -> None:
         super().__init__(bus, "autofish-capture")
         self._dt = 1.0 / max(1.0, fps)
+        self._seq = 0
 
     def _run(self) -> None:
         while not self._stop.is_set():
@@ -24,11 +25,13 @@ class CaptureWorker(WorkerBase):
             if roi is not None and version > 0:
                 try:
                     frame = grab_roi(roi)
+                    self._seq += 1
                     self.bus.publish_frame(
                         FrameEvent(
                             frame=frame,
                             roi_version=version,
-                            ts=time.time(),
+                            ts=time.perf_counter(),
+                            seq=self._seq,
                         )
                     )
                 except Exception:  # noqa: BLE001

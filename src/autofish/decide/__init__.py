@@ -1,3 +1,13 @@
-"""段4：算法判定（待实现）。方案见 docs/autofish/decide/。"""
+"""段4：算法判定。"""
 
-__all__: list[str] = []
+from autofish.decide.policy import ThresholdPosPolicy
+
+__all__ = ["DecideWorker", "ThresholdPosPolicy"]
+
+
+def __getattr__(name: str):
+    if name == "DecideWorker":
+        from autofish.decide.worker import DecideWorker
+
+        return DecideWorker
+    raise AttributeError(name)

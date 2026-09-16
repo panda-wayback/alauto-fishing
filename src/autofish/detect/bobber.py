@@ -1,4 +1,4 @@
-"""对齐 AutoFishing：HSV 绿条 + 反掩膜空洞 = 鱼漂；输出 0～100。"""
+"""完整绿条两端各+5% → 找白 → 0～100（不越出 ROI/帧）。"""
 
 from __future__ import annotations
 
@@ -11,28 +11,29 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
-# AutoFishing settings.py 默认绿区 HSV（OpenCV H:0-179）
 DEFAULT_LOWER_ZONE = np.array([46, 84, 106], dtype=np.uint8)
 DEFAULT_UPPER_ZONE = np.array([67, 247, 193], dtype=np.uint8)
-
-# AF 默认 bar 宽约 250、空洞面积 8~350；按绿条宽度比例缩放
-_AF_REF_BAR_W = 250.0
-_HOLE_AREA_MIN = 8.0
-_HOLE_AREA_MAX = 350.0
+_ORANGE_LOWER = np.array([5, 90, 110], dtype=np.uint8)
+_ORANGE_UPPER = np.array([35, 255, 255], dtype=np.uint8)
+_WHITE_LOWER = np.array([0, 0, 175], dtype=np.uint8)
+_WHITE_UPPER = np.array([179, 70, 255], dtype=np.uint8)
+_MIN_BAR_W = 60
+_MIN_WHITE_PX = 24
+_EDGE_PAD_RATIO = 0.05
 
 
 @dataclass(frozen=True)
 class BobberHit:
-    """鱼漂检测结果。"""
-
     pos: float
-    """相对绿条：最左=0，最右=100。"""
+    """绿条两端+5%：左=0，右=100。"""
     x: float
-    """像素 x（相对 ROI 左缘）。"""
     y: float
     pixel_count: int
     bar_left: float = 0.0
+    bar_top: float = 0.0
     bar_width: float = 0.0
+    bar_height: float = 0.0
+    score: float = 0.0
 
 
 def pixel_to_pos(x: float, width: int) -> float:
@@ -46,7 +47,6 @@ def green_zone_mask(
     lower: np.ndarray | None = None,
     upper: np.ndarray | None = None,
 ) -> np.ndarray:
-    """RGB 帧 → 绿安全区二值掩膜（uint8 0/255）。"""
     if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ValueError("expected HxWx3 RGB image")
     bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
@@ -56,107 +56,115 @@ def green_zone_mask(
     return cv2.inRange(hsv, lo, hi)
 
 
-def find_green_bar(mask: np.ndarray) -> tuple[int, int, int, int] | None:
-    """在绿掩膜上找张力条绿区矩形 (x, y, w, h)。对齐 AF 扁长条条件。"""
-    closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 21), np.uint8))
-    contours, _ = cv2.findContours(closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    best = None
-    best_area = 0.0
+def orange_end_mask(rgb: np.ndarray) -> np.ndarray:
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    return cv2.inRange(hsv, _ORANGE_LOWER, _ORANGE_UPPER)
+
+
+def white_mask(rgb: np.ndarray) -> np.ndarray:
+    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    return cv2.inRange(hsv, _WHITE_LOWER, _WHITE_UPPER)
+
+
+def _green_row_band(gmask: np.ndarray) -> tuple[int, int] | None:
+    row = (gmask > 0).sum(axis=1)
+    peak = int(row.max()) if row.size else 0
+    if peak < 40:
+        return None
+    ys = np.where(row >= max(20, peak // 4))[0]
+    if ys.size < 4:
+        return None
+    return int(ys[0]), int(ys[-1]) + 1
+
+
+def _green_ends_via_orange(
+    rgb: np.ndarray, gmask: np.ndarray, y0: int, y1: int
+) -> tuple[int, int] | None:
+    """绿条左右端 ≈ 左橙右缘、右橙左缘（忽略中部鱼漂橙）。"""
+    zh = y1 - y0
+    fh, fw = rgb.shape[:2]
+    pad = max(2, zh // 5)
+    by0, by1 = max(0, y0 - pad), min(fh, y1 + pad)
+    strip = orange_end_mask(rgb)[by0:by1, :]
+    strip = cv2.morphologyEx(strip, cv2.MORPH_CLOSE, np.ones((3, 5), np.uint8))
+    contours, _ = cv2.findContours(strip, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    left_inner, right_inner = -1, fw + 1
+    left_lim, right_lim = int(fw * 0.34), int(fw * 0.66)
+    min_o = max(40, zh * 2)
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
-        x, y, w, h = cv2.boundingRect(cnt)
-        if h <= 0 or w < 80 or h < 8:
+        if area < min_o:
             continue
-        aspect = float(w) / h
-        if aspect < 3.5 or aspect > 16.0:
+        x, _y, w, h = cv2.boundingRect(cnt)
+        if h < 3 or w < 4:
             continue
-        if area > best_area:
-            best_area = area
-            best = (x, y, w, h)
-    return best
-
-
-def _hole_area_limits(bar_w: int) -> tuple[float, float]:
-    scale = max(0.5, bar_w / _AF_REF_BAR_W)
-    # 面积随分辨率平方缩放；抬高下限减少红区噪点
-    return max(40.0, _HOLE_AREA_MIN * scale * scale), _HOLE_AREA_MAX * scale * scale
-
-
-def find_hole_on_bar(
-    mask: np.ndarray, bar: tuple[int, int, int, int]
-) -> tuple[float, float, int] | None:
-    """
-    对齐 AF：在绿条水平带内反掩膜找小空洞。
-    只在条带 crop 内找，排除两端红区假洞；面积按条宽缩放。
-    """
-    zx, zy, zw, zh = bar
-    h, w = mask.shape
-    y0, y1 = max(0, zy), min(h, zy + zh)
-    x0, x1 = max(0, zx), min(w, zx + zw)
-    if y1 <= y0 or x1 <= x0:
-        return None
-
-    crop = mask[y0:y1, x0:x1]
-    inv = cv2.bitwise_not(crop)
-    # 去掉贴边的「整条外」连通域：先清零上下若几乎全非绿…用面积上限即可
-    contours, _ = cv2.findContours(inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    amin, amax = _hole_area_limits(zw)
-    # 不超过绿条面积的 25%
-    amax = min(amax, 0.25 * zw * max(1, zh))
-
-    best = None
-    best_score = -1.0
-    margin = max(8, int(0.10 * zw))
-    for cnt in contours:
-        area = float(cv2.contourArea(cnt))
-        if area < amin or area > amax:
+        cx = x + w / 2.0
+        if int(cv2.countNonZero(gmask[y0:y1, x : min(fw, x + w)])) > area * 0.45:
             continue
-        fx, fy, fw, fh = cv2.boundingRect(cnt)
-        cx_local = fx + fw / 2.0
-        # 排除左右端红过渡假洞
-        if cx_local < margin or cx_local > (x1 - x0) - margin:
-            continue
-        # 偏好更「高」的洞（鱼漂竖条）且面积适中
-        score = area * (1.0 + 0.5 * (fh / max(1, fw)))
-        if score > best_score:
-            best_score = score
-            best = (
-                float(x0 + cx_local),
-                float(y0 + fy + fh / 2.0),
-                int(area),
-            )
-    if best is not None:
-        return best
-
-    # 回退：绿条内按列「缺绿」峰值（鱼漂挡住绿）
-    return _column_gap(crop, x0, y0, zw, zh)
+        if cx <= left_lim:
+            left_inner = max(left_inner, x + w)
+        elif cx >= right_lim:
+            right_inner = min(right_inner, x)
+    if left_inner < 0 or right_inner > fw:
+        return None
+    if right_inner - left_inner < _MIN_BAR_W:
+        return None
+    return left_inner, right_inner
 
 
-def _column_gap(
-    crop: np.ndarray, x0: int, y0: int, zw: int, zh: int
-) -> tuple[float, float, int] | None:
-    """列投影：绿越少越可能是鱼漂。"""
-    if crop.size == 0:
-        return None
-    green_ratio = (crop > 0).mean(axis=0)  # per column
-    gap = 1.0 - green_ratio.astype(np.float64)
-    if gap.size < 5:
-        return None
-    # 平滑
-    k = max(3, zw // 40 | 1)
-    kernel = np.ones(k) / k
-    smooth = np.convolve(gap, kernel, mode="same")
-    margin = max(8, int(0.10 * zw))
-    smooth[:margin] = 0
-    smooth[-margin:] = 0
-    if smooth.max() < 0.12:
-        return None
-    cx_local = int(np.argmax(smooth))
-    return (
-        float(x0 + cx_local),
-        float(y0 + zh / 2.0),
-        int(smooth[cx_local] * zh),
+def _green_ends_via_close(gmask: np.ndarray, y0: int, y1: int) -> tuple[int, int] | None:
+    """完整绿水平跨度：强横闭运算桥接鱼漂空洞。"""
+    zh = max(1, y1 - y0)
+    fw = gmask.shape[1]
+    # 核宽按帧宽，足以盖住鱼漂挖断，且不随鱼漂位置乱跳
+    kx = max(61, min(fw // 4, max(zh * 3, 81)))
+    if kx % 2 == 0:
+        kx += 1
+    closed = cv2.morphologyEx(
+        gmask, cv2.MORPH_CLOSE, np.ones((max(3, zh // 4), kx), np.uint8)
     )
+    cols = (closed[y0:y1, :] > 0).sum(axis=0)
+    thr = max(2, zh // 10)
+    xs = np.where(cols >= thr)[0]
+    if xs.size < _MIN_BAR_W:
+        return None
+    return int(xs[0]), int(xs[-1]) + 1
+
+
+def find_green_bar(
+    rgb: np.ndarray,
+    mask: np.ndarray | None = None,
+) -> tuple[int, int, int, int] | None:
+    """
+    读数区间 (x,y,w,h)：完整绿端 + 左右各 5% 绿宽，裁在帧内（=手框内）。
+    """
+    if rgb.ndim != 3:
+        return None
+    gmask = mask if mask is not None else green_zone_mask(rgb)
+    band = _green_row_band(gmask)
+    if band is None:
+        return None
+    y0, y1 = band
+    zh = y1 - y0
+    # 绿端优先闭运算（稳）；橙交界作校验兜底
+    ends = _green_ends_via_close(gmask, y0, y1)
+    if ends is None:
+        ends = _green_ends_via_orange(rgb, gmask, y0, y1)
+    if ends is None:
+        return None
+    gx0, gx1 = ends
+    gw = gx1 - gx0
+    if gw < _MIN_BAR_W:
+        return None
+    pad = max(1, int(round(gw * _EDGE_PAD_RATIO)))
+    fw = rgb.shape[1]
+    x0 = max(0, gx0 - pad)
+    x1 = min(fw, gx1 + pad)
+    if x1 - x0 < _MIN_BAR_W:
+        return None
+    return x0, y0, x1 - x0, zh
 
 
 def find_bobber(
@@ -165,30 +173,52 @@ def find_bobber(
     lower: np.ndarray | None = None,
     upper: np.ndarray | None = None,
 ) -> BobberHit | None:
-    """
-    对齐 AF 小游戏：绿条 HSV → 空洞/缺绿中心。
-    pos 相对绿条宽度 0～100。
-    """
-    mask = green_zone_mask(rgb, lower=lower, upper=upper)
-    bar = find_green_bar(mask)
+    """绿条两端+5% 内找白 → 0～100。"""
+    gmask = green_zone_mask(rgb, lower=lower, upper=upper)
+    bar = find_green_bar(rgb, gmask)
     if bar is None:
         return None
     zx, zy, zw, zh = bar
-    hole = find_hole_on_bar(mask, bar)
-    if hole is None:
+    fh, fw = rgb.shape[:2]
+    y0 = max(0, zy - max(4, int(zh * 0.55)))
+    y1 = min(fh, zy + zh + max(2, int(zh * 0.12)))
+    x0, x1 = max(0, zx), min(fw, zx + zw)
+    crop = rgb[y0:y1, x0:x1]
+    wm = cv2.morphologyEx(white_mask(crop), cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    min_px = max(_MIN_WHITE_PX, int(zh * 0.8))
+    if int(cv2.countNonZero(wm)) < min_px:
         return None
-    cx, cy, area = hole
-    pos = pixel_to_pos(cx - zx, zw)
+    contours, _ = cv2.findContours(wm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    best = None
+    best_score = -1.0
+    bar_cy = zy + zh / 2.0
+    for cnt in contours:
+        area = float(cv2.contourArea(cnt))
+        if area < min_px:
+            continue
+        m = cv2.moments(cnt)
+        if m["m00"] <= 1e-3:
+            continue
+        cx = float(x0 + m["m10"] / m["m00"])
+        cy = float(y0 + m["m01"] / m["m00"])
+        if cx < zx or cx > zx + zw:
+            continue
+        dist = abs(cy - bar_cy) / max(1.0, float(zh))
+        score = area / (1.0 + dist * 3.0)
+        if score > best_score:
+            best_score = score
+            best = (cx, cy, int(area))
+    if best is None:
+        return None
+    cx, cy, px = best
     return BobberHit(
-        pos=pos,
+        pos=pixel_to_pos(cx - zx, zw),
         x=cx,
         y=cy,
-        pixel_count=area,
+        pixel_count=px,
         bar_left=float(zx),
+        bar_top=float(zy),
         bar_width=float(zw),
+        bar_height=float(zh),
+        score=min(1.0, px / max(1.0, float(zh * zh))),
     )
-
-
-def orange_mask(rgb: np.ndarray) -> np.ndarray:
-    """兼容名：绿区布尔掩膜。"""
-    return green_zone_mask(rgb) > 0

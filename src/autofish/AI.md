@@ -8,23 +8,24 @@
 
 ## 目录清单
 
-- `locate/` — 段1 圈定范围（ROI、LocatorWorker）
-- `capture/` — 段2 mss 截图（screen、CaptureWorker）
-- `detect/` — 段3 识别（bobber、平滑、吸色、DetectorWorker）
-- `decide/` — 段4 算法判定（未实现）
-- `act/` — 段5 执行（未实现）
-- `topics.py` / `bus.py` / `fishing_fsm.py` / `pipeline.py` / `worker_base.py` — 域总线与串接
-- `preview.py` — CLI（无头调试图；`--ui` 转调 `tools.preview_app`）
+- `locate/` — 段1 圈定范围
+- `capture/` — 段2 mss 截图
+- `detect/` — 段3 完整绿条两端+5% → 找白 → 0～100（不越手框）
+- `decide/` — 段4 策略
+- `act/` — 段5 真鼠标
+- `topics.py` / `bus.py` / `fishing_fsm.py` / `pipeline.py` / `worker_base.py`
+- `preview.py` — CLI（`--ui` → `tools.preview_app`）
 
 ## 对外契约
 
-- `AutofishPipeline` — 启停；`subscribe` / `snapshot` / `set_roi_manual` / `locate_now`
-- `AutofishBus` — 域总线（内部 `common.pubsub.EventBus`）
-- `Topic` / `FishingState` — 主题与钓鱼状态
-- `Roi` / `grab_roi` / `find_bobber` — 段内原语
+- `AutofishPipeline` — `start_monitor` / `start_decide` / `start_act` 及对应 stop
+- `Topic.ACTION_INTENT` / `ActionIntentEvent`
+- `DecideWorker` / `ActWorker` / `ThresholdPosPolicy`
 
 ## 约束
 
-- 依赖 `common.pubsub`；**禁止**依赖 `sim` / `ui` / `algo`。
-- 预览窗在 `src/tools/`，不在本包。
+- Detect：完整绿条两端各+5% 为 0/100（略含近端橙）；找白；不越 ROI；无模板/吸色/青框。
+- 手框 ROI = 监控 = CV；监控原画面，只标命中。
+- Decide 不点鼠标；Act 不决策。
+- 禁止依赖 `sim` / `ui` / `algo`。
 - 行为以 `docs/autofish/` 为准。

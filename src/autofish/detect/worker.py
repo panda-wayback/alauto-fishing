@@ -7,27 +7,22 @@ import time
 
 from autofish.bus import AutofishBus
 from autofish.detect.bobber import find_bobber
-from autofish.detect.hsv_calib import ZoneHsv, load_zone_hsv
-from autofish.detect.smooth import PosSmoother
 from autofish.topics import FrameEvent, PosEvent, Topic
 from autofish.worker_base import WorkerBase
 
 
 class DetectorWorker(WorkerBase):
-    """消费帧 → 色块读数 → 发布 Pos。"""
+    """
+    消费 Frame → 发 Pos（绿端+5% 内找白）。
+    latest-wins；Pos 携带被分析的那一帧，保证 UI 读数与画面同频。
+    """
 
-    def __init__(self, bus: AutofishBus, *, zone: ZoneHsv | None = None) -> None:
+    def __init__(self, bus: AutofishBus) -> None:
         super().__init__(bus, "autofish-detector")
-        self._zone = zone or load_zone_hsv()
-        self._smoother = PosSmoother(window=7, hold_lost=12)
-        self._last_frame_ts = 0.0
+        self._last_seq = -1
         self._pending: FrameEvent | None = None
         self._cond = threading.Condition()
         bus.subscribe(Topic.FRAME, self._on_frame)
-
-    def set_zone(self, zone: ZoneHsv) -> None:
-        self._zone = zone
-        self._smoother.reset()
 
     def stop(self, timeout: float = 2.0) -> None:
         self.bus.unsubscribe(Topic.FRAME, self._on_frame)
@@ -43,24 +38,24 @@ class DetectorWorker(WorkerBase):
     def _run(self) -> None:
         while not self._stop.is_set():
             with self._cond:
-                self._cond.wait(timeout=0.05)
+                while self._pending is None and not self._stop.is_set():
+                    self._cond.wait(timeout=0.2)
                 event = self._pending
                 self._pending = None
             if event is None:
                 continue
-            if event.ts <= self._last_frame_ts:
+            if event.seq <= self._last_seq:
                 continue
-            self._last_frame_ts = event.ts
-            raw = find_bobber(
-                event.frame, lower=self._zone.lower, upper=self._zone.upper
-            )
-            hit = self._smoother.push(raw)
+            self._last_seq = event.seq
+            raw = find_bobber(event.frame)
             self.bus.publish_pos(
                 PosEvent(
-                    pos=None if hit is None else hit.pos,
-                    hit=hit,
+                    pos=None if raw is None else raw.pos,
+                    hit=raw,
                     roi_version=event.roi_version,
                     frame_ts=event.ts,
                     ts=time.time(),
+                    frame_seq=event.seq,
+                    frame=event.frame,
                 )
             )

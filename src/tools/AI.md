@@ -4,18 +4,20 @@
 
 ## 本文件夹职责
 
-调试与编排入口：可组合 `autofish` + `sim` + `ui`。方案上不属于五段流水线。
+调试壳：订阅总线展示；**监控 / 策略 / 操作** 独立启停。模拟器仅手玩，不跟 Act。
 
 ## 目录清单
 
-- `preview_app.py` — 真机框选/读数预览窗（可并排模拟器）
+- `preview_app.py` — 调试壳 UI
 
 ## 对外契约
 
-- `PreviewApp` — pygame 预览窗；`run()` 进入主循环
-- CLI 仍经 `python -m autofish.preview --ui` 打开
+- `PreviewApp`
+- `PreviewApp`：`M/S/A` 开关；空格截屏后**手框** ROI（=监控=CV）；`C` 重框；无找绿入口
+- 监控显示原画面；叠层只标鱼漂命中（不画青框/青缘）
+- 禁止把 Act 状态写入 `FishingGame`
 
 ## 约束
 
 - 允许依赖 `autofish` / `sim` / `ui`。
-- 禁止把业务五段实现写进本包。
+- 禁止实现五段业务；禁止壳内耦合模拟器与操作器。

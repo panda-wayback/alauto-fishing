@@ -16,6 +16,6 @@
 | **通用库** | [`docs/common/`](common/) | 无业务基础设施 |
 | └ 订阅总线 | [`docs/common/pubsub/`](common/pubsub/) | 进程内 Pub/Sub |
 
-调试预览窗（真机+模拟器并排）在代码 `src/tools/`，不属于上表业务段。
+调试预览窗（真机+模拟器并排）在代码 `src/tools/`，不属于上表业务段；监控显示原画面（可叠框/线）见 [`docs/autofish/`](autofish/) 约束。
 
-推进顺序：先模拟器与算法测试 → 再 autofish 各段待拆 → common 按页校对实现。
+推进顺序：Decide/Act 契约已写入 → 实现订阅链与预览（真鼠标 + 日志）→ common 按页校对。

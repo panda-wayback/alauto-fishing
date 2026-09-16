@@ -5,7 +5,6 @@ from autofish.detect import (
     BobberHit,
     find_bobber,
     green_zone_mask,
-    orange_mask,
     pixel_to_pos,
 )
 from autofish.capture import (
@@ -37,7 +36,6 @@ __all__ = [
     "green_zone_mask",
     "load_roi",
     "load_screen",
-    "orange_mask",
     "pixel_to_pos",
     "save_roi",
     "save_screen",

@@ -13,6 +13,7 @@ from common.pubsub import EventBus
 from autofish.detect.bobber import BobberHit
 from autofish.locate.roi import Roi
 from autofish.topics import (
+    ActionIntentEvent,
     FishingState,
     FishingStateEvent,
     FrameEvent,
@@ -37,6 +38,9 @@ class AutofishSnapshot:
     fishing_state: FishingState = FishingState.IDLE
     fishing_detail: str = ""
     state_ts: float = 0.0
+    holding: bool | None = None
+    intent_reason: str = ""
+    intent_ts: float = 0.0
 
 
 class AutofishBus:
@@ -68,6 +72,9 @@ class AutofishBus:
                 fishing_state=s.fishing_state,
                 fishing_detail=s.fishing_detail,
                 state_ts=s.state_ts,
+                holding=s.holding,
+                intent_reason=s.intent_reason,
+                intent_ts=s.intent_ts,
             )
 
     def current_roi(self) -> tuple[Roi | None, int]:
@@ -112,6 +119,13 @@ class AutofishBus:
             self._snap.fishing_detail = event.detail
             self._snap.state_ts = event.ts
         self._events.publish(Topic.FISHING_STATE, event)
+
+    def publish_action_intent(self, event: ActionIntentEvent) -> None:
+        with self._lock:
+            self._snap.holding = event.holding
+            self._snap.intent_reason = event.reason
+            self._snap.intent_ts = event.ts
+        self._events.publish(Topic.ACTION_INTENT, event)
 
     def clear_roi(self, source: str = "clear") -> None:
         with self._lock:

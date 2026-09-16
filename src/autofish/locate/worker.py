@@ -1,92 +1,82 @@
-"""段1：圈定范围 — Locator。"""
+"""段1：圈定范围 — Locator（固定绿 HSV 找绿条）。"""
 
 from __future__ import annotations
 
 import time
-from pathlib import Path
-
-import numpy as np
 
 from autofish.bus import AutofishBus
 from autofish.capture.screen import grab_primary
-from autofish.locate.roi import DEFAULT_BAR_TEMPLATE, Roi, save_roi
+from autofish.detect.bobber import find_green_bar, green_zone_mask
+from autofish.locate.roi import Roi, save_roi
 from autofish.topics import RoiEvent
 from autofish.worker_base import WorkerBase
 
-try:
-    import cv2
-except ImportError as exc:  # pragma: no cover
-    raise ImportError("需要安装 opencv-python-headless") from exc
+
+def roi_from_green_rgb(
+    rgb,
+    *,
+    origin_left: int = 0,
+    origin_top: int = 0,
+    pad_x: int = 8,
+    pad_y: int | None = None,
+) -> tuple[Roi, float] | None:
+    """在 RGB 图上找绿条 → 屏幕绝对 ROI；竖直多留边以容纳鱼漂。"""
+    mask = green_zone_mask(rgb)
+    bar = find_green_bar(rgb, mask)
+    if bar is None:
+        return None
+    x, y, w, h = bar
+    ih, iw = rgb.shape[:2]
+    py = pad_y if pad_y is not None else max(48, int(h * 1.2))
+    x0 = max(0, x - pad_x)
+    y0 = max(0, y - py)
+    x1 = min(iw, x + w + pad_x)
+    y1 = min(ih, y + h + py)
+    rw, rh = x1 - x0, y1 - y0
+    if rw < 8 or rh < 4:
+        return None
+    roi = Roi(
+        left=origin_left + x0,
+        top=origin_top + y0,
+        width=rw,
+        height=rh,
+    )
+    score = float(w * h) / float(max(1, iw * ih))
+    return roi, score
 
 
 class LocatorWorker(WorkerBase):
-    """matchTemplate 找张力条 → 发布 ROI（低频）。"""
+    """固定绿 HSV 找绿条 → 发布 ROI（低频）。"""
 
     def __init__(
         self,
         bus: AutofishBus,
         *,
-        template_path: Path = DEFAULT_BAR_TEMPLATE,
         interval_s: float = 1.0,
-        min_score: float = 0.55,
         persist_roi: bool = True,
     ) -> None:
         super().__init__(bus, "autofish-locator")
-        self.template_path = template_path
         self.interval_s = interval_s
-        self.min_score = min_score
         self.persist_roi = persist_roi
         self._version = 0
-        self._tpl: np.ndarray | None = None
-
-    def _load_tpl(self) -> np.ndarray | None:
-        if self._tpl is not None:
-            return self._tpl
-        if not self.template_path.exists():
-            return None
-        bgr = cv2.imread(str(self.template_path), cv2.IMREAD_COLOR)
-        if bgr is None:
-            return None
-        self._tpl = bgr
-        return self._tpl
 
     def locate_once(self) -> RoiEvent | None:
-        tpl = self._load_tpl()
-        if tpl is None:
-            return None
         grab = grab_primary()
-        hay = cv2.cvtColor(grab.rgb, cv2.COLOR_RGB2BGR)
-        th, tw = tpl.shape[:2]
-        scale = min(1.0, hay.shape[1] / tw, hay.shape[0] / th)
-        if scale < 0.999:
-            tpl_use = cv2.resize(
-                tpl,
-                (max(1, int(tw * scale)), max(1, int(th * scale))),
-                interpolation=cv2.INTER_AREA,
-            )
-        else:
-            tpl_use = tpl
-        if hay.shape[0] < tpl_use.shape[0] or hay.shape[1] < tpl_use.shape[1]:
-            return None
-        res = cv2.matchTemplate(hay, tpl_use, cv2.TM_CCOEFF_NORMED)
-        _min_v, max_v, _min_l, max_loc = cv2.minMaxLoc(res)
-        if max_v < self.min_score:
-            return None
-        x, y = max_loc
-        h, w = tpl_use.shape[:2]
-        roi = Roi(
-            left=grab.origin_left + int(x),
-            top=grab.origin_top + int(y),
-            width=int(w),
-            height=int(h),
+        found = roi_from_green_rgb(
+            grab.rgb,
+            origin_left=grab.origin_left,
+            origin_top=grab.origin_top,
         )
+        if found is None:
+            return None
+        roi, score = found
         self._version += 1
         event = RoiEvent(
             roi=roi,
             version=self._version,
             ts=time.time(),
-            source="template",
-            score=float(max_v),
+            source="green",
+            score=score,
         )
         self.bus.publish_roi(event)
         if self.persist_roi:

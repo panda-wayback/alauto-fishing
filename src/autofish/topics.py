@@ -1,4 +1,4 @@
-"""感知主题与事件载荷。"""
+"""感知 / 决策主题与事件载荷。"""
 
 from __future__ import annotations
 
@@ -17,12 +17,13 @@ class Topic(str, Enum):
     FRAME = "frame"
     POS = "pos"
     FISHING_STATE = "fishing_state"
+    ACTION_INTENT = "action_intent"
 
 
 class FishingState(str, Enum):
-    IDLE = "idle"          # 无有效条 / 未在拉鱼
-    FISHING = "fishing"    # 条在且读数可用
-    LOST = "lost"          # 曾在钓，暂时丢漂或丢条
+    IDLE = "idle"
+    FISHING = "fishing"
+    LOST = "lost"
 
 
 @dataclass(frozen=True)
@@ -30,7 +31,7 @@ class RoiEvent:
     roi: Roi | None
     version: int
     ts: float
-    source: str  # "manual" | "template" | "clear"
+    source: str  # "manual" | "green" | "clear"
     score: float = 0.0
 
 
@@ -39,6 +40,7 @@ class FrameEvent:
     frame: np.ndarray
     roi_version: int
     ts: float
+    seq: int = 0
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,10 @@ class PosEvent:
     roi_version: int
     frame_ts: float
     ts: float
+    frame_seq: int = 0
+    """与 FrameEvent.seq 对齐；同帧画面与读数。"""
+    frame: np.ndarray | None = None
+    """刚完成识别的那一帧（供 UI 与读数同频显示）。"""
 
 
 @dataclass(frozen=True)
@@ -57,5 +63,14 @@ class FishingStateEvent:
     detail: str = ""
 
 
-# 订阅回调
-Subscriber = Any  # Callable[[Any], None]
+@dataclass(frozen=True)
+class ActionIntentEvent:
+    """Decide → Act：要按住 / 要松开。"""
+
+    holding: bool
+    ts: float
+    reason: str = ""
+    pos: float | None = None
+
+
+Subscriber = Any
