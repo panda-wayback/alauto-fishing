@@ -5,8 +5,8 @@ from __future__ import annotations
 import math
 from enum import Enum
 
-import config
-from difficulty import DEFAULT_TIER, TierProfile, clamp_tier, profile_for
+from sim import config
+from sim.difficulty import DEFAULT_TIER, TierProfile, clamp_tier, profile_for
 
 
 class State(Enum):
@@ -80,12 +80,16 @@ class FishingGame:
             accel = player_pull - fish_pull
         else:
             accel = -fish_pull
+            # 松开立刻刹向右动量，避免右向滑行过长
+            if self.bobber_v > 0:
+                accel -= config.RELEASE_RIGHT_BRAKE * self.bobber_v
 
         accel -= config.VELOCITY_DRAG * self.bobber_v
 
         self.bobber_v += accel * dt
+        max_right = p.max_speed * config.RIGHT_SPEED_SCALE
         max_left = p.max_speed * config.LEFT_SPEED_SCALE
-        self.bobber_v = max(-max_left, min(p.max_speed, self.bobber_v))
+        self.bobber_v = max(-max_left, min(max_right, self.bobber_v))
         self.bobber_x += self.bobber_v * dt
 
         if self.holding:

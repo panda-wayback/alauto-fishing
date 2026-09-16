@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+_SRC = Path(__file__).resolve().parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
 import pygame
 
-import config
-from fishing import FishingGame, State
-from render import Renderer
+from sim import config
+from sim.game import FishingGame, State
+from ui.render import Renderer
 
 _TIER_KEYS = {
     pygame.K_1: 1,

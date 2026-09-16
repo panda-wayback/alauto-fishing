@@ -34,6 +34,11 @@ preview.png
 real_preview.png
 simulator_preview.png
 fish_icon_large.png
+data/screen.png
+data/screen.meta.json
+data/hsv_zone.json
+data/debug_*.png
+data/_*.png
 
 # 测试 / 覆盖率
 .pytest_cache/

@@ -3,7 +3,7 @@
 ## 环境
 
 - Python 3.10+
-- 依赖：`pygame`（见 `requirements.txt`）
+- 依赖：见 `requirements.txt`（pygame、mss、numpy、opencv-python-headless、Pillow）
 
 ## 安装
 
@@ -34,4 +34,38 @@ python3 -m venv .venv   # 或使用已有 .conda
 | R | 重开（保留当前等级） |
 | Esc | 退出 |
 
-玩法说明见 `docs/README.md`，难度见 `docs/difficulty/`。手感基准参数见 `config.py`。
+玩法说明见 `docs/README.md`，难度见 `docs/difficulty/`，算法测试分包见 `docs/algo-test/`。手感基准参数见 `src/sim/config.py`。
+
+## 算法侧（无头）
+
+包在 `src/` 下；直接脚本请带上 `PYTHONPATH=src`（`main.py` 已自动处理）。
+
+```bash
+PYTHONPATH=src .conda/bin/python -c "from algo.runner import run_episode; ..."
+```
+
+```python
+from algo.runner import run_episode, run_batch
+from sim.api import Observation
+
+class MyPolicy:
+    def decide(self, obs: Observation) -> bool:
+        # True=按住收线，False=松开
+        ...
+
+run_episode(MyPolicy(), tier=4)
+run_batch(MyPolicy(), episodes=100, tier=4)
+```
+
+## 真机感知（截图 + 色块）
+
+1. 打开预览窗，游戏画面露在主屏上。
+2. **空格**：自动截全屏（窗口会先最小化）→ 进入框选。
+3. **拖拽**框出张力条 → **Enter** 写入 `data/roi.json`。
+4. 离线重框：对已有 `data/screen.png` 按 **C**，无需再截。
+
+```bash
+PYTHONPATH=src .conda/bin/python -m vision.preview --ui
+```
+
+读数 **0～100**（ROI 最左=0，最右=100）。窗口上方大号为**真机读数**，左侧真机截图，右侧模拟器。方案见 `docs/vision/`。

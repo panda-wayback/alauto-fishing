@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pygame
 
-import config
-from fishing import FishingGame, State
+from sim import config
+from sim.game import FishingGame, State
 
 
 def _load(path) -> pygame.Surface:
@@ -77,5 +77,8 @@ class Renderer:
         text = self.font.render(tip, True, (220, 220, 210))
         self.screen.blit(
             text,
-            text.get_rect(centerx=config.WINDOW_WIDTH // 2, bottom=config.WINDOW_HEIGHT - 16),
+            text.get_rect(
+                centerx=self.screen.get_width() // 2,
+                bottom=self.screen.get_height() - 16,
+            ),
         )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-import config
+from sim import config
 
 DEFAULT_TIER = 4
 MIN_TIER = 1
