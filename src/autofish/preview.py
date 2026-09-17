@@ -12,7 +12,8 @@ _SRC = Path(__file__).resolve().parent.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from autofish.detect.bobber import BobberHit, find_bobber, green_zone_mask
+from autofish.detect.api import detect
+from autofish.detect.bobber import BobberHit, green_zone_mask
 from autofish.capture.screen import grab_roi
 from autofish.locate.roi import DEFAULT_ROI_PATH, load_roi
 
@@ -20,7 +21,7 @@ from autofish.locate.roi import DEFAULT_ROI_PATH, load_roi
 def _save_preview(rgb: np.ndarray, out: Path) -> BobberHit | None:
     from PIL import Image
 
-    hit = find_bobber(rgb)
+    hit = detect(rgb)
     mask = green_zone_mask(rgb) > 0
     vis = rgb.copy()
     vis[mask] = np.clip(vis[mask].astype(np.int16) + (0, 60, 0), 0, 255).astype(np.uint8)

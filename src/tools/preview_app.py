@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDoubleSpinBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -42,7 +41,8 @@ from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
 from autofish.act.mouse import os_left_down
-from autofish.detect.bobber import BobberHit, find_green_bar
+from autofish.detect.api import find_bar
+from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
     ScreenGrab,
@@ -59,6 +59,7 @@ from autofish.topics import (
     PosEvent,
     Topic,
 )
+from tools.dual_range_axis import DualRangeAxis
 
 IDLE = "idle"
 SELECT = "select"
@@ -106,7 +107,7 @@ def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
             int(hit.bar_height),
         )
     else:
-        bar = find_green_bar(vis)
+        bar = find_bar(vis)
 
     if bar is not None:
         zx, zy, zw, zh = bar
@@ -400,37 +401,16 @@ class PreviewApp(QMainWindow):
         self.chk_decide = QCheckBox("启用策略")
         self.chk_decide.toggled.connect(self._on_decide_toggled)
         row1.addWidget(self.chk_decide)
-        row1.addWidget(QLabel("按住 U("))
-        self.spin_press_lo = QDoubleSpinBox()
-        self.spin_press_lo.setRange(0.0, 98.0)
-        self.spin_press_lo.setDecimals(0)
-        self.spin_press_lo.setValue(40.0)
-        row1.addWidget(self.spin_press_lo)
-        row1.addWidget(QLabel("～"))
-        self.spin_press_hi = QDoubleSpinBox()
-        self.spin_press_hi.setRange(1.0, 99.0)
-        self.spin_press_hi.setDecimals(0)
-        self.spin_press_hi.setValue(70.0)
-        row1.addWidget(self.spin_press_hi)
-        row1.addWidget(QLabel(")  松开 U("))
-        self.spin_release_lo = QDoubleSpinBox()
-        self.spin_release_lo.setRange(1.0, 99.0)
-        self.spin_release_lo.setDecimals(0)
-        self.spin_release_lo.setValue(75.0)
-        row1.addWidget(self.spin_release_lo)
-        row1.addWidget(QLabel("～"))
-        self.spin_release_hi = QDoubleSpinBox()
-        self.spin_release_hi.setRange(2.0, 100.0)
-        self.spin_release_hi.setDecimals(0)
-        self.spin_release_hi.setValue(90.0)
-        row1.addWidget(self.spin_release_hi)
-        row1.addWidget(QLabel(")"))
         self.btn_apply_policy = QPushButton("应用")
         self.btn_apply_policy.clicked.connect(self._apply_policy)
         row1.addWidget(self.btn_apply_policy)
-        row1.addWidget(QLabel("切换后重抽"))
+        row1.addWidget(QLabel("拖动数轴调范围 · 两段不重叠且间隔≥5 · 切换后重抽"))
         row1.addStretch(1)
         strat_l.addLayout(row1)
+        self.range_axis = DualRangeAxis(
+            press=(40.0, 70.0), release=(75.0, 90.0), min_gap=5.0
+        )
+        strat_l.addWidget(self.range_axis)
         row2 = QHBoxLayout()
         row2.addWidget(QLabel("实时输出："))
         self.lbl_intent = QLabel("未启用")
@@ -591,12 +571,10 @@ class PreviewApp(QMainWindow):
             )
         low, high = self._current_policy_thresholds()
         pos_s = "—" if pos is None else f"{pos:.1f}"
+        plo, phi, rlo, rhi = self.range_axis.ranges()
         detail = (
             f"POS={pos_s} · 当前 <{low:.0f} 按住 / >{high:.0f} 松开"
-            f" · 范围 U({self.spin_press_lo.value():.0f}～"
-            f"{self.spin_press_hi.value():.0f})/"
-            f"U({self.spin_release_lo.value():.0f}～"
-            f"{self.spin_release_hi.value():.0f})"
+            f" · 范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
         )
         if reason:
             detail += f" · {reason}"
@@ -606,10 +584,8 @@ class PreviewApp(QMainWindow):
         pipe = self._pipe
         if pipe is not None and pipe.decide_on:
             return pipe.decide.current_thresholds
-        return (
-            (self.spin_press_lo.value() + self.spin_press_hi.value()) / 2.0,
-            (self.spin_release_lo.value() + self.spin_release_hi.value()) / 2.0,
-        )
+        plo, phi, rlo, rhi = self.range_axis.ranges()
+        return (plo + phi) / 2.0, (rlo + rhi) / 2.0
 
     def _refresh_pos(self) -> None:
         if self.hit is not None:
@@ -682,12 +658,10 @@ class PreviewApp(QMainWindow):
                 None if self.hit is None else self.hit.pos
             )
             low, high = self._current_policy_thresholds()
+            plo, phi, rlo, rhi = self.range_axis.ranges()
             self._log(
                 f"策略 ON · 当前 <{low:.0f} / >{high:.0f} · "
-                f"范围 U({self.spin_press_lo.value():.0f}～"
-                f"{self.spin_press_hi.value():.0f})/"
-                f"U({self.spin_release_lo.value():.0f}～"
-                f"{self.spin_release_hi.value():.0f})"
+                f"范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
             )
         elif not checked and pipe.decide_on:
             pipe.stop_decide()
@@ -709,23 +683,14 @@ class PreviewApp(QMainWindow):
         self._refresh_mouse()
 
     def _apply_policy(self) -> bool:
-        plo = float(self.spin_press_lo.value())
-        phi = float(self.spin_press_hi.value())
-        rlo = float(self.spin_release_lo.value())
-        rhi = float(self.spin_release_hi.value())
-        if plo > phi:
-            self.lbl_hint.setText("策略无效：按住范围下限须 ≤ 上限")
-            QMessageBox.warning(self, "策略", "按住范围：下限必须 ≤ 上限")
+        plo, phi, rlo, rhi = self.range_axis.ranges()
+        if plo > phi or rlo > rhi:
+            self.lbl_hint.setText("策略无效：区间上下限颠倒")
+            QMessageBox.warning(self, "策略", "区间上下限无效")
             return False
-        if rlo > rhi:
-            self.lbl_hint.setText("策略无效：松开范围下限须 ≤ 上限")
-            QMessageBox.warning(self, "策略", "松开范围：下限必须 ≤ 上限")
-            return False
-        if phi >= rlo:
-            self.lbl_hint.setText("策略无效：按住上限须小于松开下限")
-            QMessageBox.warning(
-                self, "策略", "按住上限必须小于松开下限（两段范围不能交叉）"
-            )
+        if rlo - phi < 5:
+            self.lbl_hint.setText("策略无效：两段间隔须 ≥ 5")
+            QMessageBox.warning(self, "策略", "按住与松开区间至少间隔 5 个百分点")
             return False
         pipe = self._ensure_pipe()
         pipe.set_decide_ranges(plo, phi, rlo, rhi)

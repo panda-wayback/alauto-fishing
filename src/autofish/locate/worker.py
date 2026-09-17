@@ -6,7 +6,7 @@ import time
 
 from autofish.bus import AutofishBus
 from autofish.capture.screen import grab_primary
-from autofish.detect.bobber import find_green_span
+from autofish.detect.api import find_bar
 from autofish.locate.roi import Roi, save_roi
 from autofish.topics import RoiEvent
 from autofish.worker_base import WorkerBase
@@ -21,7 +21,7 @@ def roi_from_green_rgb(
     pad_y: int | None = None,
 ) -> tuple[Roi, float] | None:
     """找绿条 → 屏幕绝对 ROI（小幅 pad 容纳鱼漂）。"""
-    bar = find_green_span(rgb)
+    bar = find_bar(rgb)
     if bar is None:
         return None
     x, y, w, h = bar

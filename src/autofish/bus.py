@@ -103,6 +103,13 @@ class AutofishBus:
             self._snap.pos_frame_seq = event.frame_seq
         self._events.publish(Topic.POS, event)
 
+    def reset_pos_seq(self) -> None:
+        """监控重启时清 Pos 帧序，避免与 capture seq 重置打架。"""
+        with self._lock:
+            self._snap.pos_frame_seq = 0
+            self._snap.pos = None
+            self._snap.hit = None
+
     def publish_fishing_state(self, event: FishingStateEvent) -> None:
         with self._lock:
             if (

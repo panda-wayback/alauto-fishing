@@ -18,6 +18,10 @@ class CaptureWorker(WorkerBase):
         self._dt = 1.0 / max(1.0, fps)
         self._seq = 0
 
+    def start(self) -> None:
+        self._seq = 0
+        super().start()
+
     def _run(self) -> None:
         while not self._stop.is_set():
             t0 = time.perf_counter()

@@ -10,7 +10,7 @@
 
 - `locate/` — 段1 手框 ROI（存盘 + 同步 mss）
 - `capture/` — 段2 按手框 ROI mss 截帧
-- `detect/` — 段3 手框画面内绿+5% 找白 → Pos（**不改 mss**）
+- `detect/` — 段3 可替换识别器（默认 color_blocks）→ Pos（**不改 mss**）
 - `decide/` — 段4 策略
 - `act/` — 段5 真鼠标
 - `topics.py` / `bus.py` / `fishing_fsm.py` / `pipeline.py` / `worker_base.py`
@@ -26,7 +26,7 @@
 ## 约束
 
 - 手框唯一决定 mss；Detect 只读数，禁止缩/改 ROI。
-- Detect：绿闭运算扁长轮廓 + 邻接橘端同高；绿±5% 内孔/白 → Pos；无双侧橘不认；只发最新帧
+- Detect：最左/最右橘红定绿段 → 漂 → pos；默认 color_blocks；识别线程异常不退出；监控重启重置帧序
 - 壳订 Frame（画面）+ Pos（读数）。
 - Decide 不点鼠标；Act 不决策。
 - 禁止依赖 `sim` / `ui` / `algo`。

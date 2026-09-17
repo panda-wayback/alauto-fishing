@@ -1,7 +1,7 @@
 """真机自动拉鱼：五段实现（locate / capture / detect / decide / act）。"""
 
 from autofish.bus import AutofishBus, AutofishSnapshot
-from autofish.detect import BobberHit, find_bobber
+from autofish.detect import BobberHit, detect, find_bobber
 from autofish.capture import (
     DEFAULT_SCREEN_PATH,
     ScreenGrab,
@@ -25,6 +25,7 @@ __all__ = [
     "Roi",
     "ScreenGrab",
     "Topic",
+    "detect",
     "find_bobber",
     "grab_primary",
     "grab_roi",

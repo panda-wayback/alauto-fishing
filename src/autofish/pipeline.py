@@ -111,6 +111,7 @@ class AutofishPipeline:
         if self._monitor_on:
             return
         self._warmup()
+        self.bus.reset_pos_seq()
         self.detector.start()
         self.capture.start()
         if self._auto_locate:
