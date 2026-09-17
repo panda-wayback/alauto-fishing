@@ -27,6 +27,8 @@ _MIN_W = 80
 _PAD = 0.05
 _MIN_ASPECT = 4.0
 _MAX_BAR_H = 56
+# 宽于此值才走「半分辨率粗定位 + 局部精定位」
+_COARSE_MIN_W = 700
 
 
 @dataclass(frozen=True)
@@ -49,79 +51,81 @@ def pixel_to_pos(x: float, width: int) -> float:
     return float(max(0.0, min(100.0, 100.0 * x / (width - 1))))
 
 
-def _hsv_mask(rgb: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
-    bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
-    return cv2.inRange(cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV), lo, hi)
+def _prep(rgb: np.ndarray) -> tuple[np.ndarray, ...]:
+    """一帧只算一次：HSV + 连续的 R/G/B 通道。掩膜共用，避免重复转换。"""
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("expected HxWx3 RGB image")
+    hsv = cv2.cvtColor(cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR), cv2.COLOR_BGR2HSV)
+    r, g, b = cv2.split(rgb)
+    return hsv, r, g, b
 
 
-def green_zone_mask(rgb: np.ndarray) -> np.ndarray:
+def _gt_by(a: np.ndarray, b: np.ndarray, delta: int) -> np.ndarray:
+    """a > b + delta（uint8 饱和减，走 cv2 比 numpy 逐元素快）。"""
+    return cv2.compare(cv2.subtract(a, b), float(delta), cv2.CMP_GT)
+
+
+def green_zone_mask(
+    rgb: np.ndarray, prep: tuple[np.ndarray, ...] | None = None
+) -> np.ndarray:
     """HSV 绿 ∪ 偏亮草绿；排除暗草地（V/G 过低）。"""
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("expected HxWx3 RGB image")
-    hsv = _hsv_mask(rgb, _GREEN_LO, _GREEN_HI)
-    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
-    lime = (
-        (g.astype(np.int16) > r.astype(np.int16) + 12)
-        & (g.astype(np.int16) > b.astype(np.int16) + 12)
-        & (g >= 70)
-        & (g <= 200)
-    )
-    out = np.where(lime, np.uint8(255), hsv)
+    hsv, r, g, b = prep if prep is not None else _prep(rgb)
+    out = cv2.inRange(hsv, _GREEN_LO, _GREEN_HI)
+    lime = cv2.bitwise_and(_gt_by(g, r, 12), _gt_by(g, b, 12))
+    lime = cv2.bitwise_and(lime, cv2.inRange(g, 70, 200))
+    out = cv2.bitwise_or(out, lime)
     # 暗绿草：压掉，避免与张力条同高抢带宽
-    dark = (g < 60) | (rgb.min(axis=2) < 25)
-    out = np.where(dark, np.uint8(0), out)
-    return out
+    mn = cv2.min(cv2.min(r, g), b)
+    bright = cv2.bitwise_and(
+        cv2.compare(g, 60.0, cv2.CMP_GE),
+        cv2.compare(mn, 25.0, cv2.CMP_GE),
+    )
+    return cv2.bitwise_and(out, bright)
 
 
-def neon_green_mask(rgb: np.ndarray) -> np.ndarray:
+def neon_green_mask(
+    rgb: np.ndarray, prep: tuple[np.ndarray, ...] | None = None
+) -> np.ndarray:
     """条心亮绿：定 y 带与绿核，不吃暗草地。"""
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("expected HxWx3 RGB image")
-    hsv = _hsv_mask(rgb, _NEON_LO, _NEON_HI)
-    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
-    bright = (
-        (g.astype(np.int16) >= 100)
-        & (g.astype(np.int16) > r.astype(np.int16) + 15)
-        & (g.astype(np.int16) > b.astype(np.int16) + 15)
-    )
-    return np.where(bright, hsv, np.uint8(0))
+    hsv, r, g, b = prep if prep is not None else _prep(rgb)
+    out = cv2.inRange(hsv, _NEON_LO, _NEON_HI)
+    bright = cv2.bitwise_and(_gt_by(g, r, 15), _gt_by(g, b, 15))
+    bright = cv2.bitwise_and(bright, cv2.compare(g, 100.0, cv2.CMP_GE))
+    return cv2.bitwise_and(out, bright)
 
 
-def orange_zone_mask(rgb: np.ndarray) -> np.ndarray:
+def orange_zone_mask(
+    rgb: np.ndarray, prep: tuple[np.ndarray, ...] | None = None
+) -> np.ndarray:
     """橘黄危险段/端帽；去掉已被霓虹绿占据的像素。"""
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("expected HxWx3 RGB image")
-    om = _hsv_mask(rgb, _ORANGE_LO, _ORANGE_HI)
-    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    hsv, r, g, b = prep if prep is not None else _prep(rgb)
+    om = cv2.inRange(hsv, _ORANGE_LO, _ORANGE_HI)
     # 真条身绿占优时不当橘
-    greenish = (
-        (g.astype(np.int16) > r.astype(np.int16) + 15)
-        & (g.astype(np.int16) > b.astype(np.int16) + 15)
-        & (g >= 100)
-    )
-    return np.where(greenish, np.uint8(0), om)
+    greenish = cv2.bitwise_and(_gt_by(g, r, 15), _gt_by(g, b, 15))
+    greenish = cv2.bitwise_and(greenish, cv2.compare(g, 100.0, cv2.CMP_GE))
+    return cv2.bitwise_and(om, cv2.bitwise_not(greenish))
 
 
-def endcap_mask(rgb: np.ndarray) -> np.ndarray:
+def endcap_mask(
+    rgb: np.ndarray, prep: tuple[np.ndarray, ...] | None = None
+) -> np.ndarray:
     """两端橘红端帽：饱和偏红的橘；黄绿草地必须落选。"""
-    if rgb.ndim != 3 or rgb.shape[2] != 3:
-        raise ValueError("expected HxWx3 RGB image")
-    hsv = _hsv_mask(rgb, _ENDCAP_LO, _ENDCAP_HI)
-    r, g, b = (
-        rgb[:, :, 0].astype(np.int16),
-        rgb[:, :, 1].astype(np.int16),
-        rgb[:, :, 2].astype(np.int16),
-    )
-    reddish = (r >= 120) & (r > g + 40) & (r > b + 60)
-    return np.where(reddish, hsv, np.uint8(0))
+    hsv, r, g, b = prep if prep is not None else _prep(rgb)
+    out = cv2.inRange(hsv, _ENDCAP_LO, _ENDCAP_HI)
+    reddish = cv2.bitwise_and(_gt_by(r, g, 40), _gt_by(r, b, 60))
+    reddish = cv2.bitwise_and(reddish, cv2.compare(r, 120.0, cv2.CMP_GE))
+    return cv2.bitwise_and(out, reddish)
 
 
 def white_mask(rgb: np.ndarray) -> np.ndarray:
     """亮且低彩 = 乳白。"""
-    mn = rgb.min(axis=2)
-    mx = rgb.max(axis=2)
-    ok = (mn >= 130) & ((mx.astype(np.int16) - mn) <= 115)
-    return ok.astype(np.uint8) * 255
+    r, g, b = cv2.split(rgb)
+    mn = cv2.min(cv2.min(r, g), b)
+    mx = cv2.max(cv2.max(r, g), b)
+    return cv2.bitwise_and(
+        cv2.compare(mn, 130.0, cv2.CMP_GE),
+        cv2.compare(cv2.subtract(mx, mn), 115.0, cv2.CMP_LE),
+    )
 
 
 def _slice_thickness(
@@ -160,7 +164,9 @@ def _same_strip_thickness(green_h: int, orange_l: int, orange_r: int) -> bool:
     return True
 
 
-def _green_y_band(gmask: np.ndarray) -> tuple[int, int] | None:
+def _green_y_band(
+    gmask: np.ndarray, min_w: int = _MIN_W
+) -> tuple[int, int] | None:
     """
     取最像张力条的扁长绿带。
     禁止只认全局绿最多行（全屏草地/UI 会抢走真实细条）。
@@ -178,7 +184,7 @@ def _green_y_band(gmask: np.ndarray) -> tuple[int, int] | None:
     best: tuple[float, int, int] | None = None  # score, y0, y1
     for cnt in contours:
         x, y, w, h = cv2.boundingRect(cnt)
-        if w < _MIN_W or h < 4:
+        if w < min_w or h < 4:
             continue
         # 整图裁条时 h 可超过 MAX；先收成薄带再验宽高比
         rows = (gmask[y : y + h, x : x + w] > 0).sum(axis=1)
@@ -255,15 +261,16 @@ def _span_from_orange_ends(
     omask: np.ndarray,
     neon: np.ndarray | None = None,
     endcap: np.ndarray | None = None,
+    min_w: int = _MIN_W,
 ) -> tuple[int, int, int, int] | None:
     """
     霓虹绿核定 y 与绿核；两侧就近找橘红端帽，取其外沿为条起止。
     禁止穿过草地无限扩展（端帽只在绿核附近有限距离内）。
     """
     anchor = neon if neon is not None and int(cv2.countNonZero(neon)) > 30 else gmask
-    band = _green_y_band(anchor)
+    band = _green_y_band(anchor, min_w)
     if band is None:
-        band = _green_y_band(gmask)
+        band = _green_y_band(gmask, min_w)
     if band is None:
         return None
     y0, y1 = band
@@ -296,7 +303,7 @@ def _span_from_orange_ends(
     x0 = left
     x1 = right + 1
     gw = x1 - x0
-    if gw < _MIN_W or gw < gh * 3.5:
+    if gw < min_w or gw < gh * 3.5:
         return None
     if float((nmask[y0:y1, x0:x1] > 0).mean()) < 0.04:
         return None
@@ -312,25 +319,52 @@ def _span_from_orange_ends(
     return x0, y0, gw, gh
 
 
-def find_green_span(
-    rgb: np.ndarray,
-    mask: np.ndarray | None = None,
+def _span_at(
+    rgb: np.ndarray, min_w: int = _MIN_W
 ) -> tuple[int, int, int, int] | None:
-    """只认「左橘 | 中绿 | 右橘」：霓虹绿核 + 两侧就近橘红端帽。"""
+    """在给定图上找条：HSV/通道只算一次，四种掩膜共用。"""
+    prep = _prep(rgb)
+    return _span_from_orange_ends(
+        green_zone_mask(rgb, prep),
+        orange_zone_mask(rgb, prep),
+        neon_green_mask(rgb, prep),
+        endcap_mask(rgb, prep),
+        min_w=min_w,
+    )
+
+
+def find_green_span(rgb: np.ndarray) -> tuple[int, int, int, int] | None:
+    """
+    只认「左橘 | 中绿 | 右橘」：霓虹绿核 + 两侧就近橘红端帽。
+    大图先半分辨率粗定位，再在粗框附近全分辨率精定，省整帧掩膜。
+    """
     if rgb.ndim != 3:
         return None
-    gmask = mask if mask is not None else green_zone_mask(rgb)
-    omask = orange_zone_mask(rgb)
-    neon = neon_green_mask(rgb)
-    endcap = endcap_mask(rgb)
-    return _span_from_orange_ends(gmask, omask, neon, endcap)
+    fh, fw = rgb.shape[:2]
+    if fw < _COARSE_MIN_W:
+        return _span_at(rgb)
+
+    small = cv2.resize(rgb, (fw // 2, fh // 2), interpolation=cv2.INTER_AREA)
+    coarse = _span_at(small, min_w=max(24, _MIN_W // 2))
+    if coarse is None:
+        return _span_at(rgb)
+    cx, cy, cw, ch = (v * 2 for v in coarse)
+
+    pad_x = max(16, int(cw * 0.2))
+    pad_y = max(10, ch)
+    rx0 = max(0, cx - pad_x)
+    ry0 = max(0, cy - pad_y)
+    rx1 = min(fw, cx + cw + pad_x)
+    ry1 = min(fh, cy + ch + pad_y)
+    fine = _span_at(rgb[ry0:ry1, rx0:rx1])
+    if fine is None:
+        return _span_at(rgb)
+    fx, fy, fwid, fhei = fine
+    return fx + rx0, fy + ry0, fwid, fhei
 
 
-def find_green_bar(
-    rgb: np.ndarray,
-    mask: np.ndarray | None = None,
-) -> tuple[int, int, int, int] | None:
-    span = find_green_span(rgb, mask)
+def find_green_bar(rgb: np.ndarray) -> tuple[int, int, int, int] | None:
+    span = find_green_span(rgb)
     if span is None:
         return None
     gx0, y0, gw, gh = span
@@ -523,8 +557,7 @@ def bobber_in_bar(
 
 def find_bobber(rgb: np.ndarray) -> BobberHit | None:
     """色块法找条+漂。统一入口请用 detect.api.detect。"""
-    gmask = green_zone_mask(rgb)
-    bar = find_green_bar(rgb, gmask)
+    bar = find_green_bar(rgb)
     if bar is None:
         return None
     return bobber_in_bar(rgb, *bar)
