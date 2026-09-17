@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
-_ASSETS = _ROOT / "assets"
+from common.paths import assets_dir
+
+_ASSETS = assets_dir()
 _METRICS = json.loads((_ASSETS / "metrics.json").read_text())
 
 # ---- 资源 ----

@@ -8,13 +8,20 @@ from PySide6.QtWidgets import QSizePolicy, QWidget
 
 _MIN = 0.0
 _MAX = 100.0
-_DEFAULT_GAP = 5.0
+_DEFAULT_GAP = 1.0
+_STEP = 0.1  # 一位小数
+
+
+def _q(v: float) -> float:
+    """量化到 0.1。"""
+    return round(float(v) / _STEP) * _STEP
 
 
 class DualRangeAxis(QWidget):
     """
     左段=按住抽样范围，右段=松开抽样范围。
     拖端点或整段；两段不得重叠，且右段起点 − 左段终点 ≥ min_gap。
+    端点精度 0.1。
     """
 
     rangesChanged = Signal(float, float, float, float)
@@ -59,10 +66,10 @@ class DualRangeAxis(QWidget):
 
     def _normalize(self) -> None:
         gap = self.min_gap
-        plo = max(_MIN, min(_MAX, round(self._plo)))
-        phi = max(_MIN, min(_MAX, round(self._phi)))
-        rlo = max(_MIN, min(_MAX, round(self._rlo)))
-        rhi = max(_MIN, min(_MAX, round(self._rhi)))
+        plo = max(_MIN, min(_MAX, _q(self._plo)))
+        phi = max(_MIN, min(_MAX, _q(self._phi)))
+        rlo = max(_MIN, min(_MAX, _q(self._rlo)))
+        rhi = max(_MIN, min(_MAX, _q(self._rhi)))
         if plo > phi:
             plo, phi = phi, plo
         if rlo > rhi:
@@ -70,23 +77,28 @@ class DualRangeAxis(QWidget):
         # 保证间隔
         if phi + gap > rlo:
             mid = (phi + rlo) / 2.0
-            phi = round(mid - gap / 2.0)
-            rlo = round(mid + gap / 2.0)
+            phi = _q(mid - gap / 2.0)
+            rlo = _q(mid + gap / 2.0)
             if phi < plo:
                 plo = phi
             if rhi < rlo:
                 rhi = rlo
         # 仍不够空间则压缩
         if rlo - phi < gap:
-            phi = max(plo, min(phi, _MAX - gap - 1))
-            rlo = phi + gap
+            phi = max(plo, min(phi, _MAX - gap - _STEP))
+            rlo = _q(phi + gap)
             if rhi < rlo:
-                rhi = min(_MAX, rlo + 1)
+                rhi = min(_MAX, _q(rlo + _STEP))
         if rhi > _MAX:
             rhi = _MAX
         if plo < _MIN:
             plo = _MIN
-        self._plo, self._phi, self._rlo, self._rhi = plo, phi, rlo, rhi
+        self._plo, self._phi, self._rlo, self._rhi = (
+            _q(plo),
+            _q(phi),
+            _q(rlo),
+            _q(rhi),
+        )
 
     def _track(self) -> QRectF:
         return QRectF(12, 22, max(1.0, self.width() - 24), 14)
@@ -194,9 +206,9 @@ class DualRangeAxis(QWidget):
         # 顶部数值
         p.setPen(QColor("#3c4043"))
         label = (
-            f"按住 U({self._plo:.0f}～{self._phi:.0f})   "
-            f"间隔≥{self.min_gap:.0f}   "
-            f"松开 U({self._rlo:.0f}～{self._rhi:.0f})"
+            f"按住 U({self._plo:.1f}～{self._phi:.1f})   "
+            f"间隔≥{self.min_gap:.1f}   "
+            f"松开 U({self._rlo:.1f}～{self._rhi:.1f})"
         )
         p.drawText(
             QRectF(12, 2, self.width() - 24, 18),
@@ -226,7 +238,7 @@ class DualRangeAxis(QWidget):
             else:
                 self.setCursor(Qt.CursorShape.ArrowCursor)
             return
-        v = round(self._v_of(event.position().x()))
+        v = _q(self._v_of(event.position().x()))
         gap = self.min_gap
         plo, phi, rlo, rhi = self._drag_snapshot or self.ranges()
         which = self._drag
@@ -241,7 +253,7 @@ class DualRangeAxis(QWidget):
         elif which == "press_body":
             splo, sphi, srlo, _srhi = self._drag_snapshot
             width = sphi - splo
-            delta = v - self._drag_origin
+            delta = v - _q(self._drag_origin)
             nlo = splo + delta
             nhi = nlo + width
             max_hi = srlo - gap
@@ -254,11 +266,11 @@ class DualRangeAxis(QWidget):
                 if nhi > max_hi:
                     nhi = max_hi
                     nlo = max(_MIN, nhi - width)
-            plo, phi = round(nlo), round(nhi)
+            plo, phi = _q(nlo), _q(nhi)
         elif which == "release_body":
             _splo, sphi, srlo, srhi = self._drag_snapshot
             width = srhi - srlo
-            delta = v - self._drag_origin
+            delta = v - _q(self._drag_origin)
             nlo = srlo + delta
             nhi = nlo + width
             min_lo = sphi + gap
@@ -271,7 +283,7 @@ class DualRangeAxis(QWidget):
                 if nlo < min_lo:
                     nlo = min_lo
                     nhi = min(_MAX, nlo + width)
-            rlo, rhi = round(nlo), round(nhi)
+            rlo, rhi = _q(nlo), _q(nhi)
         self._plo, self._phi, self._rlo, self._rhi = plo, phi, rlo, rhi
         self._normalize()
         self.update()

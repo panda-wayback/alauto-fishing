@@ -70,10 +70,10 @@ class ThresholdPosPolicy:
         reason = "hold"
         if pos < self.low:
             want = True
-            reason = f"pos<{self.low:.0f}"
+            reason = f"pos<{self.low:.1f}"
         elif pos > self.high:
             want = False
-            reason = f"pos>{self.high:.0f}"
+            reason = f"pos>{self.high:.1f}"
         else:
             reason = "band"
 

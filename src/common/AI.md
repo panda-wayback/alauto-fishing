@@ -9,10 +9,12 @@
 ## 目录清单
 
 - `pubsub/` — 进程内 EventBus → `pubsub/AI.md`
+- `paths.py` — `bundle_root` / `data_root` / `assets_dir`（源码与冻结）
 
 ## 对外契约
 
 - 经子包导出（如 `common.pubsub.EventBus`）。
+- `common.paths.bundle_root` / `data_root` / `assets_dir`
 
 ## 约束
 

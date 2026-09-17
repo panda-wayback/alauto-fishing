@@ -13,11 +13,10 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
 from autofish.detect.bobber import BobberHit, bobber_in_bar
+from common.paths import assets_dir
 
 # 实机裁出的张力条（含两端端帽，已去漂）。模拟器条比例不同，禁止作默认。
-_DEFAULT_TEMPLATE = (
-    Path(__file__).resolve().parents[3] / "assets" / "tension_bar.live.png"
-)
+_DEFAULT_TEMPLATE = assets_dir() / "tension_bar.live.png"
 
 # 默认压缩 0.25 + 灰度 + 少量尺度：全图 ~10–15 ms，跟踪 ~0.5–1 ms
 _DEFAULT_SCALE_FACTOR = 0.25

@@ -10,14 +10,14 @@ from pathlib import Path
 import numpy as np
 
 from autofish.locate.roi import Roi
+from common.paths import data_root
 
 try:
     import mss
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 mss：pip install mss") from exc
 
-_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_SCREEN_PATH = _ROOT / "data" / "screen.png"
+DEFAULT_SCREEN_PATH = data_root() / "screen.png"
 
 # 复用单例，避免每次新建实例（新建会明显变慢）
 # mss 非线程安全：Locator / Capture 并发 grab 会卡住，必须串行。

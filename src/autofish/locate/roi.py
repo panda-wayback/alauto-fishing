@@ -6,8 +6,9 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-DEFAULT_ROI_PATH = _ROOT / "data" / "roi.json"
+from common.paths import data_root
+
+DEFAULT_ROI_PATH = data_root() / "roi.json"
 
 
 @dataclass(frozen=True)

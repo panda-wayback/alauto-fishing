@@ -407,11 +407,11 @@ class PreviewApp(QMainWindow):
         self.btn_apply_policy = QPushButton("应用")
         self.btn_apply_policy.clicked.connect(self._apply_policy)
         row1.addWidget(self.btn_apply_policy)
-        row1.addWidget(QLabel("拖动数轴调范围 · 两段不重叠且间隔≥5 · 切换后重抽"))
+        row1.addWidget(QLabel("拖动数轴调范围 · 两段不重叠且间隔≥1 · 精度0.1 · 切换后重抽"))
         row1.addStretch(1)
         strat_l.addLayout(row1)
         self.range_axis = DualRangeAxis(
-            press=(40.0, 70.0), release=(75.0, 90.0), min_gap=5.0
+            press=(40.0, 70.0), release=(75.0, 90.0), min_gap=1.0
         )
         strat_l.addWidget(self.range_axis)
         row2 = QHBoxLayout()
@@ -600,8 +600,8 @@ class PreviewApp(QMainWindow):
         pos_s = "—" if pos is None else f"{pos:.1f}"
         plo, phi, rlo, rhi = self.range_axis.ranges()
         detail = (
-            f"POS={pos_s} · 当前 <{low:.0f} 按住 / >{high:.0f} 松开"
-            f" · 范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
+            f"POS={pos_s} · 当前 <{low:.1f} 按住 / >{high:.1f} 松开"
+            f" · 范围 U({plo:.1f}～{phi:.1f})/U({rlo:.1f}～{rhi:.1f})"
         )
         if reason:
             detail += f" · {reason}"
@@ -689,8 +689,8 @@ class PreviewApp(QMainWindow):
             low, high = self._current_policy_thresholds()
             plo, phi, rlo, rhi = self.range_axis.ranges()
             self._log(
-                f"策略 ON · 当前 <{low:.0f} / >{high:.0f} · "
-                f"范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
+                f"策略 ON · 当前 <{low:.1f} / >{high:.1f} · "
+                f"范围 U({plo:.1f}～{phi:.1f})/U({rlo:.1f}～{rhi:.1f})"
             )
         elif not checked and pipe.decide_on:
             pipe.stop_decide()
@@ -717,20 +717,20 @@ class PreviewApp(QMainWindow):
             self.lbl_hint.setText("策略无效：区间上下限颠倒")
             QMessageBox.warning(self, "策略", "区间上下限无效")
             return False
-        if rlo - phi < 5:
-            self.lbl_hint.setText("策略无效：两段间隔须 ≥ 5")
-            QMessageBox.warning(self, "策略", "按住与松开区间至少间隔 5 个百分点")
+        if rlo - phi < 1.0 - 1e-9:
+            self.lbl_hint.setText("策略无效：两段间隔须 ≥ 1")
+            QMessageBox.warning(self, "策略", "按住与松开区间至少间隔 1 个百分点")
             return False
         pipe = self._ensure_pipe()
         pipe.set_decide_ranges(plo, phi, rlo, rhi)
         low, high = pipe.decide.current_thresholds
         self._log(
-            f"策略已应用 · 当前 <{low:.0f} / >{high:.0f} · "
-            f"范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
+            f"策略已应用 · 当前 <{low:.1f} / >{high:.1f} · "
+            f"范围 U({plo:.1f}～{phi:.1f})/U({rlo:.1f}～{rhi:.1f})"
         )
         self.lbl_hint.setText(
-            f"策略范围 U({plo:.0f}～{phi:.0f}) 按住 / "
-            f"U({rlo:.0f}～{rhi:.0f}) 松开"
+            f"策略范围 U({plo:.1f}～{phi:.1f}) 按住 / "
+            f"U({rlo:.1f}～{rhi:.1f}) 松开"
         )
         if pipe.decide_on:
             pos = None if self.hit is None else self.hit.pos

@@ -54,6 +54,15 @@ run_batch(ThresholdHoldPolicy(), episodes=100, tier=4)
 
 依赖列表见根目录 `requirements.txt`（含 PySide6 调试壳）。
 
+## macOS 单文件（真机预览）
+
+```bash
+bash packaging/build_macos.sh
+# 输出 dist/albn-autofish
+```
+
+把 `dist/albn-autofish` 拷到其它 Mac；`data/roi.json` 放在可执行文件同级的 `data/` 下。首次运行需在系统设置里授权「屏幕录制」和「辅助功能」。Windows 需在 Windows 上另行打包。
+
 ## 真机感知（截图 + 色块）
 
 1. 打开预览窗，游戏画面露在主屏上。

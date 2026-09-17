@@ -27,8 +27,8 @@ _MIN_W = 80
 _PAD = 0.05
 _MIN_ASPECT = 4.0
 _MAX_BAR_H = 56
-# 宽于此值才走「半分辨率粗定位 + 局部精定位」
-_COARSE_MIN_W = 700
+# 入图宽超过此值则等比压缩后再识别（坐标映回）
+_INPUT_MAX_W = 720
 
 
 @dataclass(frozen=True)
@@ -319,6 +319,29 @@ def _span_from_orange_ends(
     return x0, y0, gw, gh
 
 
+def _maybe_downscale(rgb: np.ndarray) -> tuple[np.ndarray, float]:
+    """过宽则压到 _INPUT_MAX_W；返回 (工作图, 缩放比 work/原)。"""
+    fh, fw = rgb.shape[:2]
+    if fw <= _INPUT_MAX_W:
+        return rgb, 1.0
+    scale = _INPUT_MAX_W / float(fw)
+    sw = max(1, int(round(fw * scale)))
+    sh = max(1, int(round(fh * scale)))
+    return cv2.resize(rgb, (sw, sh), interpolation=cv2.INTER_AREA), scale
+
+
+def _scale_box(
+    box: tuple[int, int, int, int], inv: float
+) -> tuple[int, int, int, int]:
+    x, y, w, h = box
+    return (
+        int(round(x * inv)),
+        int(round(y * inv)),
+        max(1, int(round(w * inv))),
+        max(1, int(round(h * inv))),
+    )
+
+
 def _span_at(
     rgb: np.ndarray, min_w: int = _MIN_W
 ) -> tuple[int, int, int, int] | None:
@@ -336,31 +359,18 @@ def _span_at(
 def find_green_span(rgb: np.ndarray) -> tuple[int, int, int, int] | None:
     """
     只认「左橘 | 中绿 | 右橘」：霓虹绿核 + 两侧就近橘红端帽。
-    大图先半分辨率粗定位，再在粗框附近全分辨率精定，省整帧掩膜。
+    入图过宽先等比压缩再识别，坐标映回原图。
     """
     if rgb.ndim != 3:
         return None
-    fh, fw = rgb.shape[:2]
-    if fw < _COARSE_MIN_W:
-        return _span_at(rgb)
-
-    small = cv2.resize(rgb, (fw // 2, fh // 2), interpolation=cv2.INTER_AREA)
-    coarse = _span_at(small, min_w=max(24, _MIN_W // 2))
-    if coarse is None:
-        return _span_at(rgb)
-    cx, cy, cw, ch = (v * 2 for v in coarse)
-
-    pad_x = max(16, int(cw * 0.2))
-    pad_y = max(10, ch)
-    rx0 = max(0, cx - pad_x)
-    ry0 = max(0, cy - pad_y)
-    rx1 = min(fw, cx + cw + pad_x)
-    ry1 = min(fh, cy + ch + pad_y)
-    fine = _span_at(rgb[ry0:ry1, rx0:rx1])
-    if fine is None:
-        return _span_at(rgb)
-    fx, fy, fwid, fhei = fine
-    return fx + rx0, fy + ry0, fwid, fhei
+    work, scale = _maybe_downscale(rgb)
+    min_w = max(24, int(round(_MIN_W * scale)))
+    span = _span_at(work, min_w=min_w)
+    if span is None:
+        return None
+    if scale == 1.0:
+        return span
+    return _scale_box(span, 1.0 / scale)
 
 
 def find_green_bar(rgb: np.ndarray) -> tuple[int, int, int, int] | None:
@@ -556,8 +566,31 @@ def bobber_in_bar(
 
 
 def find_bobber(rgb: np.ndarray) -> BobberHit | None:
-    """色块法找条+漂。统一入口请用 detect.api.detect。"""
-    bar = find_green_bar(rgb)
-    if bar is None:
+    """色块法找条+漂。统一入口请用 detect.api.detect。
+
+    过宽入图：压缩图上定条（坐标映回），漂仍在原图像素条框附近找，避免压缩糊掉漂点。
+    """
+    if rgb.ndim != 3:
         return None
+    work, scale = _maybe_downscale(rgb)
+    min_w = max(24, int(round(_MIN_W * scale)))
+    span = _span_at(work, min_w=min_w)
+    if span is None:
+        return None
+    gx0, y0, gw, gh = span
+    pad = max(1, int(round(gw * _PAD)))
+    x0 = max(0, gx0 - pad)
+    x1 = min(work.shape[1], gx0 + gw + pad)
+    if x1 - x0 < min_w:
+        return None
+    bar = (x0, y0, x1 - x0, gh)
+    if scale != 1.0:
+        bar = _scale_box(bar, 1.0 / scale)
+        # 映回后夹紧到原图
+        bx, by, bw, bh = bar
+        bx = max(0, min(bx, rgb.shape[1] - 1))
+        by = max(0, min(by, rgb.shape[0] - 1))
+        bw = max(1, min(bw, rgb.shape[1] - bx))
+        bh = max(1, min(bh, rgb.shape[0] - by))
+        bar = (bx, by, bw, bh)
     return bobber_in_bar(rgb, *bar)
