@@ -19,7 +19,6 @@ from autofish.topics import RoiEvent, Topic
 class AutofishPipeline:
     """
     各段经总线交接；监控 / 策略 / 操作可独立 start/stop。
-    操作默认不启动。
     """
 
     def __init__(
@@ -82,8 +81,18 @@ class AutofishPipeline:
         self._roi_version = self.bus.snapshot().roi_version
         self.locator._version = self._roi_version
 
+    def set_decide_ranges(
+        self,
+        press_lo: float,
+        press_hi: float,
+        release_lo: float,
+        release_hi: float,
+    ) -> None:
+        self.decide.set_ranges(press_lo, press_hi, release_lo, release_hi)
+
     def set_decide_thresholds(self, low: float, high: float) -> None:
-        self.decide.set_thresholds(low, high)
+        """兼容旧调用：当作退化为单点范围。"""
+        self.set_decide_ranges(low, low, high, high)
 
     def locate_now(self) -> RoiEvent | None:
         return self.locator.locate_once()

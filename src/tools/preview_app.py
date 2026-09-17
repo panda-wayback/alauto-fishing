@@ -42,7 +42,7 @@ from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
 from autofish.act.mouse import os_left_down
-from autofish.detect.bobber import BobberHit
+from autofish.detect.bobber import BobberHit, find_green_bar
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
     ScreenGrab,
@@ -52,7 +52,13 @@ from autofish.capture.screen import (
 )
 from autofish.locate.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
 from autofish.pipeline import AutofishPipeline
-from autofish.topics import ActionIntentEvent, FrameEvent, PosEvent, Topic
+from autofish.topics import (
+    ActionIntentEvent,
+    FishingState,
+    FrameEvent,
+    PosEvent,
+    Topic,
+)
 
 IDLE = "idle"
 SELECT = "select"
@@ -66,20 +72,64 @@ def _rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
     return QPixmap.fromImage(qimg)
 
 
+def _draw_rect(
+    rgb: np.ndarray,
+    x: int,
+    y: int,
+    w: int,
+    h: int,
+    color: tuple[int, int, int],
+    thickness: int = 1,
+) -> None:
+    fh, fw = rgb.shape[:2]
+    x0 = max(0, min(fw - 1, x))
+    y0 = max(0, min(fh - 1, y))
+    x1 = max(0, min(fw - 1, x + max(w, 1) - 1))
+    y1 = max(0, min(fh - 1, y + max(h, 1) - 1))
+    if x1 <= x0 or y1 <= y0:
+        return
+    t = max(1, thickness)
+    rgb[y0 : y0 + t, x0 : x1 + 1] = color
+    rgb[y1 - t + 1 : y1 + 1, x0 : x1 + 1] = color
+    rgb[y0 : y1 + 1, x0 : x0 + t] = color
+    rgb[y0 : y1 + 1, x1 - t + 1 : x1 + 1] = color
+
+
 def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
+    """叠层：Pos 0～100 范围（绿±5%）+ 搜白框 + 命中点。"""
     vis = rgb.copy()
-    if hit is None:
-        return vis
-    x, y = int(hit.x), int(hit.y)
-    x0 = max(0, min(vis.shape[1] - 1, x))
-    y0 = max(0, int(hit.bar_top) - 6)
-    y1 = min(vis.shape[0], int(hit.bar_top + max(hit.bar_height, 8)) + 6)
-    vis[y0:y1, x0 : x0 + 1] = np.clip(
-        vis[y0:y1, x0 : x0 + 1].astype(np.int16) + np.array([0, 40, 50], dtype=np.int16),
-        0,
-        255,
-    ).astype(np.uint8)
-    vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
+    if hit is not None:
+        bar = (
+            int(hit.bar_left),
+            int(hit.bar_top),
+            int(hit.bar_width),
+            int(hit.bar_height),
+        )
+    else:
+        bar = find_green_bar(vis)
+
+    if bar is not None:
+        zx, zy, zw, zh = bar
+        fh, fw = vis.shape[:2]
+        # 青绿：POS 0～100 映射带（绿端 ±5%）
+        _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
+        # 黄：实际搜白范围（略上探）
+        y0 = max(0, zy - max(6, zh // 2))
+        y1 = min(fh, zy + zh + 2)
+        x0, x1 = max(0, zx), min(fw, zx + zw)
+        _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
+        # 左=0 / 右=100 竖线
+        mid_y0 = zy
+        mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
+        if 0 <= zx < fw:
+            vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
+        right = min(fw - 1, zx + max(zw, 1) - 1)
+        if 0 <= right < fw:
+            vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
+
+    if hit is not None:
+        x, y = int(hit.x), int(hit.y)
+        vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
     return vis
 
 
@@ -306,6 +356,9 @@ class PreviewApp(QMainWindow):
         self._build_ui()
         self._reload_roi()
         self._sync_buttons()
+        # 策略 / 操作默认开启
+        self.chk_decide.setChecked(True)
+        self.chk_act.setChecked(True)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -340,31 +393,42 @@ class PreviewApp(QMainWindow):
             sense_l.addWidget(b)
         layout.addWidget(sense)
 
-        # —— 策略：阈值 + 实时意图（要不要点）——
+        # —— 策略：范围抽样阈值 + 实时意图 ——
         strat = QGroupBox("策略（只决策，不点鼠标）")
         strat_l = QVBoxLayout(strat)
         row1 = QHBoxLayout()
         self.chk_decide = QCheckBox("启用策略")
         self.chk_decide.toggled.connect(self._on_decide_toggled)
         row1.addWidget(self.chk_decide)
-        row1.addWidget(QLabel("pos <"))
-        self.spin_low = QDoubleSpinBox()
-        self.spin_low.setRange(0.0, 99.0)
-        self.spin_low.setDecimals(0)
-        self.spin_low.setValue(50.0)
-        self.spin_low.setSuffix(" → 要按住")
-        row1.addWidget(self.spin_low)
-        row1.addWidget(QLabel("pos >"))
-        self.spin_high = QDoubleSpinBox()
-        self.spin_high.setRange(1.0, 100.0)
-        self.spin_high.setDecimals(0)
-        self.spin_high.setValue(80.0)
-        self.spin_high.setSuffix(" → 要松开")
-        row1.addWidget(self.spin_high)
+        row1.addWidget(QLabel("按住 U("))
+        self.spin_press_lo = QDoubleSpinBox()
+        self.spin_press_lo.setRange(0.0, 98.0)
+        self.spin_press_lo.setDecimals(0)
+        self.spin_press_lo.setValue(40.0)
+        row1.addWidget(self.spin_press_lo)
+        row1.addWidget(QLabel("～"))
+        self.spin_press_hi = QDoubleSpinBox()
+        self.spin_press_hi.setRange(1.0, 99.0)
+        self.spin_press_hi.setDecimals(0)
+        self.spin_press_hi.setValue(70.0)
+        row1.addWidget(self.spin_press_hi)
+        row1.addWidget(QLabel(")  松开 U("))
+        self.spin_release_lo = QDoubleSpinBox()
+        self.spin_release_lo.setRange(1.0, 99.0)
+        self.spin_release_lo.setDecimals(0)
+        self.spin_release_lo.setValue(75.0)
+        row1.addWidget(self.spin_release_lo)
+        row1.addWidget(QLabel("～"))
+        self.spin_release_hi = QDoubleSpinBox()
+        self.spin_release_hi.setRange(2.0, 100.0)
+        self.spin_release_hi.setDecimals(0)
+        self.spin_release_hi.setValue(90.0)
+        row1.addWidget(self.spin_release_hi)
+        row1.addWidget(QLabel(")"))
         self.btn_apply_policy = QPushButton("应用")
         self.btn_apply_policy.clicked.connect(self._apply_policy)
         row1.addWidget(self.btn_apply_policy)
-        row1.addWidget(QLabel("中间保持"))
+        row1.addWidget(QLabel("切换后重抽"))
         row1.addStretch(1)
         strat_l.addLayout(row1)
         row2 = QHBoxLayout()
@@ -525,13 +589,27 @@ class PreviewApp(QMainWindow):
             self.lbl_intent.setStyleSheet(
                 "font-size:18px; font-weight:600; color:#48b46e;"
             )
-        low = self.spin_low.value()
-        high = self.spin_high.value()
+        low, high = self._current_policy_thresholds()
         pos_s = "—" if pos is None else f"{pos:.1f}"
-        detail = f"POS={pos_s} · 规则 <{low:.0f} 按住 / >{high:.0f} 松开"
+        detail = (
+            f"POS={pos_s} · 当前 <{low:.0f} 按住 / >{high:.0f} 松开"
+            f" · 范围 U({self.spin_press_lo.value():.0f}～"
+            f"{self.spin_press_hi.value():.0f})/"
+            f"U({self.spin_release_lo.value():.0f}～"
+            f"{self.spin_release_hi.value():.0f})"
+        )
         if reason:
             detail += f" · {reason}"
         self.lbl_strat_detail.setText(detail)
+
+    def _current_policy_thresholds(self) -> tuple[float, float]:
+        pipe = self._pipe
+        if pipe is not None and pipe.decide_on:
+            return pipe.decide.current_thresholds
+        return (
+            (self.spin_press_lo.value() + self.spin_press_hi.value()) / 2.0,
+            (self.spin_release_lo.value() + self.spin_release_hi.value()) / 2.0,
+        )
 
     def _refresh_pos(self) -> None:
         if self.hit is not None:
@@ -603,9 +681,13 @@ class PreviewApp(QMainWindow):
             self._refresh_strategy(
                 None if self.hit is None else self.hit.pos
             )
+            low, high = self._current_policy_thresholds()
             self._log(
-                f"策略 ON · <{self.spin_low.value():.0f} 按住 "
-                f">{self.spin_high.value():.0f} 松开"
+                f"策略 ON · 当前 <{low:.0f} / >{high:.0f} · "
+                f"范围 U({self.spin_press_lo.value():.0f}～"
+                f"{self.spin_press_hi.value():.0f})/"
+                f"U({self.spin_release_lo.value():.0f}～"
+                f"{self.spin_release_hi.value():.0f})"
             )
         elif not checked and pipe.decide_on:
             pipe.stop_decide()
@@ -620,23 +702,42 @@ class PreviewApp(QMainWindow):
             if not pipe.decide_on:
                 self.lbl_hint.setText("建议先开策略")
             pipe.start_act()
-            self._log("操作 ON · 无 POS 时不会按住；光标放游戏上")
+            self._log("操作 ON · 非钓鱼态自由；单帧无漂不松；光标放游戏上")
         elif not checked and pipe.act_on:
             pipe.stop_act()
             self._log("操作 OFF")
         self._refresh_mouse()
 
     def _apply_policy(self) -> bool:
-        low = float(self.spin_low.value())
-        high = float(self.spin_high.value())
-        if low >= high:
-            self.lbl_hint.setText("策略无效：按住阈值须小于松开阈值")
-            QMessageBox.warning(self, "策略", "「按住」阈值必须小于「松开」阈值")
+        plo = float(self.spin_press_lo.value())
+        phi = float(self.spin_press_hi.value())
+        rlo = float(self.spin_release_lo.value())
+        rhi = float(self.spin_release_hi.value())
+        if plo > phi:
+            self.lbl_hint.setText("策略无效：按住范围下限须 ≤ 上限")
+            QMessageBox.warning(self, "策略", "按住范围：下限必须 ≤ 上限")
+            return False
+        if rlo > rhi:
+            self.lbl_hint.setText("策略无效：松开范围下限须 ≤ 上限")
+            QMessageBox.warning(self, "策略", "松开范围：下限必须 ≤ 上限")
+            return False
+        if phi >= rlo:
+            self.lbl_hint.setText("策略无效：按住上限须小于松开下限")
+            QMessageBox.warning(
+                self, "策略", "按住上限必须小于松开下限（两段范围不能交叉）"
+            )
             return False
         pipe = self._ensure_pipe()
-        pipe.set_decide_thresholds(low, high)
-        self._log(f"策略已应用 · <{low:.0f} 按住 · >{high:.0f} 松开")
-        self.lbl_hint.setText(f"策略 <{low:.0f} 按住 / >{high:.0f} 松开")
+        pipe.set_decide_ranges(plo, phi, rlo, rhi)
+        low, high = pipe.decide.current_thresholds
+        self._log(
+            f"策略已应用 · 当前 <{low:.0f} / >{high:.0f} · "
+            f"范围 U({plo:.0f}～{phi:.0f})/U({rlo:.0f}～{rhi:.0f})"
+        )
+        self.lbl_hint.setText(
+            f"策略范围 U({plo:.0f}～{phi:.0f}) 按住 / "
+            f"U({rlo:.0f}～{rhi:.0f}) 松开"
+        )
         if pipe.decide_on:
             pos = None if self.hit is None else self.hit.pos
             self._refresh_strategy(pos, self._intent_reason)
@@ -651,9 +752,11 @@ class PreviewApp(QMainWindow):
         yielding = bool(act_on and pipe is not None and pipe.act.yielding)
         os_down = os_left_down()
         intent = self._holding
-        snap_pos = None if pipe is None else pipe.bus.snapshot().pos
-        has_pos = snap_pos is not None or self.hit is not None
-        free = act_on and not has_pos and not yielding
+        snap = None if pipe is None else pipe.bus.snapshot()
+        fishing = bool(
+            snap is not None and snap.fishing_state == FishingState.FISHING
+        )
+        free = act_on and not fishing and not yielding
 
         if not act_on:
             prog_s = "未启用"
@@ -724,9 +827,9 @@ class PreviewApp(QMainWindow):
             elif yielding:
                 diag = "系统优先 · 等你松开鼠标后程序再接管"
             elif free:
-                diag = "自由态 · 无 POS，不碰你的鼠标"
+                diag = "自由态 · 非钓鱼态，不碰你的鼠标"
             else:
-                diag = "控鼠中 · 有 POS，按策略按/松"
+                diag = "控鼠中 · 钓鱼态，按策略按/松"
             self.lbl_mouse_diag.setText(diag)
             self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
             self._mouse_mismatch_logged = False

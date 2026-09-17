@@ -13,7 +13,7 @@
 
 ## 对外契约
 
-- `ActWorker.start/stop/poll` — 订意图；`poll` 每帧处理系统让位/接管
+- `ActWorker.start/stop/poll` — 订意图；`FISHING` 控鼠；单帧无 Pos 不松；系统让位/接管
 - `ActWorker.pressed` / `yielding` — 程序是否按下；是否因系统占用让位
 - `os_left_down()` / `MouseActuator.set_holding` / `force_release`
 

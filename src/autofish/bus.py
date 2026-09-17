@@ -34,6 +34,7 @@ class AutofishSnapshot:
     pos: float | None = None
     hit: BobberHit | None = None
     pos_ts: float = 0.0
+    pos_frame_seq: int = 0
     fishing_state: FishingState = FishingState.IDLE
     fishing_detail: str = ""
     state_ts: float = 0.0
@@ -93,9 +94,13 @@ class AutofishBus:
         with self._lock:
             if event.roi_version != self._snap.roi_version:
                 return
+            # 只接受不旧于已发布结果的帧序（抛弃历史识别）
+            if event.frame_seq < self._snap.pos_frame_seq:
+                return
             self._snap.pos = event.pos
             self._snap.hit = event.hit
             self._snap.pos_ts = event.ts
+            self._snap.pos_frame_seq = event.frame_seq
         self._events.publish(Topic.POS, event)
 
     def publish_fishing_state(self, event: FishingStateEvent) -> None:
