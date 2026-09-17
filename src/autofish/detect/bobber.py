@@ -11,12 +11,18 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
-# 中间安全区绿
-_GREEN_LO = np.array([40, 60, 50], dtype=np.uint8)
-_GREEN_HI = np.array([78, 255, 230], dtype=np.uint8)
-# 两端橘红/橘黄（略放宽 H，避免端帽偏黄漏检）
-_ORANGE_LO = np.array([3, 60, 70], dtype=np.uint8)
-_ORANGE_HI = np.array([42, 255, 255], dtype=np.uint8)
+# 中间安全区绿（实机条心约 H≈41～46；须与橘红色相分离）
+_GREEN_LO = np.array([36, 45, 40], dtype=np.uint8)
+_GREEN_HI = np.array([80, 255, 235], dtype=np.uint8)
+# 条心霓虹绿（更高 V/S，排除同高暗草地）
+_NEON_LO = np.array([38, 90, 90], dtype=np.uint8)
+_NEON_HI = np.array([56, 255, 255], dtype=np.uint8)
+# 两端/危险段橘黄（含条身黄绿过渡；与霓虹绿分离）
+_ORANGE_LO = np.array([5, 70, 70], dtype=np.uint8)
+_ORANGE_HI = np.array([36, 255, 255], dtype=np.uint8)
+# 端帽橘红：色相更偏红、饱和更高；用于定条起止
+_ENDCAP_LO = np.array([3, 130, 100], dtype=np.uint8)
+_ENDCAP_HI = np.array([25, 255, 255], dtype=np.uint8)
 _MIN_W = 80
 _PAD = 0.05
 _MIN_ASPECT = 4.0
@@ -34,6 +40,7 @@ class BobberHit:
     bar_width: float = 0.0
     bar_height: float = 0.0
     score: float = 0.0
+    detect_ms: float = 0.0
 
 
 def pixel_to_pos(x: float, width: int) -> float:
@@ -48,15 +55,65 @@ def _hsv_mask(rgb: np.ndarray, lo: np.ndarray, hi: np.ndarray) -> np.ndarray:
 
 
 def green_zone_mask(rgb: np.ndarray) -> np.ndarray:
+    """HSV 绿 ∪ 偏亮草绿；排除暗草地（V/G 过低）。"""
     if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ValueError("expected HxWx3 RGB image")
-    return _hsv_mask(rgb, _GREEN_LO, _GREEN_HI)
+    hsv = _hsv_mask(rgb, _GREEN_LO, _GREEN_HI)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    lime = (
+        (g.astype(np.int16) > r.astype(np.int16) + 12)
+        & (g.astype(np.int16) > b.astype(np.int16) + 12)
+        & (g >= 70)
+        & (g <= 200)
+    )
+    out = np.where(lime, np.uint8(255), hsv)
+    # 暗绿草：压掉，避免与张力条同高抢带宽
+    dark = (g < 60) | (rgb.min(axis=2) < 25)
+    out = np.where(dark, np.uint8(0), out)
+    return out
+
+
+def neon_green_mask(rgb: np.ndarray) -> np.ndarray:
+    """条心亮绿：定 y 带与绿核，不吃暗草地。"""
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("expected HxWx3 RGB image")
+    hsv = _hsv_mask(rgb, _NEON_LO, _NEON_HI)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    bright = (
+        (g.astype(np.int16) >= 100)
+        & (g.astype(np.int16) > r.astype(np.int16) + 15)
+        & (g.astype(np.int16) > b.astype(np.int16) + 15)
+    )
+    return np.where(bright, hsv, np.uint8(0))
 
 
 def orange_zone_mask(rgb: np.ndarray) -> np.ndarray:
+    """橘黄危险段/端帽；去掉已被霓虹绿占据的像素。"""
     if rgb.ndim != 3 or rgb.shape[2] != 3:
         raise ValueError("expected HxWx3 RGB image")
-    return _hsv_mask(rgb, _ORANGE_LO, _ORANGE_HI)
+    om = _hsv_mask(rgb, _ORANGE_LO, _ORANGE_HI)
+    r, g, b = rgb[:, :, 0], rgb[:, :, 1], rgb[:, :, 2]
+    # 真条身绿占优时不当橘
+    greenish = (
+        (g.astype(np.int16) > r.astype(np.int16) + 15)
+        & (g.astype(np.int16) > b.astype(np.int16) + 15)
+        & (g >= 100)
+    )
+    return np.where(greenish, np.uint8(0), om)
+
+
+def endcap_mask(rgb: np.ndarray) -> np.ndarray:
+    """两端橘红端帽：饱和偏红的橘；黄绿草地必须落选。"""
+    if rgb.ndim != 3 or rgb.shape[2] != 3:
+        raise ValueError("expected HxWx3 RGB image")
+    hsv = _hsv_mask(rgb, _ENDCAP_LO, _ENDCAP_HI)
+    r, g, b = (
+        rgb[:, :, 0].astype(np.int16),
+        rgb[:, :, 1].astype(np.int16),
+        rgb[:, :, 2].astype(np.int16),
+    )
+    reddish = (r >= 120) & (r > g + 40) & (r > b + 60)
+    return np.where(reddish, hsv, np.uint8(0))
 
 
 def white_mask(rgb: np.ndarray) -> np.ndarray:
@@ -104,125 +161,153 @@ def _same_strip_thickness(green_h: int, orange_l: int, orange_r: int) -> bool:
 
 
 def _green_y_band(gmask: np.ndarray) -> tuple[int, int] | None:
-    """绿最多的薄水平带。"""
-    fw = gmask.shape[1]
-    row = (gmask > 0).sum(axis=1)
-    if row.size == 0:
+    """
+    取最像张力条的扁长绿带。
+    禁止只认全局绿最多行（全屏草地/UI 会抢走真实细条）。
+    """
+    fh, fw = gmask.shape[:2]
+    kw = max(51, min(101, fw // 8))
+    if kw % 2 == 0:
+        kw += 1
+    closed = cv2.morphologyEx(
+        gmask, cv2.MORPH_CLOSE, np.ones((5, kw), np.uint8)
+    )
+    contours, _ = cv2.findContours(
+        closed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    best: tuple[float, int, int] | None = None  # score, y0, y1
+    for cnt in contours:
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < _MIN_W or h < 4:
+            continue
+        # 整图裁条时 h 可超过 MAX；先收成薄带再验宽高比
+        rows = (gmask[y : y + h, x : x + w] > 0).sum(axis=1)
+        if rows.size == 0 or int(rows.max()) < 4:
+            continue
+        peak = int(rows.max())
+        thr = max(3, int(peak * 0.3))
+        ys = np.where(rows >= thr)[0]
+        if ys.size < 3:
+            continue
+        ry0 = y + int(ys[0])
+        ry1 = y + int(ys[-1]) + 1
+        if ry1 - ry0 > _MAX_BAR_H:
+            best_s, best_i = -1, int(ys[0])
+            last = int(ys[-1]) + 1 - _MAX_BAR_H
+            for i in range(int(ys[0]), max(int(ys[0]), last) + 1):
+                s = int(rows[i : i + _MAX_BAR_H].sum())
+                if s > best_s:
+                    best_s, best_i = s, i
+            ry0, ry1 = y + best_i, y + best_i + _MAX_BAR_H
+        rh = ry1 - ry0
+        if rh < 4:
+            continue
+        aspect = float(w) / float(rh)
+        if aspect < 3.2 or aspect > 28.0:
+            continue
+        patch = gmask[ry0:ry1, x : x + w]
+        fill = float((patch > 0).mean())
+        if fill < 0.10:
+            continue
+        score = aspect * fill * (w / float(fw))
+        if best is None or score > best[0]:
+            best = (score, ry0, ry1)
+    if best is None:
         return None
-    peak = int(row.max())
-    if peak < max(16, fw // 20):
-        return None
-    py = int(np.argmax(row))
-    thr = max(6, int(peak * 0.4))
-    y0 = y1 = py
-    while y0 > 0 and int(row[y0 - 1]) >= thr:
-        y0 -= 1
-    while y1 < row.size - 1 and int(row[y1 + 1]) >= thr:
-        y1 += 1
-    y1 += 1
-    if y1 - y0 > _MAX_BAR_H:
-        best_s, best_i = -1, y0
-        last = y1 - _MAX_BAR_H
-        for i in range(y0, max(y0, last) + 1):
-            s = int(row[i : i + _MAX_BAR_H].sum())
-            if s > best_s:
-                best_s, best_i = s, i
-        y0, y1 = best_i, best_i + _MAX_BAR_H
-    if y1 - y0 < 6:
-        return None
-    return y0, y1
+    return best[1], best[2]
 
 
-def _orange_runs(ocols: np.ndarray, thr: int) -> list[tuple[int, int]]:
-    """列上橘像素达标的连续区间 [start, end)。"""
-    runs: list[tuple[int, int]] = []
-    n = int(ocols.size)
-    i = 0
-    while i < n:
-        if int(ocols[i]) >= thr:
-            j = i + 1
-            while j < n and int(ocols[j]) >= thr:
-                j += 1
-            if j - i >= 3:
-                runs.append((i, j))
-            i = j
+def _endcap_edge(
+    ecols: np.ndarray,
+    bcols: np.ndarray,
+    start: int,
+    direction: int,
+    ethr: int,
+    bthr: int,
+    max_dist: int,
+    body_gap_max: int = 12,
+) -> int | None:
+    """
+    从绿核边沿向外找端帽外沿：沿条身（绿∪橘）走，记住最外的橘红列。
+    条身断开超限即停 ⇒ 禁止跨草地把端帽认到远处。
+    """
+    n = int(ecols.size)
+    outer: int | None = None
+    gap = 0
+    x = start
+    for _ in range(max_dist):
+        x += direction
+        if x < 0 or x >= n:
+            break
+        if int(bcols[x]) >= bthr:
+            gap = 0
         else:
-            i += 1
-    return runs
+            gap += 1
+            if gap > body_gap_max:
+                break
+        if int(ecols[x]) >= ethr:
+            outer = x
+    return outer
 
 
 def _span_from_orange_ends(
-    gmask: np.ndarray, omask: np.ndarray
+    gmask: np.ndarray,
+    omask: np.ndarray,
+    neon: np.ndarray | None = None,
+    endcap: np.ndarray | None = None,
 ) -> tuple[int, int, int, int] | None:
     """
-    主路径：绿带内取贴绿的最左橘红与最右橘红为起止，其间为绿条。
-    中部漂橙叶 / 远处杂色不参与定界。
+    霓虹绿核定 y 与绿核；两侧就近找橘红端帽，取其外沿为条起止。
+    禁止穿过草地无限扩展（端帽只在绿核附近有限距离内）。
     """
-    band = _green_y_band(gmask)
+    anchor = neon if neon is not None and int(cv2.countNonZero(neon)) > 30 else gmask
+    band = _green_y_band(anchor)
+    if band is None:
+        band = _green_y_band(gmask)
     if band is None:
         return None
     y0, y1 = band
     gh = y1 - y0
-    pad = max(2, gh // 3)
-    yw0 = max(0, y0 - pad)
-    yw1 = min(omask.shape[0], y1 + pad)
-    ocols = (omask[yw0:yw1, :] > 0).sum(axis=0)
-    thr = max(2, int((yw1 - yw0) * 0.22))
-    runs = _orange_runs(ocols, thr)
-    if len(runs) < 2:
+    if gh < 4:
         return None
 
-    gcols = (gmask[y0:y1, :] > 0).sum(axis=0)
-    if int(gcols.max()) < 2:
+    nmask = neon if neon is not None else gmask
+    ncols = (nmask[y0:y1, :] > 0).sum(axis=0)
+    if int(ncols.max()) < 2:
         return None
-    gthr = max(2, int(gcols.max() * 0.3))
-    gxs = np.where(gcols >= gthr)[0]
-    if gxs.size < _MIN_W:
+    nthr = max(2, int(ncols.max() * 0.35))
+    nxs = np.where(ncols >= nthr)[0]
+    if nxs.size < 12:
         return None
-    gx0 = int(gxs[0])
-    gx1 = int(gxs[-1]) + 1
-    mid = (gx0 + gx1) // 2
+    gx0 = int(nxs[0])
+    gx1 = int(nxs[-1]) + 1
+    core_w = gx1 - gx0
 
-    # 贴绿左侧：右缘靠近绿起点的橘段；贴绿右侧：左缘靠近绿终点的橘段
-    left_cands = [r for r in runs if r[1] <= mid and r[1] <= gx0 + max(12, gh)]
-    right_cands = [r for r in runs if r[0] >= mid and r[0] >= gx1 - max(12, gh)]
-    if not left_cands:
-        left_cands = [r for r in runs if r[1] <= mid]
-    if not right_cands:
-        right_cands = [r for r in runs if r[0] >= mid]
-    if not left_cands or not right_cands:
+    emask = endcap if endcap is not None else omask
+    ecols = (emask[y0:y1, :] > 0).sum(axis=0)
+    bcols = (np.maximum(nmask, omask)[y0:y1, :] > 0).sum(axis=0)
+    ethr = max(2, int(gh * 0.25))
+    bthr = max(2, int(gh * 0.25))
+    max_dist = max(40, int(core_w * 1.2))
+    left = _endcap_edge(ecols, bcols, gx0, -1, ethr, bthr, max_dist)
+    right = _endcap_edge(ecols, bcols, gx1 - 1, +1, ethr, bthr, max_dist)
+    if left is None or right is None:
         return None
-    left = max(left_cands, key=lambda r: r[1])
-    right = min(right_cands, key=lambda r: r[0])
-    if left[1] + 8 >= right[0]:
-        return None
-
-    # 定界：左橘内侧 → 右橘内侧（无橘则退到绿列）
-    x0 = max(left[1], gx0)
-    x1 = min(right[0], gx1)
-    # 若橘贴在绿外，用橘内侧
-    if left[1] <= gx0:
-        x0 = left[1]
-    if right[0] >= gx1:
-        x1 = right[0]
+    x0 = left
+    x1 = right + 1
     gw = x1 - x0
-    if gw < _MIN_W or gw < gh * _MIN_ASPECT:
+    if gw < _MIN_W or gw < gh * 3.5:
         return None
-    patch = gmask[y0:y1, x0:x1]
-    if float((patch > 0).mean()) < 0.12:
+    if float((nmask[y0:y1, x0:x1] > 0).mean()) < 0.04:
         return None
-    # 厚度只量贴绿的端帽窄条（避免远处杂色拉高 spill）
-    cap = max(8, min(36, gw // 10))
-    xl0, xl1 = max(0, x0 - cap), x0
-    xr0, xr1 = x1, min(omask.shape[1], x1 + cap)
-    oh_l = _slice_thickness(omask, xl0, xl1, yw0, yw1)
-    oh_r = _slice_thickness(omask, xr0, xr1, yw0, yw1)
-    if not _same_strip_thickness(gh, oh_l, oh_r):
+
+    cap = max(6, min(40, gw // 10))
+    oh_l = _slice_thickness(emask, x0, x0 + cap, y0, y1)
+    oh_r = _slice_thickness(emask, max(x0, x1 - cap), x1, y0, y1)
+    if oh_l < 3 or oh_r < 3:
         return None
-    for xa, xb in ((xl0, xl1), (xr0, xr1)):
-        total = int((omask[:, xa:xb] > 0).sum())
-        in_band = int((omask[y0:y1, xa:xb] > 0).sum())
-        if total > 0 and in_band < total * 0.30:
+    for oh in (oh_l, oh_r):
+        if oh > gh * 2.8 or oh < max(3, int(gh * 0.25)):
             return None
     return x0, y0, gw, gh
 
@@ -231,12 +316,14 @@ def find_green_span(
     rgb: np.ndarray,
     mask: np.ndarray | None = None,
 ) -> tuple[int, int, int, int] | None:
-    """只认「左橘 | 中绿 | 右橘」：以最左/最右橘红为起止。"""
+    """只认「左橘 | 中绿 | 右橘」：霓虹绿核 + 两侧就近橘红端帽。"""
     if rgb.ndim != 3:
         return None
     gmask = mask if mask is not None else green_zone_mask(rgb)
     omask = orange_zone_mask(rgb)
-    return _span_from_orange_ends(gmask, omask)
+    neon = neon_green_mask(rgb)
+    endcap = endcap_mask(rgb)
+    return _span_from_orange_ends(gmask, omask, neon, endcap)
 
 
 def find_green_bar(
@@ -267,7 +354,7 @@ def _bobber_from_green_hole(
     best = None
     best_area = 0.0
     bar_cy = zy + zh / 2.0
-    margin = max(6, int(zw * 0.04))
+    margin = max(3, int(zw * 0.015))
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if area < 10 or area > 800:
@@ -296,7 +383,8 @@ def _bobber_from_white(
     rgb: np.ndarray, zx: int, zy: int, zw: int, zh: int
 ) -> tuple[float, float, int] | None:
     fh, fw = rgb.shape[:2]
-    y0 = max(0, zy - max(6, zh // 2))
+    # 漂白肚可略高于绿带上沿；窗口过大会把远处 UI/水花当漂
+    y0 = max(0, zy - max(10, int(zh * 1.5)))
     y1 = min(fh, zy + zh + 2)
     x0, x1 = max(0, zx), min(fw, zx + zw)
     wm = white_mask(rgb[y0:y1, x0:x1])
@@ -306,6 +394,8 @@ def _bobber_from_white(
     best = None
     best_area = 0.0
     bar_cy = zy + zh / 2.0
+    # 漂可贴近端点（危险区），边距过大会漏检
+    margin = max(3, int(zw * 0.015))
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if area < 8:
@@ -318,7 +408,14 @@ def _bobber_from_white(
             continue
         cx = float(x0 + m["m10"] / m["m00"])
         cy = float(y0 + m["m01"] / m["m00"])
-        if abs(cy - bar_cy) > zh * 1.8:
+        # 允许漂在条上方约 3 倍条高
+        if cy > zy + zh + zh * 0.5:
+            continue
+        if cy < zy - zh * 3.5:
+            continue
+        if abs(cy - bar_cy) > zh * 3.5 and cy > zy + zh:
+            continue
+        if cx < zx + margin or cx > zx + zw - margin:
             continue
         if area > best_area:
             best_area = area
@@ -326,22 +423,95 @@ def _bobber_from_white(
     return best
 
 
+def _bobber_from_green_gap(
+    gmask: np.ndarray, zx: int, zy: int, zw: int, zh: int
+) -> tuple[float, float, int] | None:
+    """
+    绿条必有漂：带内绿密度谷（两侧仍有绿）= 漂挡住的位置。
+    忽略端帽 pad 造成的边缘零绿。
+    """
+    if zw < 16 or zh < 4:
+        return None
+    y0 = max(0, zy)
+    y1 = min(gmask.shape[0], zy + zh)
+    x0 = max(0, zx)
+    x1 = min(gmask.shape[1], zx + zw)
+    strip = gmask[y0:y1, x0:x1]
+    if strip.size == 0:
+        return None
+    col = (strip > 0).mean(axis=0)
+    peak = float(col.max()) if col.size else 0.0
+    if peak < 0.2:
+        return None
+    # 只在「绿核心」内找谷，避免 ±5% pad 进橘端后边缘零绿被当成漂
+    strong = np.where(col >= peak * 0.45)[0]
+    if strong.size < 12:
+        return None
+    core_lo = int(strong[0])
+    core_hi = int(strong[-1])
+    if core_hi - core_lo < 12:
+        return None
+    inner = col[core_lo : core_hi + 1]
+    valley_thr = max(0.12, peak * 0.55)
+    low = np.where(inner <= valley_thr)[0]
+    if low.size == 0:
+        # 无深谷则取核心内最低，且须明显低于峰值
+        idx_local = int(np.argmin(inner))
+        if float(inner[idx_local]) > peak * 0.75:
+            return None
+        idx = core_lo + idx_local
+        w_gap = max(4, zh // 2)
+    else:
+        best_a = best_b = int(low[0])
+        a = int(low[0])
+        prev = a
+        for v in low[1:]:
+            v = int(v)
+            if v == prev + 1:
+                prev = v
+            else:
+                if prev - a >= best_b - best_a:
+                    best_a, best_b = a, prev
+                a = prev = v
+        if prev - a >= best_b - best_a:
+            best_a, best_b = a, prev
+        idx = core_lo + (best_a + best_b) // 2
+        w_gap = max(4, best_b - best_a + 1)
+    # 谷两侧须仍有绿（真孔，不是端帽）
+    if idx <= core_lo + 2 or idx >= core_hi - 2:
+        return None
+    cx = float(x0 + idx)
+    cy = float(y0 + (y1 - y0) / 2.0)
+    px = int(w_gap * max(1, y1 - y0) * (1.0 - float(col[idx])))
+    return cx, cy, max(px, 8)
+
+
 def bobber_in_bar(
     rgb: np.ndarray, zx: int, zy: int, zw: int, zh: int
 ) -> BobberHit | None:
+    """绿条既定必有漂：白 → 绿孔 → 绿密度谷。只在条框附近 ROI 运算。"""
     if zw < 8 or zh < 4:
         return None
-    gmask = green_zone_mask(rgb)
-    hit = _bobber_from_white(rgb, zx, zy, zw, zh)
+    fh, fw = rgb.shape[:2]
+    margin = max(70, zh * 3)
+    rx0 = max(0, zx)
+    ry0 = max(0, zy - margin)
+    rx1 = min(fw, zx + zw)
+    ry1 = min(fh, zy + zh + margin)
+    roi = rgb[ry0:ry1, rx0:rx1]
+    gmask = green_zone_mask(roi)
+    hit = _bobber_from_white(roi, 0, zy - ry0, rx1 - rx0, zh)
     if hit is None:
-        hit = _bobber_from_green_hole(gmask, zx, zy, zw, zh)
+        hit = _bobber_from_green_hole(gmask, 0, zy - ry0, rx1 - rx0, zh)
+    if hit is None:
+        hit = _bobber_from_green_gap(gmask, 0, zy - ry0, rx1 - rx0, zh)
     if hit is None:
         return None
     cx, cy, px = hit
     return BobberHit(
-        pos=pixel_to_pos(cx - zx, zw),
-        x=cx,
-        y=cy,
+        pos=pixel_to_pos(cx, rx1 - rx0),
+        x=cx + rx0,
+        y=cy + ry0,
         pixel_count=px,
         bar_left=float(zx),
         bar_top=float(zy),

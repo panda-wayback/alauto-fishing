@@ -53,6 +53,8 @@ class PosEvent:
     """与 FrameEvent.seq 对齐；同帧画面与读数。"""
     frame: np.ndarray | None = None
     """刚完成识别的那一帧（供 UI 与读数同频显示）。"""
+    detect_ms: float = 0.0
+    """本次识别耗时（毫秒）。"""
 
 
 @dataclass(frozen=True)

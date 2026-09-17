@@ -41,7 +41,7 @@ from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
 from autofish.act.mouse import os_left_down
-from autofish.detect.api import find_bar
+from autofish.detect.api import find_bar, get_detector
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -338,6 +338,9 @@ class PreviewApp(QMainWindow):
         self._pipe: AutofishPipeline | None = None
         self._holding: bool | None = None
         self._intent_reason = ""
+        self._last_detect_ms: float = 0.0
+        self._ms_window: deque[float] = deque(maxlen=60)
+        self._ms_log_ts: float = 0.0
         self._mouse_mismatch_logged = False
         self._logs: deque[str] = deque(maxlen=80)
         self._bridge = BusBridge()
@@ -420,6 +423,10 @@ class PreviewApp(QMainWindow):
         self.lbl_strat_detail = QLabel("")
         self.lbl_strat_detail.setStyleSheet("color:#787c80;")
         row2.addWidget(self.lbl_strat_detail, 1)
+        self.lbl_perf = QLabel("")
+        self.lbl_perf.setStyleSheet("color:#787c80;")
+        self.lbl_perf.setMinimumWidth(90)
+        row2.addWidget(self.lbl_perf)
         strat_l.addLayout(row2)
         layout.addWidget(strat)
 
@@ -529,10 +536,30 @@ class PreviewApp(QMainWindow):
         if event.frame is not None and self.phase != SELECT:
             self.frame = event.frame
         self.hit = event.hit
+        self._last_detect_ms = event.detect_ms
+        self._note_detect_ms(event.detect_ms)
         self._refresh_pos()
         self._refresh_monitor()
         if self._pipe is not None and self._pipe.decide_on:
             self._refresh_strategy(event.pos, self._intent_reason)
+
+    def _note_detect_ms(self, ms: float) -> None:
+        """累计识别耗时；每 2s 记一条日志，便于看效率。"""
+        if ms <= 0:
+            return
+        self._ms_window.append(ms)
+        now = time.time()
+        if now - self._ms_log_ts < 2.0 or not self._ms_window:
+            return
+        self._ms_log_ts = now
+        vals = list(self._ms_window)
+        avg = sum(vals) / len(vals)
+        fps = 1000.0 / avg if avg > 0 else 0.0
+        name = get_detector().name
+        self._log(
+            f"识别 {name} 均 {avg:.1f}ms 最大 {max(vals):.1f}ms"
+            f" 最小 {min(vals):.1f}ms ≈{fps:.0f} FPS"
+        )
 
     def _on_intent_ui(self, event: ActionIntentEvent) -> None:
         self._holding = event.holding
@@ -598,6 +625,8 @@ class PreviewApp(QMainWindow):
             self.lbl_pos.setStyleSheet(
                 "font-size:28px; font-weight:600; color:#d24e46;"
             )
+        ms = getattr(self, "_last_detect_ms", 0.0)
+        self.lbl_perf.setText(f"{ms:.1f} ms")
 
     def _refresh_monitor(self) -> None:
         if self.phase == SELECT and self.screen_grab is not None:

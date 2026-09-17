@@ -64,11 +64,14 @@ class DetectorWorker(WorkerBase):
                 if self._superseded(event.seq):
                     continue
                 try:
+                    t0 = time.perf_counter()
                     raw = detect(event.frame)
+                    dt = (time.perf_counter() - t0) * 1000.0
                 except Exception:  # noqa: BLE001
                     # 单帧异常不得杀死识别线程（否则监控仍动、Pos 永久停）
                     traceback.print_exc()
                     raw = None
+                    dt = 0.0
                 self._last_seq = event.seq
                 self.bus.publish_pos(
                     PosEvent(
@@ -79,6 +82,7 @@ class DetectorWorker(WorkerBase):
                         ts=time.time(),
                         frame_seq=event.seq,
                         frame=event.frame,
+                        detect_ms=dt,
                     )
                 )
             except Exception:  # noqa: BLE001
