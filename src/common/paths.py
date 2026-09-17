@@ -15,9 +15,11 @@ def bundle_root() -> Path:
 
 
 def data_root() -> Path:
-    """可写 data/。冻结时放在可执行文件旁，便于改 ROI。"""
+    """可写 data/。冻结时用用户目录，.app 内部不可写。"""
     if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "data"
+        root = Path.home() / "Library" / "Application Support" / "albn-autofish"
+        root.mkdir(parents=True, exist_ok=True)
+        return root
     return bundle_root() / "data"
 
 

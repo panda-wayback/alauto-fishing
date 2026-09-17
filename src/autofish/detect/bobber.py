@@ -397,23 +397,20 @@ def _bobber_from_green_hole(
     contours, _ = cv2.findContours(inv, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
     best = None
     best_area = 0.0
-    bar_cy = zy + zh / 2.0
     margin = max(3, int(zw * 0.015))
     for cnt in contours:
         area = float(cv2.contourArea(cnt))
         if area < 10 or area > 800:
             continue
-        _fx, fy, fw_, fh_ = cv2.boundingRect(cnt)
+        _fx, _fy, fw_, fh_ = cv2.boundingRect(cnt)
         if fw_ > zw * 0.4 or fh_ > zh * 2.8:
-            continue
-        if fy + fh_ < zy - 10 or fy > zy + zh + 10:
             continue
         m = cv2.moments(cnt)
         if m["m00"] <= 1e-3:
             continue
         cx = float(x_start + m["m10"] / m["m00"])
         cy = float(m["m01"] / m["m00"])
-        if abs(cy - bar_cy) > zh * 1.8:
+        if cy < zy or cy > zy + zh:
             continue
         if cx < zx + margin or cx > zx + zw - margin:
             continue
@@ -427,9 +424,10 @@ def _bobber_from_white(
     rgb: np.ndarray, zx: int, zy: int, zw: int, zh: int
 ) -> tuple[float, float, int] | None:
     fh, fw = rgb.shape[:2]
-    # 漂白肚可略高于绿带上沿；窗口过大会把远处 UI/水花当漂
-    y0 = max(0, zy - max(10, int(zh * 1.5)))
-    y1 = min(fh, zy + zh + 2)
+    # 漂白肚可略出条沿，故窗口留小余量；但质心必须落在条内
+    pad = max(2, int(zh * 0.25))
+    y0 = max(0, zy - pad)
+    y1 = min(fh, zy + zh + pad)
     x0, x1 = max(0, zx), min(fw, zx + zw)
     wm = white_mask(rgb[y0:y1, x0:x1])
     if int(cv2.countNonZero(wm)) < 4:
@@ -437,7 +435,6 @@ def _bobber_from_white(
     contours, _ = cv2.findContours(wm, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     best = None
     best_area = 0.0
-    bar_cy = zy + zh / 2.0
     # 漂可贴近端点（危险区），边距过大会漏检
     margin = max(3, int(zw * 0.015))
     for cnt in contours:
@@ -452,12 +449,7 @@ def _bobber_from_white(
             continue
         cx = float(x0 + m["m10"] / m["m00"])
         cy = float(y0 + m["m01"] / m["m00"])
-        # 允许漂在条上方约 3 倍条高
-        if cy > zy + zh + zh * 0.5:
-            continue
-        if cy < zy - zh * 3.5:
-            continue
-        if abs(cy - bar_cy) > zh * 3.5 and cy > zy + zh:
+        if cy < zy or cy > zy + zh:
             continue
         if cx < zx + margin or cx > zx + zw - margin:
             continue
@@ -537,7 +529,8 @@ def bobber_in_bar(
     if zw < 8 or zh < 4:
         return None
     fh, fw = rgb.shape[:2]
-    margin = max(70, zh * 3)
+    # 漂必在条内，ROI 只留白肚溢出条沿的余量
+    margin = max(2, zh // 2)
     rx0 = max(0, zx)
     ry0 = max(0, zy - margin)
     rx1 = min(fw, zx + zw)

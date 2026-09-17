@@ -18,5 +18,6 @@ fi
   --workpath "$ROOT/build/pyinstaller" \
   "$ROOT/packaging/albn_autofish.spec"
 
-echo "输出: $ROOT/dist/albn-autofish"
-echo "用法: 拷到其它 Mac，同目录可放 data/roi.json；需授权屏幕录制与辅助功能。"
+echo "输出: $ROOT/dist/albn-autofish.app"
+echo "用法: 拷到其它 Mac 双击运行；ROI 存在 ~/Library/Application Support/albn-autofish/。"
+echo "首次运行需授权屏幕录制与辅助功能。"
