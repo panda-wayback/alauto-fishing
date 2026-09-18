@@ -61,6 +61,7 @@ from autofish.topics import (
     PressIntervalEvent,
     Topic,
 )
+from common import permissions as perms
 from tools.dual_range_axis import DualRangeAxis
 
 IDLE = "idle"
@@ -370,10 +371,36 @@ class PreviewApp(QMainWindow):
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(int(1000 / max(1, sim_config.FPS)))
 
+        self._perm_timer = QTimer(self)
+        self._perm_timer.timeout.connect(self._refresh_permissions)
+        self._perm_timer.start(2000)
+        self._refresh_permissions()
+
     def _build_ui(self) -> None:
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+
+        # —— 权限：macOS 隐私 / Windows 截屏探测+管理员 ——
+        perm = QGroupBox("权限")
+        perm_l = QHBoxLayout(perm)
+        self.lbl_perm_screen = QLabel("屏幕…")
+        self.lbl_perm_screen.setMinimumWidth(140)
+        perm_l.addWidget(self.lbl_perm_screen)
+        self.btn_perm_screen = QPushButton("授权屏幕")
+        self.btn_perm_screen.clicked.connect(self._on_perm_screen)
+        perm_l.addWidget(self.btn_perm_screen)
+        self.lbl_perm_input = QLabel("控鼠…")
+        self.lbl_perm_input.setMinimumWidth(180)
+        perm_l.addWidget(self.lbl_perm_input)
+        self.btn_perm_input = QPushButton("授权控鼠")
+        self.btn_perm_input.clicked.connect(self._on_perm_input)
+        perm_l.addWidget(self.btn_perm_input)
+        self.btn_perm_refresh = QPushButton("刷新")
+        self.btn_perm_refresh.clicked.connect(self._refresh_permissions)
+        perm_l.addWidget(self.btn_perm_refresh)
+        perm_l.addStretch(1)
+        layout.addWidget(perm)
 
         # —— 感知：POS + 监控 + 框选 ——
         sense = QGroupBox("感知")
@@ -514,6 +541,61 @@ class PreviewApp(QMainWindow):
         line = f"{time.strftime('%H:%M:%S')}  {msg}"
         self._logs.appendleft(line)
         self.log.setPlainText("\n".join(self._logs))
+
+    @staticmethod
+    def _perm_style(ok: bool | None) -> str:
+        if ok is True:
+            return "color:#48b46e; font-weight:600;"
+        if ok is False:
+            return "color:#d24e46; font-weight:600;"
+        return "color:#787c80;"
+
+    def _refresh_permissions(self) -> None:
+        st = perms.current_status()
+        self.lbl_perm_screen.setText(st.screen_label)
+        self.lbl_perm_screen.setStyleSheet(self._perm_style(st.screen_ok))
+        self.lbl_perm_input.setText(st.input_label)
+        # Windows 非管理员标黄提示，不算硬失败
+        if st.platform == "win32" and st.is_admin is False:
+            self.lbl_perm_input.setStyleSheet("color:#c9a227; font-weight:600;")
+        else:
+            self.lbl_perm_input.setStyleSheet(self._perm_style(st.input_ok))
+        if st.platform == "darwin":
+            self.btn_perm_screen.setText("授权屏幕录制")
+            self.btn_perm_input.setText("授权辅助功能")
+            self.btn_perm_input.setEnabled(True)
+        elif st.platform == "win32":
+            self.btn_perm_screen.setText("测试截屏")
+            if st.is_admin:
+                self.btn_perm_input.setText("已是管理员")
+                self.btn_perm_input.setEnabled(False)
+            else:
+                self.btn_perm_input.setText("以管理员重启")
+                self.btn_perm_input.setEnabled(True)
+        else:
+            self.btn_perm_screen.setText("屏幕")
+            self.btn_perm_input.setText("控鼠")
+
+    def _on_perm_screen(self) -> None:
+        msg = perms.request_screen_access()
+        self._log(msg)
+        self.lbl_hint.setText(msg)
+        self._refresh_permissions()
+
+    def _on_perm_input(self) -> None:
+        was_admin = perms.current_status().is_admin
+        msg = perms.request_input_access()
+        self._log(msg)
+        self.lbl_hint.setText(msg)
+        self._refresh_permissions()
+        # Windows 提权重启成功：退出本进程，避免双开
+        if (
+            sys.platform == "win32"
+            and was_admin is False
+            and "重新启动" in msg
+            and "失败" not in msg
+        ):
+            QApplication.instance().quit()
 
     def _reload_roi(self) -> None:
         try:

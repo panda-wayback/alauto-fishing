@@ -32,6 +32,7 @@ Albion 拉鱼：**模拟器**测算法 + **真机自动拉鱼**。方案索引�
 | `docs/simulator/` | 模拟器方案 |
 | `docs/autofish/` | 真机功能架构 |
 | `docs/common/` | 通用库方案 |
+| `docs/common/permissions/` | 截屏/控鼠权限引导 |
 
 ## 验证命令
 

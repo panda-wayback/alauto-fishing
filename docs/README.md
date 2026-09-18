@@ -15,6 +15,7 @@
 | └ 订阅串接 | [`docs/autofish/pipeline/`](autofish/pipeline/) | 五段如何经总线交接 |
 | **通用库** | [`docs/common/`](common/) | 无业务基础设施 |
 | └ 订阅总线 | [`docs/common/pubsub/`](common/pubsub/) | 进程内 Pub/Sub |
+| └ 运行权限 | [`docs/common/permissions/`](common/permissions/) | 截屏/控鼠授权引导 |
 
 调试预览窗（真机+模拟器并排）在代码 `src/tools/`，不属于上表业务段；监控显示原画面（可叠框/线）见 [`docs/autofish/`](autofish/) 约束。
 

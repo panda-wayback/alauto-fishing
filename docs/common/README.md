@@ -9,3 +9,4 @@
 | 子能力 | 路径 |
 |---|---|
 | 进程内订阅总线 | [`docs/common/pubsub/`](pubsub/) |
+| 运行权限（截屏/控鼠） | [`docs/common/permissions/`](permissions/) |

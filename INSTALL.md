@@ -61,7 +61,7 @@ bash packaging/build_macos.sh
 # 输出 dist/albn-autofish.app
 ```
 
-把 `dist/albn-autofish.app` 拷到其它 Mac 双击即用（Apple Silicon）。ROI 等运行时数据写到 `~/Library/Application Support/albn-autofish/`。首次运行需在系统设置里授权「屏幕录制」和「辅助功能」；若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。Windows 需在 Windows 上另行打包。
+把 `dist/albn-autofish.app` 拷到其它 Mac 双击即用（Apple Silicon）。ROI 等运行时数据写到 `~/Library/Application Support/albn-autofish/`。打开预览壳顶栏 **「权限」** 可授权屏幕录制与辅助功能。若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。Windows：顶栏可测截屏、以管理员重启（游戏提权时常用）。
 
 ## 真机感知（截图 + 色块）
 
