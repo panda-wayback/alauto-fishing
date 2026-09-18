@@ -42,7 +42,7 @@ from sim import config as sim_config
 from sim.game import FishingGame, State
 from ui.render import Renderer
 from autofish.act.mouse import os_left_down
-from autofish.detect.api import find_bar, get_detector
+from autofish.detect.api import get_detector
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -100,40 +100,29 @@ def _draw_rect(
 
 
 def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
-    """叠层：Pos 0～100 范围（绿±5%）+ 搜白框 + 命中点。"""
+    """叠层：Pos 范围框 + 命中点。无 hit 时不在 UI 线程再跑 find_bar。"""
+    if hit is None:
+        return rgb
+    if hit.bar_width <= 0:
+        return rgb
     vis = rgb.copy()
-    if hit is not None:
-        bar = (
-            int(hit.bar_left),
-            int(hit.bar_top),
-            int(hit.bar_width),
-            int(hit.bar_height),
-        )
-    else:
-        bar = find_bar(vis)
-
-    if bar is not None:
-        zx, zy, zw, zh = bar
-        fh, fw = vis.shape[:2]
-        # 青绿：POS 0～100 映射带（绿端 ±5%）
-        _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
-        # 黄：实际搜白范围（略上探）
-        y0 = max(0, zy - max(6, zh // 2))
-        y1 = min(fh, zy + zh + 2)
-        x0, x1 = max(0, zx), min(fw, zx + zw)
-        _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
-        # 左=0 / 右=100 竖线
-        mid_y0 = zy
-        mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
-        if 0 <= zx < fw:
-            vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
-        right = min(fw - 1, zx + max(zw, 1) - 1)
-        if 0 <= right < fw:
-            vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
-
-    if hit is not None:
-        x, y = int(hit.x), int(hit.y)
-        vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
+    zx, zy = int(hit.bar_left), int(hit.bar_top)
+    zw, zh = int(hit.bar_width), int(hit.bar_height)
+    fh, fw = vis.shape[:2]
+    _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
+    y0 = max(0, zy - max(6, zh // 2))
+    y1 = min(fh, zy + zh + 2)
+    x0, x1 = max(0, zx), min(fw, zx + zw)
+    _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
+    mid_y0 = zy
+    mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
+    if 0 <= zx < fw:
+        vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
+    right = min(fw - 1, zx + max(zw, 1) - 1)
+    if 0 <= right < fw:
+        vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
+    x, y = int(hit.x), int(hit.y)
+    vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
     return vis
 
 
@@ -344,6 +333,8 @@ class PreviewApp(QMainWindow):
         self._last_detect_ms: float = 0.0
         self._ms_window: deque[float] = deque(maxlen=60)
         self._ms_log_ts: float = 0.0
+        self._mon_ui_ts: float = 0.0
+        self._mon_ui_min_dt: float = 1.0 / 15.0  # 预览最多 ~15fps，避免 Windows 卡死
         self._mouse_mismatch_logged = False
         self._logs: deque[str] = deque(maxlen=80)
         self._bridge = BusBridge()
@@ -610,7 +601,7 @@ class PreviewApp(QMainWindow):
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
-            pipe = AutofishPipeline(auto_locate=False, capture_fps=45.0)
+            pipe = AutofishPipeline(auto_locate=False, capture_fps=30.0)
             pipe.subscribe(Topic.FRAME, self._on_frame_bus)
             pipe.subscribe(Topic.POS, self._on_pos_bus)
             pipe.subscribe(Topic.ACTION_INTENT, self._on_intent_bus)
@@ -648,8 +639,9 @@ class PreviewApp(QMainWindow):
     def _on_frame_ui(self, event: FrameEvent) -> None:
         if self.phase == SELECT:
             return
+        # 只缓存帧；MONITOR 由 Pos 同频刷新。
+        # Frame 约 30fps 全量转 QPixmap 会在 Windows 上严重卡 UI。
         self.frame = event.frame
-        self._refresh_monitor()
 
     def _on_pos_ui(self, event: PosEvent) -> None:
         if event.frame is not None and self.phase != SELECT:
@@ -658,9 +650,16 @@ class PreviewApp(QMainWindow):
         self._last_detect_ms = event.detect_ms
         self._note_detect_ms(event.detect_ms)
         self._refresh_pos()
-        self._refresh_monitor()
+        self._maybe_refresh_monitor()
         if self._pipe is not None and self._pipe.decide_on:
             self._refresh_strategy(event.pos, self._intent_reason)
+
+    def _maybe_refresh_monitor(self, *, force: bool = False) -> None:
+        now = time.perf_counter()
+        if not force and (now - self._mon_ui_ts) < self._mon_ui_min_dt:
+            return
+        self._mon_ui_ts = now
+        self._refresh_monitor()
 
     def _note_detect_ms(self, ms: float) -> None:
         """累计识别耗时；每 2s 记一条日志，便于看效率。"""
