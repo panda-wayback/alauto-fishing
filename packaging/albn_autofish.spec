@@ -1,11 +1,24 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""macOS .app（onedir）：autofish.preview --ui → dist/albn-autofish.app"""
+"""macOS .app（onedir）：autofish.preview --ui → dist/<APP_NAME>
 
+环境变量（本地反复测授权时用）：
+  ALBN_BUNDLE_ID   默认 com.albn.autofish
+  ALBN_APP_NAME    默认 albn-autofish.app（须以 .app 结尾）
+  ALBN_DISPLAY_NAME 默认 Albn Autofish
+"""
+
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 ROOT = Path(SPECPATH).resolve().parent
+BUNDLE_ID = os.environ.get("ALBN_BUNDLE_ID", "com.albn.autofish")
+APP_NAME = os.environ.get("ALBN_APP_NAME", "albn-autofish.app")
+DISPLAY_NAME = os.environ.get("ALBN_DISPLAY_NAME", "Albn Autofish")
+if not APP_NAME.endswith(".app"):
+    APP_NAME = f"{APP_NAME}.app"
+
 datas = [(str(ROOT / "assets"), "assets")]
 binaries = []
 hiddenimports = [
@@ -22,7 +35,6 @@ hiddenimports = [
     "common.pubsub",
 ]
 
-# PySide6 交给内置 hook 按实际 import 收集；collect_all 会拖进整套 Qt。
 for pkg in ("mss", "pynput"):
     d, b, h = collect_all(pkg)
     datas += d
@@ -31,7 +43,6 @@ for pkg in ("mss", "pynput"):
 
 datas += collect_data_files("cv2")
 
-# 预览壳只用 QtCore / QtGui / QtWidgets。
 excludes = [
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DCore",
@@ -121,12 +132,12 @@ coll = COLLECT(
 
 app = BUNDLE(
     coll,
-    name="albn-autofish.app",
+    name=APP_NAME,
     icon=None,
-    bundle_identifier="com.albn.autofish",
+    bundle_identifier=BUNDLE_ID,
     info_plist={
-        "CFBundleName": "Albn Autofish",
-        "CFBundleDisplayName": "Albn Autofish",
+        "CFBundleName": DISPLAY_NAME,
+        "CFBundleDisplayName": DISPLAY_NAME,
         "CFBundleShortVersionString": "1.0.0",
         "CFBundleVersion": "1.0.0",
         "NSHighResolutionCapable": True,

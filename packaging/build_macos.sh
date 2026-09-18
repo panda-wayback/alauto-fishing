@@ -16,10 +16,13 @@ else
 fi
 
 echo "Using: $PY"
+echo "Bundle: ${ALBN_BUNDLE_ID:-com.albn.autofish}  App: ${ALBN_APP_NAME:-albn-autofish.app}"
 "$PY" -m pip install -q -r "$ROOT/requirements.txt" "pyinstaller>=6.0,<7"
 "$PY" -m PyInstaller --noconfirm --clean \
   --distpath "$ROOT/dist" \
   --workpath "$ROOT/build/pyinstaller" \
   "$ROOT/packaging/albn_autofish.spec"
 
-echo "输出: $ROOT/dist/albn-autofish.app"
+OUT_APP="${ALBN_APP_NAME:-albn-autofish.app}"
+[[ "$OUT_APP" == *.app ]] || OUT_APP="${OUT_APP}.app"
+echo "输出: $ROOT/dist/$OUT_APP"

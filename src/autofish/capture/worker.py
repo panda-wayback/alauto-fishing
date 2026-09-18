@@ -38,7 +38,14 @@ class CaptureWorker(WorkerBase):
                             seq=self._seq,
                         )
                     )
-                except Exception:  # noqa: BLE001
-                    pass
+                except Exception as exc:  # noqa: BLE001
+                    # 避免刷屏：每秒最多记一次
+                    now = time.perf_counter()
+                    last = getattr(self, "_last_err_log", 0.0)
+                    if now - last >= 1.0:
+                        self._last_err_log = now
+                        print(f"[capture] grab_roi failed: {exc}", flush=True)
+                    self._stop.wait(self._dt)
+                    continue
             elapsed = time.perf_counter() - t0
             self._stop.wait(max(0.0, self._dt - elapsed))

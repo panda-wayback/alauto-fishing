@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 try:
     from pynput.mouse import Button, Controller
 except ImportError as exc:  # pragma: no cover
@@ -10,6 +12,9 @@ except ImportError as exc:  # pragma: no cover
 
 def os_left_down() -> bool | None:
     """读系统左键是否按下；失败返回 None。"""
+    if sys.platform == "win32":
+        return _win_left_down()
+
     try:
         from Quartz import (  # type: ignore[import-untyped]
             CGEventSourceButtonState,
@@ -28,6 +33,28 @@ def os_left_down() -> bool | None:
             from AppKit import NSEvent  # type: ignore[import-untyped]
 
             return bool(NSEvent.pressedMouseButtons() & 1)
+        except Exception:
+            return None
+
+
+def _win_left_down() -> bool | None:
+    """Windows：GetAsyncKeyState；不依赖「辅助功能」。"""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.WinDLL("user32", use_last_error=True)
+        fn = user32.GetAsyncKeyState
+        fn.argtypes = (wintypes.INT,)
+        fn.restype = wintypes.SHORT
+        # SHORT 最高位为 1 ⇒ 当前按下（注意 restype 避免符号截断）
+        return bool(fn(0x01) & 0x8000)
+    except Exception:
+        try:
+            import ctypes
+
+            state = int(ctypes.windll.user32.GetAsyncKeyState(0x01))
+            return bool(state & 0x8000)
         except Exception:
             return None
 

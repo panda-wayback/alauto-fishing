@@ -904,7 +904,13 @@ class PreviewApp(QMainWindow):
         ):
             issues.append("程序≠系统")
         if os_down is None:
-            issues.append("系统态不可读（检查辅助功能权限）")
+            if sys.platform == "darwin":
+                issues.append("系统态不可读（检查辅助功能权限）")
+            elif sys.platform == "win32":
+                # Windows 无「辅助功能」开关；旧包才会长期 None
+                issues.append("系统态不可读（请用最新 Windows 包，或检查杀软）")
+            else:
+                issues.append("系统态不可读")
 
         if issues:
             self.lbl_mouse.setStyleSheet(

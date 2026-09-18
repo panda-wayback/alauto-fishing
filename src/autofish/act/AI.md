@@ -22,4 +22,4 @@
 
 - 只跟意图，不决策；落点=当前光标。
 - 两次程序按下受 `press_interval` 门控；松开立刻。
-- 依赖 `pynput`；macOS 需辅助功能权限。
+- 依赖 `pynput`；macOS 需辅助功能；Windows 用 `GetAsyncKeyState` 读键态。

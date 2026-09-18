@@ -1,4 +1,4 @@
-"""截屏（mss，复用实例约 50fps）。坐标与输出均为逻辑点；ROI 帧宽高=手框。"""
+"""截屏（mss，每线程独立实例）。坐标与输出均为逻辑点；ROI 帧宽高=手框。"""
 
 from __future__ import annotations
 
@@ -19,48 +19,46 @@ except ImportError as exc:  # pragma: no cover
 
 DEFAULT_SCREEN_PATH = data_root() / "screen.png"
 
-# 复用单例，避免每次新建实例（新建会明显变慢）
-# mss 非线程安全：Locator / Capture 并发 grab 会卡住，必须串行。
-_sct: mss.mss | None = None
-_sct_lock = threading.RLock()
+# mss 非线程安全，且 Windows 上跨线程复用同一实例会截屏失败。
+# 每线程各自持有实例；共享状态（scale 缓存）用锁。
+_tls = threading.local()
+_scale_lock = threading.RLock()
+_scale_cache: float | None = None
 
 
 def _session() -> mss.mss:
-    global _sct
-    with _sct_lock:
-        if _sct is None:
-            _sct = mss.mss()
-        return _sct
+    sct = getattr(_tls, "sct", None)
+    if sct is None:
+        sct = mss.mss()
+        _tls.sct = sct
+    return sct
 
 
 def warmup() -> None:
     """预热 mss，避免冷启动首帧异常慢。"""
-    with _sct_lock:
-        sct = _session()
-        mon = sct.monitors[1]
-        sct.grab(
-            {
-                "left": int(mon["left"]),
-                "top": int(mon["top"]),
-                "width": 8,
-                "height": 8,
-            }
-        )
-
-
-_scale_cache: float | None = None
+    sct = _session()
+    mon = sct.monitors[1]
+    sct.grab(
+        {
+            "left": int(mon["left"]),
+            "top": int(mon["top"]),
+            "width": 8,
+            "height": 8,
+        }
+    )
 
 
 def _primary_scale_once(mon: dict) -> float:
-    """调用方须已持有 `_sct_lock`。"""
+    """调用方应在短临界区内；scale 全局缓存一次即可。"""
     global _scale_cache
-    if _scale_cache is not None:
+    with _scale_lock:
+        if _scale_cache is not None:
+            return _scale_cache
+        shot = _session().grab(mon)
+        physical_w = shot.width
+        logical_w = int(mon["width"])
+        _scale_cache = physical_w / logical_w if logical_w else 1.0
         return _scale_cache
-    shot = _session().grab(mon)
-    physical_w = shot.width
-    logical_w = int(mon["width"])
-    _scale_cache = physical_w / logical_w if logical_w else 1.0
-    return _scale_cache
 
 
 @dataclass(frozen=True)
@@ -77,14 +75,14 @@ def grab_primary() -> ScreenGrab:
     """截主屏，缩放到逻辑点空间（供显示与框选），scale 记录物理/逻辑倍率。"""
     import cv2
 
-    with _sct_lock:
-        mon = _session().monitors[1]
-        shot = _session().grab(mon)
-        bgra = np.asarray(shot, dtype=np.uint8)
-        rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
-        scale = _primary_scale_once(mon)
-        origin_left = int(mon["left"])
-        origin_top = int(mon["top"])
+    sct = _session()
+    mon = sct.monitors[1]
+    shot = sct.grab(mon)
+    bgra = np.asarray(shot, dtype=np.uint8)
+    rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+    scale = _primary_scale_once(mon)
+    origin_left = int(mon["left"])
+    origin_top = int(mon["top"])
     w = max(1, round(rgb.shape[1] / scale))
     h = max(1, round(rgb.shape[0] / scale))
     pts = cv2.resize(rgb, (w, h), interpolation=cv2.INTER_AREA)
@@ -100,13 +98,13 @@ def grab_roi(roi: Roi) -> np.ndarray:
     """截 ROI（逻辑点），返回与手框同尺寸的逻辑像素 RGB，shape=(height, width, 3)。"""
     import cv2
 
-    with _sct_lock:
-        mon = _session().monitors[1]
-        shot = _session().grab(roi.as_mss())
-        bgra = np.asarray(shot, dtype=np.uint8)
-        rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
-        scale = _primary_scale_once(mon)
-    # Retina 等：物理缓冲须缩回逻辑点，与框选宽高一致，禁止比手框「虚大」
+    sct = _session()
+    mon = sct.monitors[1]
+    shot = sct.grab(roi.as_mss())
+    bgra = np.asarray(shot, dtype=np.uint8)
+    rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
+    scale = _primary_scale_once(mon)
+    # Retina / DPI：物理缓冲须缩回逻辑点，与框选宽高一致
     if abs(scale - 1.0) > 1e-3 or rgb.shape[1] != roi.width or rgb.shape[0] != roi.height:
         rgb = cv2.resize(
             rgb, (roi.width, roi.height), interpolation=cv2.INTER_AREA
