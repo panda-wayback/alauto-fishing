@@ -1,0 +1,132 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要发布的 tag（如 v0.1.0）；留空则只构建 artifact 不发 Release"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-macos:
+    name: Build macOS
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build .app
+        run: |
+          export PYTHON="$(command -v python)"
+          bash packaging/build_macos.sh
+
+      - name: Zip .app
+        run: |
+          cd dist
+          ditto -c -k --keepParent albn-autofish.app albn-autofish-macos-arm64.zip
+          ls -lh albn-autofish-macos-arm64.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: albn-autofish-macos-arm64
+          path: dist/albn-autofish-macos-arm64.zip
+          if-no-files-found: error
+
+  build-windows:
+    name: Build Windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Build onedir
+        shell: bash
+        run: |
+          export PYTHON="$(command -v python)"
+          bash packaging/build_windows.sh
+
+      - name: Zip folder
+        shell: pwsh
+        run: |
+          if (Test-Path dist\albn-autofish-windows-x64.zip) { Remove-Item dist\albn-autofish-windows-x64.zip }
+          Compress-Archive -Path dist\albn-autofish -DestinationPath dist\albn-autofish-windows-x64.zip -Force
+          Get-Item dist\albn-autofish-windows-x64.zip | Format-List Name, Length
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: albn-autofish-windows-x64
+          path: dist/albn-autofish-windows-x64.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+
+      - name: Flatten assets
+        run: |
+          mkdir -p out
+          find release-assets -type f -name '*.zip' -exec cp {} out/ \;
+          ls -lah out/
+
+      - name: Resolve tag
+        id: meta
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${TAG}" ]]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create / update Release
+        if: steps.meta.outputs.publish == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.tag }}
+          draft: false
+          generate_release_notes: true
+          files: |
+            out/albn-autofish-macos-arm64.zip
+            out/albn-autofish-windows-x64.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -15,9 +16,15 @@ def bundle_root() -> Path:
 
 
 def data_root() -> Path:
-    """可写 data/。冻结时用用户目录，.app 内部不可写。"""
+    """可写 data/。冻结：macOS Application Support / Windows LOCALAPPDATA / 其它 XDG。"""
     if getattr(sys, "frozen", False):
-        root = Path.home() / "Library" / "Application Support" / "albn-autofish"
+        if sys.platform == "darwin":
+            root = Path.home() / "Library" / "Application Support" / "albn-autofish"
+        elif sys.platform == "win32":
+            base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+            root = Path(base) / "albn-autofish"
+        else:
+            root = Path.home() / ".local" / "share" / "albn-autofish"
         root.mkdir(parents=True, exist_ok=True)
         return root
     return bundle_root() / "data"

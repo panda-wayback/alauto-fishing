@@ -15,10 +15,10 @@ class ThresholdPosPolicy:
     def __init__(
         self,
         *,
-        press_lo: float = 40.0,
-        press_hi: float = 70.0,
-        release_lo: float = 75.0,
-        release_hi: float = 90.0,
+        press_lo: float = 70.6,
+        press_hi: float = 74.4,
+        release_lo: float = 76.6,
+        release_hi: float = 79.2,
         seed: int | None = None,
     ) -> None:
         self._rng = random.Random(seed)

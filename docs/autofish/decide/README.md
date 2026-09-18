@@ -12,8 +12,8 @@
   - 当前抽到的 **high**：pos **&gt; high** → 意图为松开
   - low～high → 保持当前意图
 - 抽样（更自然）：
-  - 按住阈值 low 从 **[press_lo, press_hi]** 均匀抽取（默认 40～70）
-  - 松开阈值 high 从 **[release_lo, release_hi]** 均匀抽取（默认 75～90）
+  - 按住阈值 low 从 **[press_lo, press_hi]** 均匀抽取（默认 70.6～74.4）
+  - 松开阈值 high 从 **[release_lo, release_hi]** 均匀抽取（默认 76.6～79.2）
   - **每次意图切换成功**（按住↔松开）后立刻重抽下一组；`reset` / 策略启动时也先抽一组
 - **不做按下间隔**：意图切换立刻发出；点击间隔只由 Act 段经总线控制。
 - **有效 Pos**：在 `FISHING` 下按当前 low/high 出意图。

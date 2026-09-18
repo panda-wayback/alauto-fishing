@@ -42,7 +42,7 @@ class AutofishSnapshot:
     holding: bool | None = None
     intent_reason: str = ""
     intent_ts: float = 0.0
-    press_interval_s: float = 0.1
+    press_interval_s: float = 0.02
 
 
 class AutofishBus:

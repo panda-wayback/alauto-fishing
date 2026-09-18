@@ -440,7 +440,7 @@ class PreviewApp(QMainWindow):
         row1.addStretch(1)
         strat_l.addLayout(row1)
         self.range_axis = DualRangeAxis(
-            press=(40.0, 70.0), release=(75.0, 90.0), min_gap=1.0
+            press=(70.6, 74.4), release=(76.6, 79.2), min_gap=1.0
         )
         strat_l.addWidget(self.range_axis)
         row2 = QHBoxLayout()
@@ -480,12 +480,12 @@ class PreviewApp(QMainWindow):
         self.sld_press_interval.setRange(0, 300)  # 0～0.3s，毫秒
         self.sld_press_interval.setSingleStep(10)
         self.sld_press_interval.setPageStep(50)
-        self.sld_press_interval.setValue(100)
+        self.sld_press_interval.setValue(20)
         self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
         self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
         self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
         row_gap.addWidget(self.sld_press_interval, 1)
-        self.lbl_press_interval = QLabel("0.10s")
+        self.lbl_press_interval = QLabel("0.02s")
         self.lbl_press_interval.setMinimumWidth(48)
         row_gap.addWidget(self.lbl_press_interval)
         row_gap.addWidget(QLabel("（0～0.3s）"))

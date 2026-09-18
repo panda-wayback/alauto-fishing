@@ -13,7 +13,7 @@ from autofish.topics import (
     Topic,
 )
 
-_DEFAULT_PRESS_INTERVAL = 0.1
+_DEFAULT_PRESS_INTERVAL = 0.02
 _MAX_PRESS_INTERVAL = 0.3
 
 

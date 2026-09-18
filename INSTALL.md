@@ -54,14 +54,29 @@ run_batch(ThresholdHoldPolicy(), episodes=100, tier=4)
 
 依赖列表见根目录 `requirements.txt`（含 PySide6 调试壳）。
 
-## macOS 打包（真机预览 .app）
+## macOS / Windows 打包
+
+本地：
 
 ```bash
-bash packaging/build_macos.sh
-# 输出 dist/albn-autofish.app
+make build-macos      # → dist/albn-autofish.app
+make build-windows    # 须在 Windows；→ dist/albn-autofish/
 ```
 
-把 `dist/albn-autofish.app` 拷到其它 Mac 双击即用（Apple Silicon）。ROI 等运行时数据写到 `~/Library/Application Support/albn-autofish/`。打开预览壳顶栏 **「权限」** 可授权屏幕录制与辅助功能。若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。Windows：顶栏可测截屏、以管理员重启（游戏提权时常用）。
+GitHub Release（CI）：推送 tag 或手动跑 workflow。
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+产物：
+
+- `albn-autofish-macos-arm64.zip`（内含 `.app`）
+- `albn-autofish-windows-x64.zip`（内含 `albn-autofish/` 目录，运行其中的 `albn-autofish.exe`）
+
+macOS：打开预览壳顶栏 **「权限」** 授权屏幕录制与辅助功能；若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。  
+Windows：顶栏可测截屏、以管理员重启（游戏提权时常用）。ROI 等数据：macOS 在 `~/Library/Application Support/albn-autofish/`，Windows 在 `%LOCALAPPDATA%\albn-autofish\`。
 
 ## 真机感知（截图 + 色块）
 

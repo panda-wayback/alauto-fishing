@@ -31,8 +31,8 @@ class DualRangeAxis(QWidget):
         parent: QWidget | None = None,
         *,
         min_gap: float = _DEFAULT_GAP,
-        press: tuple[float, float] = (40.0, 70.0),
-        release: tuple[float, float] = (75.0, 90.0),
+        press: tuple[float, float] = (70.6, 74.4),
+        release: tuple[float, float] = (76.6, 79.2),
     ) -> None:
         super().__init__(parent)
         self.min_gap = float(min_gap)

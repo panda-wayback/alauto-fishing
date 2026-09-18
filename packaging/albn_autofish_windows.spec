@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""macOS .app（onedir）：autofish.preview --ui → dist/albn-autofish.app"""
+"""Windows onedir：autofish.preview --ui → dist/albn-autofish/"""
 
 from pathlib import Path
 
@@ -22,7 +22,6 @@ hiddenimports = [
     "common.pubsub",
 ]
 
-# PySide6 交给内置 hook 按实际 import 收集；collect_all 会拖进整套 Qt。
 for pkg in ("mss", "pynput"):
     d, b, h = collect_all(pkg)
     datas += d
@@ -31,7 +30,6 @@ for pkg in ("mss", "pynput"):
 
 datas += collect_data_files("cv2")
 
-# 预览壳只用 QtCore / QtGui / QtWidgets。
 excludes = [
     "PySide6.Qt3DAnimation",
     "PySide6.Qt3DCore",
@@ -117,21 +115,4 @@ coll = COLLECT(
     upx=False,
     upx_exclude=[],
     name="albn-autofish",
-)
-
-app = BUNDLE(
-    coll,
-    name="albn-autofish.app",
-    icon=None,
-    bundle_identifier="com.albn.autofish",
-    info_plist={
-        "CFBundleName": "Albn Autofish",
-        "CFBundleDisplayName": "Albn Autofish",
-        "CFBundleShortVersionString": "1.0.0",
-        "CFBundleVersion": "1.0.0",
-        "NSHighResolutionCapable": True,
-        "LSMinimumSystemVersion": "12.0",
-        "NSAppleEventsUsageDescription": "自动拉鱼需要控制鼠标。",
-        "NSScreenCaptureUsageDescription": "自动拉鱼需要截取游戏画面以识别张力条。",
-    },
 )

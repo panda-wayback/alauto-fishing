@@ -22,10 +22,10 @@ class DecideWorker:
         self,
         bus: AutofishBus,
         *,
-        press_lo: float = 40.0,
-        press_hi: float = 70.0,
-        release_lo: float = 75.0,
-        release_hi: float = 90.0,
+        press_lo: float = 70.6,
+        press_hi: float = 74.4,
+        release_lo: float = 76.6,
+        release_hi: float = 79.2,
     ) -> None:
         self.bus = bus
         self._policy = ThresholdPosPolicy(

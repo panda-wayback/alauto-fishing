@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# 打 macOS .app → dist/albn-autofish.app
-# 可选环境变量：PYTHON=/path/to/python
+# 打 Windows onedir → dist/albn-autofish/
+# 须在 Windows 上运行。可选：PYTHON=...
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if [[ -n "${PYTHON:-}" && -x "${PYTHON}" ]]; then
+if [[ -n "${PYTHON:-}" ]]; then
   PY="$PYTHON"
-elif [[ -x "${ROOT}/.conda/bin/python" ]]; then
-  PY="${ROOT}/.conda/bin/python"
+elif [[ -x "${ROOT}/.venv/Scripts/python.exe" ]]; then
+  PY="${ROOT}/.venv/Scripts/python.exe"
 elif [[ -x "${ROOT}/.venv/bin/python" ]]; then
   PY="${ROOT}/.venv/bin/python"
 else
-  PY="$(command -v python3)"
+  PY="$(command -v python || command -v python3)"
 fi
 
 echo "Using: $PY"
@@ -20,6 +20,6 @@ echo "Using: $PY"
 "$PY" -m PyInstaller --noconfirm --clean \
   --distpath "$ROOT/dist" \
   --workpath "$ROOT/build/pyinstaller" \
-  "$ROOT/packaging/albn_autofish.spec"
+  "$ROOT/packaging/albn_autofish_windows.spec"
 
-echo "输出: $ROOT/dist/albn-autofish.app"
+echo "输出: $ROOT/dist/albn-autofish/"
