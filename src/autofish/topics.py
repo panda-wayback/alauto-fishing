@@ -17,6 +17,7 @@ class Topic(str, Enum):
     POS = "pos"
     FISHING_STATE = "fishing_state"
     ACTION_INTENT = "action_intent"
+    PRESS_INTERVAL = "press_interval"
 
 
 class FishingState(str, Enum):
@@ -72,3 +73,11 @@ class ActionIntentEvent:
     ts: float
     reason: str = ""
     pos: float | None = None
+
+
+@dataclass(frozen=True)
+class PressIntervalEvent:
+    """调试壳 → Act：两次程序按下的最短间隔（秒）。"""
+
+    interval_s: float
+    ts: float

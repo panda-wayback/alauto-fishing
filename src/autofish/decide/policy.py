@@ -9,7 +9,7 @@ class ThresholdPosPolicy:
     """
     从范围抽 low/high：pos < low → 按住；pos > high → 松开；中间保持。
     每次意图切换成功后重抽；reset 时也重抽。
-    切换：距上次成功切换满 min_interval 即可立刻再切（默认 0.1s；无额外再等一轮）。
+    意图切换立刻生效；按下间隔由 Act 段控制。
     """
 
     def __init__(
@@ -19,15 +19,10 @@ class ThresholdPosPolicy:
         press_hi: float = 70.0,
         release_lo: float = 75.0,
         release_hi: float = 90.0,
-        min_interval: float = 0.1,
-        jitter: float = 0.0,
         seed: int | None = None,
     ) -> None:
-        self.min_interval = min_interval
-        self.jitter = jitter
         self._rng = random.Random(seed)
         self._holding = False
-        self._next_change_at = 0.0
         self.low = 50.0
         self.high = 80.0
         self.set_ranges(press_lo, press_hi, release_lo, release_hi)
@@ -57,7 +52,6 @@ class ThresholdPosPolicy:
 
     def reset(self) -> None:
         self._holding = False
-        self._next_change_at = 0.0
         self._resample()
 
     @property
@@ -65,7 +59,8 @@ class ThresholdPosPolicy:
         return self._holding
 
     def decide(self, pos: float, t: float) -> tuple[bool, str]:
-        """返回 (holding, reason)。"""
+        """返回 (holding, reason)。t 保留兼容，不参与门控。"""
+        del t
         want = self._holding
         reason = "hold"
         if pos < self.low:
@@ -78,15 +73,9 @@ class ThresholdPosPolicy:
             reason = "band"
 
         if want != self._holding:
-            if t >= self._next_change_at:
-                self._holding = want
-                self._next_change_at = (
-                    t + self.min_interval + self._rng.uniform(0.0, self.jitter)
-                )
-                self._resample()
-                return self._holding, (
-                    f"{reason}→"
-                    f"next<{self.low:.0f}/>{self.high:.0f}"
-                )
-            return self._holding, "gated"
+            self._holding = want
+            self._resample()
+            return self._holding, (
+                f"{reason}→" f"next<{self.low:.0f}/>{self.high:.0f}"
+            )
         return self._holding, reason

@@ -1,15 +1,26 @@
-"""段5：ActWorker — 订 ActionIntent → 真鼠标。"""
+"""段5：ActWorker — 订 ActionIntent / PressInterval → 真鼠标。"""
 
 from __future__ import annotations
 
+import time
+
 from autofish.act.mouse import MouseActuator, os_left_down
 from autofish.bus import AutofishBus
-from autofish.topics import ActionIntentEvent, FishingState, Topic
+from autofish.topics import (
+    ActionIntentEvent,
+    FishingState,
+    PressIntervalEvent,
+    Topic,
+)
+
+_DEFAULT_PRESS_INTERVAL = 0.1
+_MAX_PRESS_INTERVAL = 0.3
 
 
 class ActWorker:
     """
     执行订阅者：只跟意图，不决策。
+    按下受 press_interval 门控；松开立刻。
     优先级：系统左键 > 程序。系统按下且非本程序按下 → 让位，
     直到系统松开后才按快照意图接管。
     FISHING 才控鼠；单帧无 Pos 不松手；非钓鱼态 = 自由态。
@@ -20,6 +31,10 @@ class ActWorker:
         self._mouse = MouseActuator()
         self._active = False
         self._yield_to_system = False
+        self._press_interval = _DEFAULT_PRESS_INTERVAL
+        self._last_press_at = 0.0
+        # 间隔主题始终订：壳可在操作未启用时先调
+        self.bus.subscribe(Topic.PRESS_INTERVAL, self._on_press_interval)
 
     @property
     def pressed(self) -> bool:
@@ -30,9 +45,14 @@ class ActWorker:
         """是否因系统占用而让位。"""
         return self._yield_to_system
 
+    @property
+    def press_interval(self) -> float:
+        return self._press_interval
+
     def start(self) -> None:
         if self._active:
             return
+        self._press_interval = self.bus.snapshot().press_interval_s
         self.bus.subscribe(Topic.ACTION_INTENT, self._on_intent)
         self._active = True
         self.poll()
@@ -46,7 +66,7 @@ class ActWorker:
         self._mouse.force_release()
 
     def poll(self) -> None:
-        """每帧调用：系统松开后立刻按当前意图接管。"""
+        """每帧调用：系统松开后立刻按当前意图接管；补上被间隔挡住的按下。"""
         if self._active:
             self._apply_snapshot()
 
@@ -78,18 +98,31 @@ class ActWorker:
         self._yield_to_system = False
 
         if not self._in_fishing(state):
-            # 自由态：若我们正按着则松一次
             if self._mouse.pressed:
                 self._mouse.set_holding(False)
             return
 
         if holding is True:
-            self._mouse.set_holding(True)
+            self._try_press()
         elif holding is False:
             self._mouse.set_holding(False)
         elif was_yielding:
             return
 
+    def _try_press(self) -> None:
+        if self._mouse.pressed:
+            return
+        now = time.monotonic()
+        if now - self._last_press_at < self._press_interval:
+            return
+        self._mouse.set_holding(True)
+        self._last_press_at = now
+
     def _on_intent(self, event: ActionIntentEvent) -> None:
         snap = self.bus.snapshot()
         self._apply(event.holding, snap.fishing_state)
+
+    def _on_press_interval(self, event: PressIntervalEvent) -> None:
+        self._press_interval = max(
+            0.0, min(_MAX_PRESS_INTERVAL, float(event.interval_s))
+        )

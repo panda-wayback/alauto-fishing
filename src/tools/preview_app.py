@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QPlainTextEdit,
     QSizePolicy,
+    QSlider,
     QVBoxLayout,
     QWidget,
 )
@@ -57,6 +58,7 @@ from autofish.topics import (
     FishingState,
     FrameEvent,
     PosEvent,
+    PressIntervalEvent,
     Topic,
 )
 from tools.dual_range_axis import DualRangeAxis
@@ -445,6 +447,22 @@ class PreviewApp(QMainWindow):
         row_act.addWidget(self.lbl_mouse, 1)
         row_act.addWidget(QLabel("（光标请放在游戏窗口上）"))
         act_l.addLayout(row_act)
+        row_gap = QHBoxLayout()
+        row_gap.addWidget(QLabel("按下间隔"))
+        self.sld_press_interval = QSlider(Qt.Orientation.Horizontal)
+        self.sld_press_interval.setRange(0, 300)  # 0～0.3s，毫秒
+        self.sld_press_interval.setSingleStep(10)
+        self.sld_press_interval.setPageStep(50)
+        self.sld_press_interval.setValue(100)
+        self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
+        self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
+        self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
+        row_gap.addWidget(self.sld_press_interval, 1)
+        self.lbl_press_interval = QLabel("0.10s")
+        self.lbl_press_interval.setMinimumWidth(48)
+        row_gap.addWidget(self.lbl_press_interval)
+        row_gap.addWidget(QLabel("（0～0.3s）"))
+        act_l.addLayout(row_gap)
         self.lbl_mouse_diag = QLabel("")
         self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
         act_l.addWidget(self.lbl_mouse_diag)
@@ -515,7 +533,26 @@ class PreviewApp(QMainWindow):
             pipe.subscribe(Topic.POS, self._on_pos_bus)
             pipe.subscribe(Topic.ACTION_INTENT, self._on_intent_bus)
             self._pipe = pipe
+            self._publish_press_interval()
         return self._pipe
+
+    def _publish_press_interval(self) -> None:
+        pipe = self._pipe
+        if pipe is None:
+            return
+        ms = int(self.sld_press_interval.value())
+        interval = ms / 1000.0
+        self.lbl_press_interval.setText(f"{interval:.2f}s")
+        pipe.bus.publish_press_interval(
+            PressIntervalEvent(interval_s=interval, ts=time.time())
+        )
+
+    def _on_press_interval_changed(self, _value: int) -> None:
+        self._ensure_pipe()
+        self._publish_press_interval()
+
+    def _on_press_interval_released(self) -> None:
+        self._log(f"按下间隔 {self.lbl_press_interval.text()}")
 
     def _on_frame_bus(self, event: FrameEvent) -> None:
         self._bridge.frame.emit(event)

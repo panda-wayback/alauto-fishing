@@ -20,6 +20,7 @@
 
 - `AutofishPipeline` — `start_monitor` / `start_decide` / `start_act` 及对应 stop
 - `Topic.ACTION_INTENT` / `ActionIntentEvent`
+- `Topic.PRESS_INTERVAL` / `PressIntervalEvent`
 - `DecideWorker` / `ActWorker` / `ThresholdPosPolicy`
 - 总线：`roi` = 手框 = mss 范围；Detect 不发布 ROI
 

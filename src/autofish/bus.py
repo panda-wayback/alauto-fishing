@@ -18,6 +18,7 @@ from autofish.topics import (
     FishingStateEvent,
     FrameEvent,
     PosEvent,
+    PressIntervalEvent,
     RoiEvent,
     Topic,
 )
@@ -41,6 +42,7 @@ class AutofishSnapshot:
     holding: bool | None = None
     intent_reason: str = ""
     intent_ts: float = 0.0
+    press_interval_s: float = 0.1
 
 
 class AutofishBus:
@@ -128,6 +130,15 @@ class AutofishBus:
             self._snap.intent_reason = event.reason
             self._snap.intent_ts = event.ts
         self._events.publish(Topic.ACTION_INTENT, event)
+
+    def publish_press_interval(self, event: PressIntervalEvent) -> None:
+        interval = max(0.0, min(0.3, float(event.interval_s)))
+        with self._lock:
+            self._snap.press_interval_s = interval
+        self._events.publish(
+            Topic.PRESS_INTERVAL,
+            PressIntervalEvent(interval_s=interval, ts=event.ts),
+        )
 
     def clear_roi(self, source: str = "clear") -> None:
         with self._lock:

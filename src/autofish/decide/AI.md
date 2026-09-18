@@ -8,7 +8,7 @@
 
 ## 目录清单
 
-- `policy.py` — `ThresholdPosPolicy`（范围抽样；切换成功后重抽；最短切换间隔默认 0.1s）
+- `policy.py` — `ThresholdPosPolicy`（范围抽样；切换成功后重抽；无切换间隔）
 - `worker.py` — `DecideWorker`（`set_ranges` / `current_thresholds`）
 
 ## 对外契约
@@ -17,6 +17,7 @@
 - `DecideWorker.set_ranges(press_lo, press_hi, release_lo, release_hi)`
 - `DecideWorker.current_thresholds` → `(low, high)`
 - `ThresholdPosPolicy.decide(pos, t) -> (holding, reason)`
+- 按下间隔不在本段；由 Act 订 `PRESS_INTERVAL`
 
 ## 约束
 
