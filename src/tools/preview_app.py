@@ -524,7 +524,7 @@ class PreviewApp(QMainWindow):
         self.log.setStyleSheet("background:#101114; color:#dcdeda;")
         layout.addWidget(self.log)
 
-        self.lbl_hint = QLabel("截屏框选 → 确认 → 监控 → 策略 → 操作")
+        self.lbl_hint = QLabel("截屏框选 → 确认（自动监控）→ 策略 → 操作")
         self.lbl_hint.setStyleSheet("color:#787c80;")
         layout.addWidget(self.lbl_hint)
 
@@ -1014,9 +1014,24 @@ class PreviewApp(QMainWindow):
         pipe = self._ensure_pipe()
         pipe.set_roi_manual(roi)
         self._log(f"手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
-        self.lbl_hint.setText("可勾选监控")
         self._sync_buttons()
         self._refresh_monitor()
+        self._ensure_monitor_on()
+
+    def _ensure_monitor_on(self) -> None:
+        """确认手框后自动开监控（勾选与流水线对齐）。"""
+        if self.roi is None:
+            return
+        pipe = self._ensure_pipe()
+        pipe.set_roi_manual(self.roi)
+        if not pipe.monitor_on:
+            pipe.start_monitor()
+            self._log("监控 ON · Capture+Detect（确认框选后自动）")
+        if not self.chk_monitor.isChecked():
+            self._block_checks(True)
+            self.chk_monitor.setChecked(True)
+            self._block_checks(False)
+        self.lbl_hint.setText("监控中")
 
     def _cancel_selection(self) -> None:
         self.phase = READY if self.roi is not None else IDLE
