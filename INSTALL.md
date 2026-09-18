@@ -63,13 +63,17 @@ make build-macos      # → dist/albn-autofish.app
 make build-windows    # 须在 Windows；→ dist/albn-autofish/
 ```
 
-GitHub Release（CI）：推送 tag 或手动跑 workflow。
+GitHub Actions：
+
+- **push `main`**：自动打 macOS + Windows 包（Artifacts 可下载）
+- **push tag `v*`**：构建并上传到 GitHub Release
+- 也可手动跑 workflow（可填 tag 发版）
 
 ```bash
-git tag v0.1.0
-git push origin v0.1.0
+git push origin main
+# 发版：
+git tag v0.1.0 && git push origin v0.1.0
 ```
-
 产物：
 
 - `albn-autofish-macos-arm64.zip`（内含 `.app`）

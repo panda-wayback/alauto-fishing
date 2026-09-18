@@ -30,8 +30,9 @@ help:
 	@echo "  make open-app / open-app-dev"
 	@echo "  make clean           清理 build/ dist/ 与 __pycache__"
 	@echo ""
-	@echo "Release（GitHub Actions）："
-	@echo "  git tag v0.1.0 && git push origin v0.1.0"
+	@echo "CI（GitHub Actions）："
+	@echo "  push main  → 构建 macOS + Windows artifact"
+	@echo "  tag vX.Y.Z → 构建并上传 GitHub Release"
 
 install:
 	$(PY) -m pip install -r $(ROOT)/requirements.txt
