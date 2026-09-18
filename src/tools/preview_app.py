@@ -390,6 +390,13 @@ class PreviewApp(QMainWindow):
         self.btn_perm_refresh = QPushButton("刷新")
         self.btn_perm_refresh.clicked.connect(self._refresh_permissions)
         perm_l.addWidget(self.btn_perm_refresh)
+        self.btn_perm_reset = QPushButton("清理授权")
+        self.btn_perm_reset.setToolTip(
+            "清除本应用屏幕录制/辅助功能记录并打开系统设置（仅 macOS）"
+        )
+        self.btn_perm_reset.clicked.connect(self._on_perm_reset)
+        self.btn_perm_reset.setVisible(sys.platform == "darwin")
+        perm_l.addWidget(self.btn_perm_reset)
         perm_l.addStretch(1)
         layout.addWidget(perm)
 
@@ -555,8 +562,10 @@ class PreviewApp(QMainWindow):
             self.btn_perm_screen.setText("授权屏幕录制")
             self.btn_perm_input.setText("授权辅助功能")
             self.btn_perm_input.setEnabled(True)
+            self.btn_perm_reset.setVisible(True)
         elif st.platform == "win32":
             self.btn_perm_screen.setText("测试截屏")
+            self.btn_perm_reset.setVisible(False)
             if st.is_admin:
                 self.btn_perm_input.setText("已是管理员")
                 self.btn_perm_input.setEnabled(False)
@@ -566,6 +575,7 @@ class PreviewApp(QMainWindow):
         else:
             self.btn_perm_screen.setText("屏幕")
             self.btn_perm_input.setText("控鼠")
+            self.btn_perm_reset.setVisible(False)
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()
@@ -587,6 +597,26 @@ class PreviewApp(QMainWindow):
             and "失败" not in msg
         ):
             QApplication.instance().quit()
+
+    def _on_perm_reset(self) -> None:
+        if sys.platform != "darwin":
+            return
+        reply = QMessageBox.question(
+            self,
+            "清理授权",
+            "将尝试清除屏幕录制/辅助功能记录，并打开系统设置。\n"
+            "完成后请：删掉旧条目 → 退出本程序 → 再打开并重新授权。\n\n"
+            "继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        msg = perms.reset_macos_tcc()
+        self._log(msg)
+        self.lbl_hint.setText(msg)
+        self._refresh_permissions()
+        QMessageBox.information(self, "清理授权", msg)
 
     def _reload_roi(self) -> None:
         try:

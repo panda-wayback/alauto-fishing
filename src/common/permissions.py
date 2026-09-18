@@ -65,6 +65,44 @@ def request_input_access() -> str:
     return "当前系统无辅助功能开关。"
 
 
+def reset_macos_tcc(
+    bundle_ids: tuple[str, ...] | None = None,
+) -> str:
+    """
+    尝试清除本应用 TCC 记录并打开系统设置。
+    仅 macOS；从 App 内调用可能部分失败，仍会打开设置页。
+    """
+    if sys.platform != "darwin":
+        return "仅 macOS 支持清理授权。"
+    ids = bundle_ids or (
+        "com.albn.autofish",
+        "com.albn.autofish.dev",
+    )
+    ok_n = 0
+    fail_n = 0
+    for bid in ids:
+        for svc in ("Accessibility", "ScreenCapture"):
+            try:
+                r = subprocess.run(
+                    ["tccutil", "reset", svc, bid],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                if r.returncode == 0:
+                    ok_n += 1
+                else:
+                    fail_n += 1
+            except Exception:
+                fail_n += 1
+    _macos_open_screen_settings()
+    _macos_open_accessibility_settings()
+    return (
+        f"已尝试清理 TCC（成功 {ok_n}，跳过/失败 {fail_n}），并打开系统设置。"
+        "请删掉旧的 Albn Autofish 条目 → 完全退出本程序 → 再打开 → 重新授权。"
+    )
+
+
 def restart_as_admin() -> bool:
     """
     Windows：以管理员重新启动当前进程。

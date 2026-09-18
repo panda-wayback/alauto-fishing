@@ -16,7 +16,7 @@
 
 - 经子包导出（如 `common.pubsub.EventBus`）。
 - `common.paths.bundle_root` / `data_root` / `assets_dir`（冻结：macOS Application Support / Windows LOCALAPPDATA）
-- `common.permissions.current_status` / `request_screen_access` / `request_input_access` / `restart_as_admin`
+- `common.permissions.current_status` / `request_screen_access` / `request_input_access` / `reset_macos_tcc` / `restart_as_admin`
 
 ## 约束
 
