@@ -13,7 +13,7 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
 from autofish.detect.bobber import BobberHit, pixel_to_pos
-from autofish.detect.find_bobber import FindBobber
+from autofish.detect.find_bobber import BODY_Y0, BODY_Y1, FindBobber
 from common.paths import assets_dir
 
 _ASSET_DIR = assets_dir() / "bobber_anchor"
@@ -138,6 +138,115 @@ class BobberAnchorDetector:
         self.endcap_min_orange = float(endcap_min_orange)
         self._el_cache: dict[float, tuple[np.ndarray, np.ndarray]] = {}
         self._er_cache: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+        # 程序锁 / 手动条界：(left, top, width, height)；手动优先
+        self._locked_bar: tuple[float, float, float, float] | None = None
+        self._manual_bar: tuple[float, float, float, float] | None = None
+        self._program_bar: tuple[float, float, float, float] | None = None
+        self._follow_scale: float | None = None
+        self._follow_xy: tuple[float, float] | None = None
+
+    def clear_bar_lock(self) -> None:
+        """ROI 变更 / 监控重启时丢弃程序锁定（手动界由壳另行处理）。"""
+        self._locked_bar = None
+        self._program_bar = None
+        self._follow_scale = None
+        self._follow_xy = None
+
+    def set_manual_bar(
+        self, box: tuple[float, float, float, float] | None
+    ) -> None:
+        """设置/清除手动条界（left, top, width, height）；有则永不跑端帽。"""
+        self._manual_bar = box
+        if box is None:
+            self._follow_scale = None
+            self._follow_xy = None
+
+    @property
+    def bar_locked(self) -> bool:
+        return self._locked_bar is not None or self._manual_bar is not None
+
+    @property
+    def manual_bar(self) -> tuple[float, float, float, float] | None:
+        return self._manual_bar
+
+    @property
+    def program_bar(self) -> tuple[float, float, float, float] | None:
+        return self._program_bar
+
+    def _remember_scale(self, loc) -> None:
+        tw = float(self._finder._rgb.shape[1])
+        if tw > 0 and loc.width > 0:
+            self._follow_scale = float(loc.width) / tw
+        self._follow_xy = (float(loc.x), float(loc.y))
+
+    def _scale_hint_from_bar(
+        self, bar: tuple[float, float, float, float]
+    ) -> float:
+        """用条高估漂尺度。禁止用邻域高（含羽冠 pad 会虚高到 0.5+）。"""
+        body_frac = max(0.35, BODY_Y1 - BODY_Y0)
+        tpl_h = float(self._finder._rgb.shape[0])
+        raw = (float(bar[3]) / body_frac) / max(1.0, tpl_h)
+        return float(np.clip(raw, 0.12, 0.64))
+
+    def _bar_neighborhood(
+        self, bar: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        left, top, bw, bh = bar
+        y_pad = max(20.0, bh * 1.0)
+        return (left - 4.0, top - y_pad, bw + 8.0, bh + 2.0 * y_pad)
+
+    def _follow_search_box(
+        self, bar: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        """条内跟漂：有上一帧漂位则缩到局部窗，否则整条邻域。"""
+        left, top, bw, bh = bar
+        if self._follow_xy is None:
+            return self._bar_neighborhood(bar)
+        cx, cy = self._follow_xy
+        half_w = max(40.0, (self._follow_scale or 0.32) * 119 * 1.6)
+        half_h = max(28.0, bh * 0.9)
+        x0 = max(left, cx - half_w)
+        x1 = min(left + bw, cx + half_w)
+        if x1 - x0 < 28:
+            return self._bar_neighborhood(bar)
+        return (x0, cy - half_h, x1 - x0, 2.0 * half_h)
+
+    def _hit_from_bar(
+        self,
+        loc,
+        *,
+        x0: float,
+        yb: float,
+        bar_w: float,
+        hh: float,
+        t0: float,
+    ) -> BobberHit | None:
+        cx, cy = loc.x, loc.y
+        if not (x0 < cx < x0 + bar_w):
+            return None
+        # 纵向也须落在条带容差内（避免技能栏上方人物同 X 假命中）
+        y_pad = max(16.0, hh * 1.2, loc.height * 0.35)
+        if not (yb - y_pad <= cy <= yb + hh + y_pad):
+            return None
+        pos = pixel_to_pos(cx - x0, int(bar_w))
+        dt = (time.perf_counter() - t0) * 1000.0
+        return BobberHit(
+            pos=float(pos),
+            x=float(cx),
+            y=float(cy),
+            pixel_count=int(loc.width * loc.height),
+            bar_left=float(x0),
+            bar_top=float(yb),
+            bar_width=float(bar_w),
+            bar_height=float(hh),
+            score=float(loc.score),
+            detect_ms=float(dt),
+        )
+
+    def _active_bar(self) -> tuple[float, float, float, float] | None:
+        if self._manual_bar is not None:
+            return self._manual_bar
+        return self._locked_bar
 
     def _end_tpl(self, side: str, scale: float) -> tuple[np.ndarray, np.ndarray]:
         cache = self._el_cache if side == "L" else self._er_cache
@@ -222,9 +331,25 @@ class BobberAnchorDetector:
             return None
         return (best[3], best[4], best[5], best[6], best[7])
 
+    def _bobber_only_hit(self, loc, *, t0: float) -> BobberHit:
+        """有漂无条：供壳画漂 / 出参考图；pos 由工人置空，不进策略。"""
+        dt = (time.perf_counter() - t0) * 1000.0
+        return BobberHit(
+            pos=0.0,
+            x=float(loc.x),
+            y=float(loc.y),
+            pixel_count=int(loc.width * loc.height),
+            bar_left=0.0,
+            bar_top=0.0,
+            bar_width=0.0,
+            bar_height=0.0,
+            score=float(loc.score),
+            detect_ms=float(dt),
+        )
+
     def find_bar(self, rgb: np.ndarray) -> tuple[int, int, int, int] | None:
         hit = self.detect(rgb)
-        if hit is None:
+        if hit is None or hit.bar_width <= 0:
             return None
         return (
             int(hit.bar_left),
@@ -237,6 +362,39 @@ class BobberAnchorDetector:
         t0 = time.perf_counter()
         if rgb.ndim != 3 or rgb.shape[2] != 3:
             return None
+        active = self._active_bar()
+        if active is not None:
+            hint = self._follow_scale
+            if hint is None:
+                hint = self._scale_hint_from_bar(active)
+            loc = self._finder.find(
+                rgb,
+                search_box=self._follow_search_box(active),
+                scale_hint=hint,
+            )
+            if loc is None and self._follow_xy is not None:
+                # 局部丢了 → 退回整条邻域再试一次（仍用条高尺度，勿用紧条框）
+                loc = self._finder.find(
+                    rgb,
+                    search_box=self._bar_neighborhood(active),
+                    scale_hint=hint,
+                )
+            if loc is None:
+                return None
+            hit = self._hit_from_bar(
+                loc,
+                x0=active[0],
+                yb=active[1],
+                bar_w=active[2],
+                hh=active[3],
+                t0=t0,
+            )
+            if hit is not None:
+                self._remember_scale(loc)
+                return hit
+            # 有条锁但漂出条：仍回报漂位，不算 pos
+            self._remember_scale(loc)
+            return self._bobber_only_hit(loc, t0=t0)
         loc = self._finder.find(rgb)
         if loc is None:
             return None
@@ -245,30 +403,24 @@ class BobberAnchorDetector:
         left = self._find_endcap(rgb, side="L", cx=cx, cy=cy, bh=body_h)
         right = self._find_endcap(rgb, side="R", cx=cx, cy=cy, bh=body_h)
         if left is None or right is None:
-            return None
-        x0 = left[1]
-        x1 = right[1] + right[3]
+            return self._bobber_only_hit(loc, t0=t0)
+        x0 = float(left[1])
+        x1 = float(right[1] + right[3])
         if not (x0 < cx < x1):
-            return None
+            return self._bobber_only_hit(loc, t0=t0)
         bar_w = x1 - x0
         if bar_w < max(80, loc.width * 2.5):
-            return None
+            return self._bobber_only_hit(loc, t0=t0)
         aspect = bar_w / max(1.0, (left[4] + right[4]) * 0.5)
         if aspect < 3.5 or aspect > 22.0:
-            return None
-        yb = min(left[2], right[2])
-        hh = max(left[2] + left[4], right[2] + right[4]) - yb
-        pos = pixel_to_pos(cx - x0, int(bar_w))
-        dt = (time.perf_counter() - t0) * 1000.0
-        return BobberHit(
-            pos=float(pos),
-            x=float(cx),
-            y=float(cy),
-            pixel_count=int(loc.width * loc.height),
-            bar_left=float(x0),
-            bar_top=float(yb),
-            bar_width=float(bar_w),
-            bar_height=float(hh),
-            score=float(loc.score),
-            detect_ms=float(dt),
-        )
+            return self._bobber_only_hit(loc, t0=t0)
+        yb = float(min(left[2], right[2]))
+        hh = float(max(left[2] + left[4], right[2] + right[4]) - yb)
+        hit = self._hit_from_bar(loc, x0=x0, yb=yb, bar_w=bar_w, hh=hh, t0=t0)
+        if hit is not None:
+            box = (x0, yb, bar_w, hh)
+            self._locked_bar = box
+            self._program_bar = box
+            self._remember_scale(loc)
+            return hit
+        return self._bobber_only_hit(loc, t0=t0)

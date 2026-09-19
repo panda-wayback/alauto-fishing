@@ -1,17 +1,13 @@
-"""调试壳（PySide6）：监控 / 策略 / 操作勾选；模拟器手玩嵌窗；无快捷键。"""
+"""调试壳（PySide6）：监控 / 策略 / 操作勾选；右侧条界标记；无快捷键。"""
 
 from __future__ import annotations
 
-import os
 import sys
 import time
 from collections import deque
 from pathlib import Path
 
 import numpy as np
-
-# 模拟器离屏渲染，避免与 Qt 抢显示
-os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
 
 _SRC = Path(__file__).resolve().parent.parent
 if str(_SRC) not in sys.path:
@@ -22,7 +18,6 @@ from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
-    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -36,13 +31,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-import pygame
-
-from sim import config as sim_config
-from sim.game import FishingGame, State
-from ui.render import Renderer
 from autofish.act.mouse import os_left_down
-from autofish.detect.api import get_detector
+from autofish.detect.api import apply_manual_bar, get_detector
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -51,7 +41,17 @@ from autofish.capture.screen import (
     load_screen,
     save_screen,
 )
-from autofish.locate.roi import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
+from autofish.locate.roi import (
+    DEFAULT_ROI_PATH,
+    BarMark,
+    Roi,
+    bar_ref_path,
+    clear_bar_mark,
+    clear_bar_ref,
+    load_bar_mark,
+    load_roi,
+    save_roi,
+)
 from autofish.pipeline import AutofishPipeline
 from autofish.topics import (
     ActionIntentEvent,
@@ -62,6 +62,7 @@ from autofish.topics import (
     Topic,
 )
 from common import permissions as perms
+from tools.bar_mark_canvas import BarMarkCanvas
 from tools.dual_range_axis import DualRangeAxis
 
 IDLE = "idle"
@@ -100,29 +101,35 @@ def _draw_rect(
 
 
 def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
-    """叠层：Pos 范围框 + 命中点。无 hit 时不在 UI 线程再跑 find_bar。"""
+    """叠层：有条画条框；有漂画命中点（可有漂无条）。"""
     if hit is None:
         return rgb
-    if hit.bar_width <= 0:
-        return rgb
     vis = rgb.copy()
-    zx, zy = int(hit.bar_left), int(hit.bar_top)
-    zw, zh = int(hit.bar_width), int(hit.bar_height)
     fh, fw = vis.shape[:2]
-    _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
-    y0 = max(0, zy - max(6, zh // 2))
-    y1 = min(fh, zy + zh + 2)
-    x0, x1 = max(0, zx), min(fw, zx + zw)
-    _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
-    mid_y0 = zy
-    mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
-    if 0 <= zx < fw:
-        vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
-    right = min(fw - 1, zx + max(zw, 1) - 1)
-    if 0 <= right < fw:
-        vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
+    if hit.bar_width > 0:
+        zx, zy = int(hit.bar_left), int(hit.bar_top)
+        zw, zh = int(hit.bar_width), int(hit.bar_height)
+        _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
+        y0 = max(0, zy - max(6, zh // 2))
+        y1 = min(fh, zy + zh + 2)
+        x0, x1 = max(0, zx), min(fw, zx + zw)
+        _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
+        mid_y0 = zy
+        mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
+        if 0 <= zx < fw:
+            vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
+        right = min(fw - 1, zx + max(zw, 1) - 1)
+        if 0 <= right < fw:
+            vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
     x, y = int(hit.x), int(hit.y)
-    vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
+    if 0 <= x < fw and 0 <= y < fh:
+        vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
+        # 有漂无条：加一圈黄点提示「找到漂、未定界」
+        if hit.bar_width <= 0:
+            for dx, dy in ((-6, 0), (6, 0), (0, -6), (0, 6)):
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < fw and 0 <= yy < fh:
+                    vis[yy, xx] = (255, 220, 40)
     return vis
 
 
@@ -252,63 +259,6 @@ class ImageCanvas(QLabel):
             super().mouseReleaseEvent(event)
 
 
-class SimCanvas(QLabel):
-    """模拟器画面；仅 PLAYING 时出图；按下开始/拉杆。"""
-
-    press = Signal()
-    release = Signal()
-
-    def __init__(self, parent=None) -> None:
-        super().__init__(parent)
-        self.setMinimumSize(320, 200)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background:#1c1e22; color:#888; border:1px solid #373a40;")
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._last_rgb: np.ndarray | None = None
-        self._accept_input = True
-        self.show_idle("点击开始手玩")
-
-    def set_accept_input(self, ok: bool) -> None:
-        self._accept_input = ok
-
-    def show_idle(self, text: str = "点击开始手玩") -> None:
-        self._last_rgb = None
-        self.setPixmap(QPixmap())
-        self.setText(text)
-
-    def set_rgb(self, rgb: np.ndarray) -> None:
-        self._last_rgb = rgb
-        self.setText("")
-        pm = _rgb_to_pixmap(rgb)
-        self.setPixmap(
-            pm.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-        )
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        if self._last_rgb is not None:
-            self.set_rgb(self._last_rgb)
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if (
-            self._accept_input
-            and event.button() == Qt.MouseButton.LeftButton
-        ):
-            self.press.emit()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.release.emit()
-        else:
-            super().mouseReleaseEvent(event)
-
-
 def _hold_word(on: bool | None) -> str:
     if on is None:
         return "—"
@@ -339,30 +289,26 @@ class PreviewApp(QMainWindow):
         self._mon_ui_min_dt: float = 1.0 / 15.0  # 预览最多 ~15fps，避免 Windows 卡死
         self._mouse_mismatch_logged = False
         self._logs: deque[str] = deque(maxlen=80)
+        self._bar_ref_saved = False
         self._bridge = BusBridge()
         self._bridge.frame.connect(self._on_frame_ui)
         self._bridge.pos.connect(self._on_pos_ui)
         self._bridge.intent.connect(self._on_intent_ui)
 
-        pygame.init()
-        pygame.display.set_mode((1, 1))
-        self.game = FishingGame()
-        self._sim_buf = pygame.Surface(
-            (sim_config.WINDOW_WIDTH, sim_config.WINDOW_HEIGHT)
-        ).convert()
-        self._sim_renderer = Renderer(self._sim_buf)
-        self._sim_holding = False
-
         self._build_ui()
         self._reload_roi()
         self._sync_buttons()
-        # 策略 / 操作默认开启
+        # 策略 / 操作默认开启；有存盘手框则自动开监控
         self.chk_decide.setChecked(True)
         self.chk_act.setChecked(True)
+        if self.roi is not None:
+            self._ensure_monitor_on()
+            self.lbl_hint.setText("已载入上次框选 · 监控中")
+            self._log("启动自动开监控（沿用存盘 ROI）")
 
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self._on_tick)
-        self._timer.start(int(1000 / max(1, sim_config.FPS)))
+        self._timer.timeout.connect(self._refresh_mouse)
+        self._timer.start(50)
 
         self._perm_timer = QTimer(self)
         self._perm_timer.timeout.connect(self._refresh_permissions)
@@ -500,7 +446,7 @@ class PreviewApp(QMainWindow):
         act_l.addWidget(self.lbl_mouse_diag)
         layout.addWidget(act)
 
-        # —— 中栏：监控 | 模拟 ——
+        # —— 中栏：监控 | 条界 ——
         mid = QHBoxLayout()
         left = QVBoxLayout()
         left.addWidget(QLabel("MONITOR"))
@@ -509,26 +455,22 @@ class PreviewApp(QMainWindow):
         mid.addLayout(left, 1)
 
         right = QVBoxLayout()
-        sim_bar = QHBoxLayout()
-        sim_bar.addWidget(QLabel("SIMULATOR · 手玩（点按才出画面）"))
-        self.lbl_sim_pos = QLabel("—")
-        self.lbl_sim_pos.setStyleSheet("color:#48b46e; font-weight:600;")
-        sim_bar.addWidget(self.lbl_sim_pos)
-        self.cmb_tier = QComboBox()
-        for t in range(1, 9):
-            self.cmb_tier.addItem(f"T{t}", t)
-        self.cmb_tier.setCurrentIndex(3)
-        self.cmb_tier.currentIndexChanged.connect(self._on_tier_changed)
-        sim_bar.addWidget(self.cmb_tier)
-        self.btn_sim_reset = QPushButton("关局")
-        self.btn_sim_reset.clicked.connect(self._sim_reset)
-        self.btn_sim_reset.setToolTip("结束手玩并关闭画面（操作启用时建议关掉手玩）")
-        sim_bar.addWidget(self.btn_sim_reset)
-        right.addLayout(sim_bar)
-        self.sim = SimCanvas()
-        self.sim.press.connect(self._sim_press)
-        self.sim.release.connect(self._sim_release)
-        right.addWidget(self.sim, 1)
+        bar_bar = QHBoxLayout()
+        bar_bar.addWidget(QLabel("BAR · 条界标记"))
+        self.lbl_bar_hint = QLabel("蓝=程序 黄=手动")
+        self.lbl_bar_hint.setStyleSheet("color:#787c80;")
+        bar_bar.addWidget(self.lbl_bar_hint, 1)
+        self.btn_bar_refresh = QPushButton("刷新参考图")
+        self.btn_bar_refresh.setToolTip("用当前监控帧更新右侧参考图")
+        self.btn_bar_refresh.clicked.connect(self._refresh_bar_ref)
+        bar_bar.addWidget(self.btn_bar_refresh)
+        self.btn_bar_clear = QPushButton("清除我的标记")
+        self.btn_bar_clear.clicked.connect(self._clear_manual_bar)
+        bar_bar.addWidget(self.btn_bar_clear)
+        right.addLayout(bar_bar)
+        self.bar_canvas = BarMarkCanvas()
+        self.bar_canvas.manual_changed.connect(self._on_manual_bar_changed)
+        right.addWidget(self.bar_canvas, 1)
         mid.addLayout(right, 1)
         layout.addLayout(mid, 1)
 
@@ -538,7 +480,7 @@ class PreviewApp(QMainWindow):
         self.log.setStyleSheet("background:#101114; color:#dcdeda;")
         layout.addWidget(self.log)
 
-        self.lbl_hint = QLabel("截屏框选 → 确认（自动监控）→ 策略 → 操作")
+        self.lbl_hint = QLabel("截屏框选 → 确认（自动监控）→ 可调条界 → 策略 → 操作")
         self.lbl_hint.setStyleSheet("color:#787c80;")
         layout.addWidget(self.lbl_hint)
 
@@ -637,11 +579,95 @@ class PreviewApp(QMainWindow):
             self.roi = load_roi(self.roi_path) if self.roi_path.exists() else None
             if self.roi is not None:
                 self.phase = READY
-                self.lbl_hint.setText("ROI 已载入 · 可勾选监控")
+                self.lbl_hint.setText("ROI 已载入")
                 self._log(f"载入 ROI {self.roi.width}x{self.roi.height}")
+                self._apply_saved_bar_mark()
+                self._load_bar_ref_image()
+                if load_bar_mark(self.roi_path) is not None:
+                    self._log("已载入上次条界标记")
         except Exception as exc:  # noqa: BLE001
             self.roi = None
             self.lbl_hint.setText(f"ROI 失败：{exc}")
+
+    def _apply_saved_bar_mark(self) -> None:
+        mark = load_bar_mark(self.roi_path)
+        box = mark.as_box() if mark is not None else None
+        apply_manual_bar(box)
+        self.bar_canvas.set_manual_bar(box)
+
+    def _load_bar_ref_image(self) -> None:
+        ref = bar_ref_path(self.roi_path)
+        if not ref.is_file():
+            self._bar_ref_saved = False
+            return
+        try:
+            import cv2
+
+            bgr = cv2.imread(str(ref))
+            if bgr is None:
+                return
+            rgb = np.ascontiguousarray(bgr[:, :, ::-1])
+            self.bar_canvas.set_rgb(rgb)
+            self._bar_ref_saved = True
+            det = get_detector()
+            self.bar_canvas.set_program_bar(getattr(det, "program_bar", None))
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"参考图载入失败：{exc}")
+
+    def _save_bar_ref(self, rgb: np.ndarray) -> None:
+        import cv2
+
+        ref = bar_ref_path(self.roi_path)
+        ref.parent.mkdir(parents=True, exist_ok=True)
+        bgr = np.ascontiguousarray(rgb[:, :, ::-1])
+        cv2.imwrite(str(ref), bgr)
+        self.bar_canvas.set_rgb(rgb)
+        self._bar_ref_saved = True
+
+    def _refresh_bar_ref(self) -> None:
+        if self.frame is None:
+            self._log("无当前帧 · 无法刷新参考图")
+            return
+        self._save_bar_ref(self.frame)
+        det = get_detector()
+        if hasattr(det, "program_bar"):
+            self.bar_canvas.set_program_bar(det.program_bar)
+        self._log("已刷新条界参考图")
+
+    def _clear_manual_bar(self) -> None:
+        clear_bar_mark(self.roi_path)
+        apply_manual_bar(None)
+        self.bar_canvas.clear_manual()
+        self._log("已清除手动条界")
+
+    def _on_manual_bar_changed(self, box: object) -> None:
+        if self.roi is None:
+            return
+        if box is None:
+            clear_bar_mark(self.roi_path)
+            apply_manual_bar(None)
+            return
+        left, top, bw, bh = box  # type: ignore[misc]
+        mark = BarMark(
+            left=float(left),
+            right=float(left) + float(bw),
+            top=float(top),
+            height=float(bh),
+        )
+        save_roi(self.roi, self.roi_path, bar=mark)
+        apply_manual_bar(mark.as_box())
+
+    def _clear_bar_on_rebox(self) -> None:
+        clear_bar_mark(self.roi_path)
+        clear_bar_ref(self.roi_path)
+        apply_manual_bar(None)
+        clear = getattr(get_detector(), "clear_bar_lock", None)
+        if callable(clear):
+            clear()
+        self.bar_canvas.set_manual_bar(None)
+        self.bar_canvas.set_program_bar(None)
+        self.bar_canvas.set_rgb(None)
+        self._bar_ref_saved = False
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
@@ -695,8 +721,34 @@ class PreviewApp(QMainWindow):
         self._note_detect_ms(event.detect_ms)
         self._refresh_pos()
         self._maybe_refresh_monitor()
+        self._update_bar_panel(event)
         if self._pipe is not None and self._pipe.decide_on:
             self._refresh_strategy(event.pos, self._intent_reason)
+
+    def _update_bar_panel(self, event: PosEvent) -> None:
+        det = get_detector()
+        prog = getattr(det, "program_bar", None)
+        if prog is not None:
+            self.bar_canvas.set_program_bar(prog)
+        elif (
+            event.hit is not None
+            and event.hit.bar_width > 0
+            and getattr(det, "manual_bar", None) is None
+        ):
+            h = event.hit
+            self.bar_canvas.set_program_bar(
+                (h.bar_left, h.bar_top, h.bar_width, h.bar_height)
+            )
+        # 有漂即出参考图（含有漂无条），便于手动标左右界
+        if event.hit is not None and event.frame is not None and not self._bar_ref_saved:
+            self._save_bar_ref(event.frame)
+            if event.hit.bar_width <= 0:
+                self._log("已出条界参考图（有漂·无条，可手动标左右）")
+            else:
+                self._log("已自动保存条界参考图")
+        man = getattr(det, "manual_bar", None)
+        if man is not None:
+            self.bar_canvas.set_manual_bar(man)
 
     def _maybe_refresh_monitor(self, *, force: bool = False) -> None:
         now = time.perf_counter()
@@ -777,15 +829,20 @@ class PreviewApp(QMainWindow):
         return (plo + phi) / 2.0, (rlo + rhi) / 2.0
 
     def _refresh_pos(self) -> None:
-        if self.hit is not None:
-            self.lbl_pos.setText(f"{self.hit.pos:.1f}")
-            self.lbl_pos.setStyleSheet(
-                "font-size:28px; font-weight:600; color:#48b46e;"
-            )
-        else:
+        if self.hit is None:
             self.lbl_pos.setText("无漂")
             self.lbl_pos.setStyleSheet(
                 "font-size:28px; font-weight:600; color:#d24e46;"
+            )
+        elif self.hit.bar_width <= 0:
+            self.lbl_pos.setText("有漂·无条")
+            self.lbl_pos.setStyleSheet(
+                "font-size:22px; font-weight:600; color:#e6b84d;"
+            )
+        else:
+            self.lbl_pos.setText(f"{self.hit.pos:.1f}")
+            self.lbl_pos.setStyleSheet(
+                "font-size:28px; font-weight:600; color:#48b46e;"
             )
         ms = getattr(self, "_last_detect_ms", 0.0)
         self.lbl_perf.setText(f"{ms:.1f} ms")
@@ -822,6 +879,7 @@ class PreviewApp(QMainWindow):
         pipe = self._ensure_pipe()
         if checked and not pipe.monitor_on:
             pipe.set_roi_manual(self.roi)
+            self._apply_saved_bar_mark()
             pipe.start_monitor()
             self._log("监控 ON · Capture+Detect")
             self.lbl_hint.setText("监控中")
@@ -1028,6 +1086,7 @@ class PreviewApp(QMainWindow):
             self.frame = None
             self.hit = None
             self._log("监控 OFF · 准备重框")
+            self._clear_bar_on_rebox()
         try:
             self.screen_grab = load_screen(DEFAULT_SCREEN_PATH)
             self.phase = SELECT
@@ -1052,6 +1111,7 @@ class PreviewApp(QMainWindow):
             height=h,
         )
         save_roi(roi, self.roi_path)
+        self._clear_bar_on_rebox()
         self.roi = roi
         self.phase = READY
         self.monitor.set_selecting(False)
@@ -1084,73 +1144,6 @@ class PreviewApp(QMainWindow):
         self._sync_buttons()
         self._refresh_monitor()
 
-    def _sim_pos(self) -> float:
-        span = float(sim_config.SAFE_RIGHT - sim_config.SAFE_LEFT)
-        if span <= 1e-6:
-            return 50.0
-        return max(
-            0.0,
-            min(
-                100.0,
-                100.0
-                * (self.game.bobber_x - sim_config.SAFE_LEFT)
-                / span,
-            ),
-        )
-
-    def _on_tier_changed(self) -> None:
-        tier = int(self.cmb_tier.currentData())
-        self.game.set_tier(tier)
-
-    def _sim_close(self, idle_text: str = "点击开始手玩") -> None:
-        """结束手玩并关闭画面，松开本地按住态。"""
-        self._sim_holding = False
-        self.game.set_holding(False)
-        self.game.reset()
-        self.sim.set_accept_input(True)
-        self.sim.show_idle(idle_text)
-        self.lbl_sim_pos.setText(f"—  T{self.game.tier}")
-
-    def _sim_reset(self) -> None:
-        self._sim_close("点击开始手玩")
-        self._log("手玩已关")
-
-    def _sim_press(self) -> None:
-        if self.game.state == State.PLAYING:
-            self.game.set_holding(True)
-        else:
-            self.game.start()
-            self.game.set_holding(True)
-        self._sim_holding = True
-
-    def _sim_release(self) -> None:
-        if self._sim_holding:
-            self.game.set_holding(False)
-            self._sim_holding = False
-
-    def _on_tick(self) -> None:
-        dt = 1.0 / max(1, sim_config.FPS)
-        was_playing = self.game.state == State.PLAYING
-        self.game.update(dt)
-        if self.game.state == State.PLAYING:
-            self._sim_renderer.draw(self.game)
-            raw = pygame.surfarray.array3d(self._sim_buf)
-            rgb = np.transpose(raw, (1, 0, 2)).copy()
-            self.sim.set_rgb(rgb)
-            self.lbl_sim_pos.setText(
-                f"{self._sim_pos():.1f}  T{self.game.tier}"
-            )
-        elif was_playing:
-            # 成功/失败：立刻关画面，避免按住态继续吃鼠标
-            ended = (
-                "成功" if self.game.state == State.SUCCESS else "失败"
-            )
-            self._sim_close(f"{ended} · 点击再开")
-            self._log(f"手玩{ended} · 画面已关")
-        else:
-            self.lbl_sim_pos.setText(f"—  T{self.game.tier}")
-        self._refresh_mouse()
-
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._pipe is not None:
             self._pipe.unsubscribe(Topic.FRAME, self._on_frame_bus)
@@ -1159,7 +1152,6 @@ class PreviewApp(QMainWindow):
             self._pipe.stop()
             self._pipe = None
         self._timer.stop()
-        pygame.quit()
         super().closeEvent(event)
 
     def run(self) -> int:

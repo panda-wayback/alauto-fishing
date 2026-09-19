@@ -7,7 +7,7 @@ import time
 import traceback
 
 from autofish.bus import AutofishBus
-from autofish.detect.api import detect
+from autofish.detect.api import detect, get_detector
 from autofish.topics import FrameEvent, PosEvent, Topic
 from autofish.worker_base import WorkerBase
 
@@ -18,12 +18,21 @@ class DetectorWorker(WorkerBase):
     def __init__(self, bus: AutofishBus) -> None:
         super().__init__(bus, "autofish-detector")
         self._last_seq = -1
+        self._last_roi_version: int | None = None
         self._pending: FrameEvent | None = None
         self._cond = threading.Condition()
+
+    @staticmethod
+    def _clear_bar_lock() -> None:
+        clear = getattr(get_detector(), "clear_bar_lock", None)
+        if callable(clear):
+            clear()
 
     def start(self) -> None:
         # 重启后必须清序号，否则 capture 若重置 seq 会永久跳过所有帧
         self._last_seq = -1
+        self._last_roi_version = None
+        self._clear_bar_lock()
         with self._cond:
             self._pending = None
         self.bus.subscribe(Topic.FRAME, self._on_frame)
@@ -63,6 +72,9 @@ class DetectorWorker(WorkerBase):
                     continue
                 if self._superseded(event.seq):
                     continue
+                if self._last_roi_version != event.roi_version:
+                    self._clear_bar_lock()
+                    self._last_roi_version = event.roi_version
                 try:
                     t0 = time.perf_counter()
                     raw = detect(event.frame)
@@ -73,9 +85,13 @@ class DetectorWorker(WorkerBase):
                     raw = None
                     dt = 0.0
                 self._last_seq = event.seq
+                # 有漂无条：hit 保留漂位，pos 置空（策略不动作）
+                pos_v = None
+                if raw is not None and raw.bar_width > 0:
+                    pos_v = raw.pos
                 self.bus.publish_pos(
                     PosEvent(
-                        pos=None if raw is None else raw.pos,
+                        pos=pos_v,
                         hit=raw,
                         roi_version=event.roi_version,
                         frame_ts=event.ts,

@@ -2,6 +2,7 @@
 
 from autofish.detect.api import (
     BarDetector,
+    apply_manual_bar,
     detect,
     find_bar,
     get_detector,
@@ -37,6 +38,7 @@ __all__ = [
     "DetectorWorker",
     "FindBobber",
     "TemplateBarDetector",
+    "apply_manual_bar",
     "bobber_in_bar",
     "detect",
     "find_bar",

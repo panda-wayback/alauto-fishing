@@ -20,26 +20,72 @@ _DEFAULT_BOBBER = _ASSET_DIR / "bobber.png"
 
 # 相对完整漂 ≈119×172；须覆盖手框小漂(~0.16)～常见中大档
 _SCALES = (0.16, 0.20, 0.24, 0.28, 0.32, 0.40, 0.48, 0.56, 0.64)
-_MIN_SCORE = 0.40
+_MIN_SCORE = 0.48
 _EDGE_FRAC = 0.05
 _COLOR_SF = 0.5  # 颜色结构半分辨率
 _MAX_SEEDS = 6
-_EARLY_RANK = 0.80
+_EARLY_RANK = 0.85
 _REFINE_NEAR = 3  # 每个种子只跑最邻近的尺度档数
 # 红箍连通域宽约为整漂宽的比例；估尺度时须除回，否则档位偏低
 _BAND_WIDTH_FRAC = 0.55
 # 接受门槛：宁可 miss，不可错识（分值为 CCOEFF）
-_ACCEPT_MIN_SCORE = 0.42
-_ACCEPT_MIN_RANK = 0.42
-_ACCEPT_MIN_CREAM = 0.06
-_ACCEPT_MIN_MARGIN = 0.03
+_ACCEPT_MIN_SCORE = 0.55
+_ACCEPT_MIN_RANK = 0.55
+_ACCEPT_MIN_CREAM = 0.05
+_ACCEPT_MIN_BAND = 0.20
+_ACCEPT_MIN_PLUME = 0.04
+_ACCEPT_MIN_MARGIN = 0.04
+# 单候选时须更高分，避免人物/白布弱峰过线
+_ACCEPT_SOLO_SCORE = 0.68
 BODY_Y0 = 0.42
 BODY_Y1 = 0.98
+# 条内搜：相对条高的上下余量（羽冠可略高出条）
+_BAR_Y_PAD_FRAC = 1.0
+_BAR_Y_PAD_MIN = 20
+_BAR_X_PAD = 4
+_BAR_SCALE_NEAR = 3  # 条内跟漂只跑邻近尺度档
 
 
 def _neighbor_scales(scale_est: float, n: int = _REFINE_NEAR) -> tuple[float, ...]:
     est = float(np.clip(scale_est, _SCALES[0], _SCALES[-1]))
     return tuple(sorted(_SCALES, key=lambda s: abs(s - est))[:n])
+
+
+def _clamp_box(
+    left: float,
+    top: float,
+    width: float,
+    height: float,
+    *,
+    iw: int,
+    ih: int,
+) -> tuple[int, int, int, int] | None:
+    x0 = int(max(0, min(iw - 1, round(left))))
+    y0 = int(max(0, min(ih - 1, round(top))))
+    x1 = int(max(0, min(iw, round(left + width))))
+    y1 = int(max(0, min(ih, round(top + height))))
+    if x1 - x0 < 16 or y1 - y0 < 12:
+        return None
+    return x0, y0, x1 - x0, y1 - y0
+
+
+def bar_search_box(
+    bar: tuple[float, float, float, float],
+    *,
+    iw: int,
+    ih: int,
+) -> tuple[int, int, int, int] | None:
+    """条框 → 找漂搜区（左右夹条内，上下留羽冠余量）。"""
+    left, top, bw, bh = bar
+    y_pad = max(_BAR_Y_PAD_MIN, int(bh * _BAR_Y_PAD_FRAC))
+    return _clamp_box(
+        left - _BAR_X_PAD,
+        top - y_pad,
+        bw + 2 * _BAR_X_PAD,
+        bh + 2 * y_pad,
+        iw=iw,
+        ih=ih,
+    )
 
 
 @dataclass(frozen=True)
@@ -56,6 +102,7 @@ class BobberLoc:
     rank: float  # 彩色分 × 结构软权重
     cream: float
     band: float
+    plume: float = 0.0
     detect_ms: float = 0.0
 
     @property
@@ -155,12 +202,14 @@ def _structure(
 
 
 def _salience(cream: float, band: float, plume: float) -> float:
-    """结构软权重：无红箍/羽冠的峰降权（挡顶栏噪声、端帽假峰）。"""
+    """结构软权重：缺羽冠/红箍明显降权（挡人物白布、技能栏）。"""
+    if plume < _ACCEPT_MIN_PLUME:
+        return 0.55
     if cream < 0.02 and band < 0.15:
         plume = min(plume, 0.08)
-    body_ok = min(1.0, cream / 0.10) * 0.45 + min(1.0, max(0.0, band) / 0.25) * 0.55
+    body_ok = min(1.0, cream / 0.10) * 0.40 + min(1.0, max(0.0, band) / 0.25) * 0.45
     plume_ok = min(1.0, plume / 0.12)
-    return 0.78 + 0.14 * body_ok + 0.08 * plume_ok
+    return 0.70 + 0.18 * body_ok + 0.12 * plume_ok
 
 
 def _color_seeds(
@@ -275,7 +324,10 @@ class FindBobber:
         accept_min_score: float = _ACCEPT_MIN_SCORE,
         accept_min_rank: float = _ACCEPT_MIN_RANK,
         accept_min_cream: float = _ACCEPT_MIN_CREAM,
+        accept_min_band: float = _ACCEPT_MIN_BAND,
+        accept_min_plume: float = _ACCEPT_MIN_PLUME,
         accept_min_margin: float = _ACCEPT_MIN_MARGIN,
+        accept_solo_score: float = _ACCEPT_SOLO_SCORE,
     ) -> None:
         path = Path(bobber_path) if bobber_path else _DEFAULT_BOBBER
         if not path.is_file():
@@ -286,7 +338,10 @@ class FindBobber:
         self.accept_min_score = float(accept_min_score)
         self.accept_min_rank = float(accept_min_rank)
         self.accept_min_cream = float(accept_min_cream)
+        self.accept_min_band = float(accept_min_band)
+        self.accept_min_plume = float(accept_min_plume)
         self.accept_min_margin = float(accept_min_margin)
+        self.accept_solo_score = float(accept_solo_score)
         self._cache: dict[float, tuple[np.ndarray, np.ndarray]] = {}
 
     def _tpl(self, scale: float) -> tuple[np.ndarray, np.ndarray]:
@@ -302,20 +357,36 @@ class FindBobber:
             return False
         if best.rank < self.accept_min_rank:
             return False
+        if best.plume < self.accept_min_plume:
+            return False
+        if best.band < self.accept_min_band and best.cream < self.accept_min_cream:
+            return False
         if best.cream < self.accept_min_cream and best.band < 0.35:
             return False
-        if best.cream >= 0.12 and best.rank >= 0.70 and best.score >= 0.70:
+        # 高 cream + 高 band 但羽冠弱 → 典型肤色/白布假阳
+        if best.cream >= 0.35 and best.band >= 0.50 and best.plume < 0.08:
+            return False
+        if best.cream >= 0.12 and best.rank >= 0.75 and best.score >= 0.72:
             return True
-        if second is not None:
-            if best.rank - second.rank < self.accept_min_margin:
-                if best.cream - second.cream < 0.04 and best.band - second.band < 0.1:
-                    return False
+        if second is None:
+            return best.score >= self.accept_solo_score
+        if best.rank - second.rank < self.accept_min_margin:
+            if best.cream - second.cream < 0.04 and best.band - second.band < 0.1:
+                return False
         return True
 
-    def find(self, rgb: np.ndarray) -> BobberLoc | None:
-        """全图找一个最佳漂；不够确信返回 None。"""
+    def find(
+        self,
+        rgb: np.ndarray,
+        *,
+        search_box: tuple[float, float, float, float] | None = None,
+        scale_hint: float | None = None,
+    ) -> BobberLoc | None:
+        """找一个最佳漂；search_box=(l,t,w,h) 时只在条邻域搜。不够确信返回 None。"""
         t0 = time.perf_counter()
-        cands = self.find_candidates(rgb, max_n=3)
+        cands = self.find_candidates(
+            rgb, max_n=3, search_box=search_box, scale_hint=scale_hint
+        )
         dt = (time.perf_counter() - t0) * 1000.0
         if not cands:
             return None
@@ -334,23 +405,101 @@ class FindBobber:
             rank=best.rank,
             cream=best.cream,
             band=best.band,
+            plume=best.plume,
             detect_ms=float(dt),
         )
 
     def find_candidates(
-        self, rgb: np.ndarray, *, max_n: int = 5
+        self,
+        rgb: np.ndarray,
+        *,
+        max_n: int = 5,
+        search_box: tuple[float, float, float, float] | None = None,
+        scale_hint: float | None = None,
     ) -> list[BobberLoc]:
         """按 rank 降序返回至多 max_n 个漂候选。
 
         颜色结构挖种子 → 原图小 ROI 彩色模板复核。
+        search_box 有则只在该邻域内搜（坐标映回全图）。
         """
         if rgb.ndim != 3 or rgb.shape[2] != 3:
             return []
-        img = np.ascontiguousarray(rgb)
+        full = np.ascontiguousarray(rgb)
+        ox = oy = 0
+        img = full
+        if search_box is not None:
+            box = _clamp_box(
+                float(search_box[0]),
+                float(search_box[1]),
+                float(search_box[2]),
+                float(search_box[3]),
+                iw=full.shape[1],
+                ih=full.shape[0],
+            )
+            if box is None:
+                return []
+            ox, oy, rw, rh = box
+            img = full[oy : oy + rh, ox : ox + rw]
+            if img.shape[0] < 12 or img.shape[1] < 16:
+                return []
         seeds = _color_seeds(img, max_n=_MAX_SEEDS)
         raw: list[BobberLoc] = []
         tpl_w = float(self._rgb.shape[1])
         tpl_h = float(self._rgb.shape[0])
+
+        def _consider(
+            sc: float, bx: int, by: int, w: int, h: int
+        ) -> BobberLoc | None:
+            cream, band, plume = _structure(full, bx, by, w, h)
+            sal = _salience(cream, band, plume)
+            rank = sc * sal
+            return BobberLoc(
+                x=float(bx + w * 0.5),
+                y=float(by + h * ((BODY_Y0 + BODY_Y1) * 0.5)),
+                left=bx,
+                top=by,
+                width=w,
+                height=h,
+                score=float(sc),
+                rank=float(rank),
+                cream=float(cream),
+                band=float(band),
+                plume=float(plume),
+            )
+
+        # 有条邻域：按尺度提示或条高估档，少档模板扫
+        if search_box is not None:
+            if scale_hint is not None and scale_hint > 0:
+                s_est = float(scale_hint)
+            else:
+                body_frac = max(0.35, BODY_Y1 - BODY_Y0)
+                s_est = (float(search_box[3]) / body_frac) / tpl_h
+                # 邻域高常含羽冠 pad，按搜区短边封顶，避免尺度虚高
+                s_cap = (min(img.shape[0], img.shape[1]) * 0.55) / tpl_h
+                s_est = min(s_est, s_cap)
+            scales = _neighbor_scales(s_est, n=_BAR_SCALE_NEAR)
+            for scale in scales:
+                tpl, mask = self._tpl(float(scale))
+                for sc, x, y, w, h in _match_peaks(
+                    img, tpl, mask, thr=self.min_score, n=1
+                ):
+                    hit = _consider(sc, x + ox, y + oy, w, h)
+                    if hit is not None:
+                        raw.append(hit)
+            raw.sort(key=lambda c: (c.rank, c.score), reverse=True)
+            kept: list[BobberLoc] = []
+            for c in raw:
+                if any(
+                    abs(c.left - k.left) + abs(c.top - k.top)
+                    < max(c.width, k.width) * 0.55
+                    for k in kept
+                ):
+                    continue
+                kept.append(c)
+                if len(kept) >= max_n:
+                    break
+            return kept
+
         for _sc0, cx, top, bw, est_h in seeds:
             # 红箍宽 → 整漂尺度；ROI 按估模板尺寸留余量（羽冠 top 可能偏下）
             scale_est = (float(bw) / tpl_w) / _BAND_WIDTH_FRAC
@@ -372,30 +521,17 @@ class FindBobber:
                 for sc, x, y, w, h in _match_peaks(
                     roi, tpl, mask, thr=self.min_score, n=1
                 ):
-                    bx, by = x + x0, y + y0
-                    cream, band, plume = _structure(rgb, bx, by, w, h)
-                    sal = _salience(cream, band, plume)
-                    rank = sc * sal
-                    hit = BobberLoc(
-                        x=float(bx + w * 0.5),
-                        y=float(by + h * ((BODY_Y0 + BODY_Y1) * 0.5)),
-                        left=bx,
-                        top=by,
-                        width=w,
-                        height=h,
-                        score=float(sc),
-                        rank=float(rank),
-                        cream=float(cream),
-                        band=float(band),
-                    )
-                    if best is None or rank > best.rank:
+                    hit = _consider(sc, x + x0 + ox, y + y0 + oy, w, h)
+                    if hit is not None and (
+                        best is None or hit.rank > best.rank
+                    ):
                         best = hit
             if best is not None:
                 raw.append(best)
                 if best.rank >= _EARLY_RANK:
                     break
         raw.sort(key=lambda c: (c.rank, c.score), reverse=True)
-        kept: list[BobberLoc] = []
+        kept = []
         for c in raw:
             if any(
                 abs(c.left - k.left) + abs(c.top - k.top)

@@ -62,6 +62,15 @@ def use_bobber_anchor() -> BarDetector:
     return set_detector(BobberAnchorDetector())
 
 
+def apply_manual_bar(
+    box: tuple[float, float, float, float] | None,
+) -> None:
+    """把手动条界注入当前识别器（无此能力则忽略）。"""
+    setter = getattr(get_detector(), "set_manual_bar", None)
+    if callable(setter):
+        setter(box)
+
+
 def detect(rgb: np.ndarray) -> BobberHit | None:
     """统一入口：传入 RGB 图 → BobberHit（含条框与 pos）或 None。"""
     return get_detector().detect(rgb)
