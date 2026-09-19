@@ -320,6 +320,8 @@ class PreviewApp(QMainWindow):
         super().__init__()
         self.setWindowTitle("Albion 拉鱼 · 调试壳 (PySide6)")
         self.resize(1280, 760)
+        # 默认置顶：点到游戏窗口时调试壳不被盖住
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         self.roi_path = roi_path
         self.roi: Roi | None = None
@@ -375,6 +377,11 @@ class PreviewApp(QMainWindow):
         # —— 权限：macOS 隐私 / Windows 截屏探测+管理员 ——
         perm = QGroupBox("权限")
         perm_l = QHBoxLayout(perm)
+        self.chk_stay_on_top = QCheckBox("置顶")
+        self.chk_stay_on_top.setChecked(True)
+        self.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层，点到游戏也不会被盖住")
+        self.chk_stay_on_top.toggled.connect(self._on_stay_on_top_toggled)
+        perm_l.addWidget(self.chk_stay_on_top)
         self.lbl_perm_screen = QLabel("屏幕…")
         self.lbl_perm_screen.setMinimumWidth(140)
         perm_l.addWidget(self.lbl_perm_screen)
@@ -576,6 +583,13 @@ class PreviewApp(QMainWindow):
             self.btn_perm_screen.setText("屏幕")
             self.btn_perm_input.setText("控鼠")
             self.btn_perm_reset.setVisible(False)
+
+    def _on_stay_on_top_toggled(self, checked: bool) -> None:
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
+        if was_visible:
+            self.show()
+        self._log("窗口置顶 ON" if checked else "窗口置顶 OFF")
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()
