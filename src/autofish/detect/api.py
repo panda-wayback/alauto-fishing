@@ -1,4 +1,4 @@
-"""识别器协议与默认切换。传入 RGB → 绿条 + 鱼漂 + pos。"""
+"""识别器协议与默认切换。传入 RGB → 绿条 + 鱼漂 + pos。默认 bobber_anchor。"""
 
 from __future__ import annotations
 
@@ -31,9 +31,9 @@ _current: BarDetector | None = None
 def get_detector() -> BarDetector:
     global _current
     if _current is None:
-        from autofish.detect.color_blocks import ColorBlocksDetector
+        from autofish.detect.bobber_anchor import BobberAnchorDetector
 
-        _current = ColorBlocksDetector()
+        _current = BobberAnchorDetector()
     return _current
 
 
@@ -54,6 +54,12 @@ def use_color_blocks() -> BarDetector:
     from autofish.detect.color_blocks import ColorBlocksDetector
 
     return set_detector(ColorBlocksDetector())
+
+
+def use_bobber_anchor() -> BarDetector:
+    from autofish.detect.bobber_anchor import BobberAnchorDetector
+
+    return set_detector(BobberAnchorDetector())
 
 
 def detect(rgb: np.ndarray) -> BobberHit | None:

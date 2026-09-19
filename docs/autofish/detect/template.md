@@ -11,7 +11,7 @@
 - 输入图与模板同时按比例压缩，默认缩放因子 `0.25`；灰度匹配（形状为主）。
 - 默认每帧仅在上一命中位置附近 ROI 搜索；首次/丢失后回退全图搜索。
 - 命中稳定后单帧耗时目标 **< 10 ms**；全图搜索目标 **< 20 ms**。
-- 不替代 `color_blocks`：默认仍是 color_blocks；template 通过 `use_template()` 切换。
+- 不作默认：当前默认是 `bobber_anchor`；template 通过 `use_template()` 切换；`color_blocks` 见 `use_color_blocks()`。
 - 识别耗时随 `PosEvent` 发出，并在日志/UI 实时输出显示。
 
 ## 解决步骤
