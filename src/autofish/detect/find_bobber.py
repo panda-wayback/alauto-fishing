@@ -343,6 +343,9 @@ class FindBobber:
         self.accept_min_margin = float(accept_min_margin)
         self.accept_solo_score = float(accept_solo_score)
         self._cache: dict[float, tuple[np.ndarray, np.ndarray]] = {}
+        # 预热常用尺度，避免首帧 resize 尖峰
+        for s in _SCALES:
+            self._tpl(float(s))
 
     def _tpl(self, scale: float) -> tuple[np.ndarray, np.ndarray]:
         if scale not in self._cache:

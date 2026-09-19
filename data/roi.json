@@ -1,6 +1,10 @@
 {
-  "left": 650,
-  "top": 446,
-  "width": 243,
-  "height": 120
+  "left": 620,
+  "top": 437,
+  "width": 290,
+  "height": 143,
+  "bar_left": 29.0,
+  "bar_right": 247.0,
+  "bar_top": 66.0,
+  "bar_height": 27.0
 }

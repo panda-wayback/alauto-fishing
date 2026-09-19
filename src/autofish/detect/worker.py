@@ -31,8 +31,9 @@ class DetectorWorker(WorkerBase):
     def start(self) -> None:
         # 重启后必须清序号，否则 capture 若重置 seq 会永久跳过所有帧
         self._last_seq = -1
+        # 不在此清程序条锁：ROI 未变时保留，避免开关监控反复全图+端帽
+        # _last_roi_version=None → 首帧只对齐版本、不清锁
         self._last_roi_version = None
-        self._clear_bar_lock()
         with self._cond:
             self._pending = None
         self.bus.subscribe(Topic.FRAME, self._on_frame)
@@ -72,7 +73,10 @@ class DetectorWorker(WorkerBase):
                     continue
                 if self._superseded(event.seq):
                     continue
-                if self._last_roi_version != event.roi_version:
+                if self._last_roi_version is None:
+                    # 监控刚开：对齐版本，保留已有程序锁
+                    self._last_roi_version = event.roi_version
+                elif self._last_roi_version != event.roi_version:
                     self._clear_bar_lock()
                     self._last_roi_version = event.roi_version
                 try:

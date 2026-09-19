@@ -144,13 +144,19 @@ class BobberAnchorDetector:
         self._program_bar: tuple[float, float, float, float] | None = None
         self._follow_scale: float | None = None
         self._follow_xy: tuple[float, float] | None = None
+        self._recover_tick: int = 0
+        # 预热端帽常见尺度，减轻首次定界尖峰
+        for s in (0.20, 0.28, 0.36, 0.48):
+            self._end_tpl("L", float(s))
+            self._end_tpl("R", float(s))
 
     def clear_bar_lock(self) -> None:
-        """ROI 变更 / 监控重启时丢弃程序锁定（手动界由壳另行处理）。"""
+        """ROI 变更 / 重框时丢弃程序锁定（监控开关不调用；手动界由壳另行处理）。"""
         self._locked_bar = None
         self._program_bar = None
         self._follow_scale = None
         self._follow_xy = None
+        self._recover_tick = 0
 
     def set_manual_bar(
         self, box: tuple[float, float, float, float] | None
@@ -160,6 +166,7 @@ class BobberAnchorDetector:
         if box is None:
             self._follow_scale = None
             self._follow_xy = None
+            self._recover_tick = 0
 
     @property
     def bar_locked(self) -> bool:
@@ -178,6 +185,7 @@ class BobberAnchorDetector:
         if tw > 0 and loc.width > 0:
             self._follow_scale = float(loc.width) / tw
         self._follow_xy = (float(loc.x), float(loc.y))
+        self._recover_tick = 0
 
     def _scale_hint_from_bar(
         self, bar: tuple[float, float, float, float]
@@ -205,6 +213,22 @@ class BobberAnchorDetector:
         cx, cy = self._follow_xy
         half_w = max(40.0, (self._follow_scale or 0.32) * 119 * 1.6)
         half_h = max(28.0, bh * 0.9)
+        x0 = max(left, cx - half_w)
+        x1 = min(left + bw, cx + half_w)
+        if x1 - x0 < 28:
+            return self._bar_neighborhood(bar)
+        return (x0, cy - half_h, x1 - x0, 2.0 * half_h)
+
+    def _expanded_follow_box(
+        self, bar: tuple[float, float, float, float]
+    ) -> tuple[float, float, float, float]:
+        """局部丢漂后的中等窗：大于局部、小于整条，同帧只搜一次。"""
+        left, top, bw, bh = bar
+        if self._follow_xy is None:
+            return self._bar_neighborhood(bar)
+        cx, cy = self._follow_xy
+        half_w = max(72.0, (self._follow_scale or 0.32) * 119 * 2.8)
+        half_h = max(40.0, bh * 1.6)
         x0 = max(left, cx - half_w)
         x1 = min(left + bw, cx + half_w)
         if x1 - x0 < 28:
@@ -367,18 +391,32 @@ class BobberAnchorDetector:
             hint = self._follow_scale
             if hint is None:
                 hint = self._scale_hint_from_bar(active)
-            loc = self._finder.find(
-                rgb,
-                search_box=self._follow_search_box(active),
-                scale_hint=hint,
-            )
-            if loc is None and self._follow_xy is not None:
-                # 局部丢了 → 退回整条邻域再试一次（仍用条高尺度，勿用紧条框）
+            if self._follow_xy is None:
+                # 无跟点：隔帧扫整条邻域，空窗期不打满 CPU
+                self._recover_tick += 1
+                if self._recover_tick % 2 == 0:
+                    return None
                 loc = self._finder.find(
                     rgb,
                     search_box=self._bar_neighborhood(active),
                     scale_hint=hint,
                 )
+            else:
+                loc = self._finder.find(
+                    rgb,
+                    search_box=self._follow_search_box(active),
+                    scale_hint=hint,
+                )
+                if loc is None:
+                    # 局部丢：同帧只放大一次中等窗，禁止再叠整条二次搜
+                    loc = self._finder.find(
+                        rgb,
+                        search_box=self._expanded_follow_box(active),
+                        scale_hint=hint,
+                    )
+                    if loc is None:
+                        self._follow_xy = None
+                        self._recover_tick = 0
             if loc is None:
                 return None
             hit = self._hit_from_bar(

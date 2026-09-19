@@ -29,10 +29,10 @@
 - 手框唯一决定 mss；Detect 只读数，禁止缩/改 ROI。
 - Capture：`mss` 每线程独立实例（Windows 禁止跨线程复用同一 sct）。
 - Detect：霓虹绿核定条 → 两侧橘黄扩展定界（color_blocks）；或先漂后端帽（bobber_anchor 默认）；绿条既定必有漂（白/孔/绿密度谷，候选质心须在条框内，color_blocks）；识别线程异常不退出；监控重启重置帧序
-- Detect 计时：`PosEvent.detect_ms` = 单帧识别耗时；壳显示 + 每 2s 日志
+- Detect 计时：`PosEvent.detect_ms` = 单帧识别耗时；壳显示 + 每 2s 日志（仅近 2s、标条内/全图）
 - template 识别器：模板构造时加载一次并缓存多尺度；压缩灰度匹配 + 上一位置跟踪；模板须与实机同比例
 - color_blocks 识别器（可选）：入图过宽先等比压缩定条、坐标映回；漂在原图像素条框附近找；每帧 HSV/RGB 通道只算一次给四掩膜共用；`use_color_blocks()` 切换
-- bobber_anchor 识别器（默认）：先准确定漂 → 手动/自动锁条 → 有条后只在条内跟漂；条内尺度用上一帧或**条高**估（禁止用邻域高）；**有漂无条仍回报漂位**（pos 空）；整段 ≥20fps；`use_bobber_anchor()` / `apply_manual_bar`
+- bobber_anchor 识别器（默认）：先准确定漂 → 手动/自动锁条 → 有条后只在条内跟漂；跟丢中等窗一次、隔帧邻域恢复；条内尺度用上一帧或**条高**估；**监控开关保留程序锁**（ROI 未变）；**有漂无条仍回报漂位**（pos 空）；整段 ≥20fps；`use_bobber_anchor()` / `apply_manual_bar`
 - find_bobber（独立）：颜色结构（须羽冠+红箍+亮肚）+ 小 ROI 彩色复核；门槛偏严；可传条邻域只在条内搜；宁可 miss 不可错
 - 壳订 Frame（画面）+ Pos（读数）。
 - Decide 不点鼠标；Act 不决策。

@@ -15,7 +15,7 @@
 
 - `ActWorker.start/stop/poll` — 订意图；`FISHING` 控鼠；单帧无 Pos 不松；系统让位/接管
 - `ActWorker.pressed` / `yielding` / `press_interval` — 程序是否按下；是否让位；当前按下间隔
-- `Topic.PRESS_INTERVAL` / `PressIntervalEvent` — 壳发布，Act 订阅（0～0.3s，默认 0.02）
+- `Topic.PRESS_INTERVAL` / `PressIntervalEvent` — 壳发布，Act 订阅（0～0.3s，默认 0）
 - `os_left_down()` / `MouseActuator.set_holding` / `force_release`
 
 ## 约束

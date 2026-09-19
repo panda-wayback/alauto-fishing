@@ -17,6 +17,6 @@
 | └ 订阅总线 | [`docs/common/pubsub/`](common/pubsub/) | 进程内 Pub/Sub |
 | └ 运行权限 | [`docs/common/permissions/`](common/permissions/) | 截屏/控鼠授权引导 |
 
-调试预览窗在代码 `src/tools/`，不属于上表业务段；左监控 + 右条界标记；监控显示原画面（可叠框/线）见 [`docs/autofish/`](autofish/) 约束。
+调试预览窗在代码 `src/tools/`，不属于上表业务段；壳布局以「权限(可收起) → 画面工作台(MONITOR+读数+BAR) → 设置(策略/操作) → 底栏日志」为准，见 [`docs/autofish/`](autofish/)。
 
 推进顺序：Decide/Act 契约已写入 → 实现订阅链与预览（真鼠标 + 日志）→ common 按页校对。

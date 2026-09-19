@@ -27,7 +27,9 @@ class BarMarkCanvas(QLabel):
         super().__init__(parent)
         self.setMinimumSize(320, 200)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background:#1c1e22; color:#888; border:1px solid #373a40;")
+        self.setStyleSheet(
+            "background:#f5f5f7; color:#3c3c43; border:1px solid #d2d2d7;"
+        )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self._rgb: np.ndarray | None = None

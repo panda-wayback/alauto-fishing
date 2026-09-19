@@ -1,4 +1,4 @@
-"""调试壳（PySide6）：监控 / 策略 / 操作勾选；右侧条界标记；无快捷键。"""
+"""调试壳（PySide6）：竖列可滚 + 底栏独立日志；设置可收起；无快捷键。"""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -25,8 +26,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
+    QScrollArea,
     QSizePolicy,
     QSlider,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -151,7 +154,9 @@ class ImageCanvas(QLabel):
         self._title = title
         self.setMinimumSize(320, 200)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet("background:#1c1e22; color:#888; border:1px solid #373a40;")
+        self.setStyleSheet(
+            "background:#f5f5f7; color:#3c3c43; border:1px solid #d2d2d7;"
+        )
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._rgb: np.ndarray | None = None
         self._pixmap = QPixmap()
@@ -269,7 +274,50 @@ class PreviewApp(QMainWindow):
     def __init__(self, roi_path: Path = DEFAULT_ROI_PATH) -> None:
         super().__init__()
         self.setWindowTitle("Albion 拉鱼 · 调试壳 (PySide6)")
-        self.resize(1280, 760)
+        self.resize(440, 780)
+        self.setStyleSheet(
+            """
+            QMainWindow, QWidget {
+                background: #f5f5f7;
+                color: #1d1d1f;
+            }
+            QGroupBox {
+                font-weight: 600;
+                border: 1px solid #d2d2d7;
+                border-radius: 6px;
+                margin-top: 8px;
+                padding-top: 8px;
+                background: #ffffff;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                left: 8px;
+                padding: 0 4px;
+                color: #1d1d1f;
+            }
+            QPlainTextEdit {
+                background: #ffffff;
+                color: #1d1d1f;
+                border: 1px solid #d2d2d7;
+                border-radius: 4px;
+            }
+            QToolButton {
+                color: #1d1d1f;
+                background: transparent;
+            }
+            QPushButton {
+                background: #ffffff;
+                border: 1px solid #d2d2d7;
+                border-radius: 4px;
+                padding: 4px 10px;
+            }
+            QPushButton:hover { background: #e8e8ed; }
+            QPushButton:disabled { color: #8e8e93; }
+            QCheckBox { color: #1d1d1f; }
+            QLabel { color: #1d1d1f; }
+            QScrollArea { background: transparent; border: none; }
+            """
+        )
         # 默认置顶：点到游戏窗口时调试壳不被盖住
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
@@ -290,6 +338,7 @@ class PreviewApp(QMainWindow):
         self._mouse_mismatch_logged = False
         self._logs: deque[str] = deque(maxlen=80)
         self._bar_ref_saved = False
+        self._bar_ref_wait_bobber = False
         self._bridge = BusBridge()
         self._bridge.frame.connect(self._on_frame_ui)
         self._bridge.pos.connect(self._on_pos_ui)
@@ -319,52 +368,82 @@ class PreviewApp(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
 
-        # —— 权限：macOS 隐私 / Windows 截屏探测+管理员 ——
-        perm = QGroupBox("权限")
-        perm_l = QHBoxLayout(perm)
+        # —— 上区可滚动竖列 ——
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        column = QWidget()
+        col = QVBoxLayout(column)
+        col.setContentsMargins(0, 0, 4, 0)
+        col.setSpacing(8)
+
+        # 0. 权限（最上，可收起，默认展开）
+        self.btn_perm_toggle = QToolButton()
+        self.btn_perm_toggle.setText("权限")
+        self.btn_perm_toggle.setCheckable(True)
+        self.btn_perm_toggle.setChecked(True)
+        self.btn_perm_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.btn_perm_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.btn_perm_toggle.setStyleSheet("font-weight:600; padding:4px 0;")
+        self.btn_perm_toggle.toggled.connect(self._on_perm_toggled)
+        col.addWidget(self.btn_perm_toggle)
+
+        self.perm_panel = QWidget()
+        perm_outer = QVBoxLayout(self.perm_panel)
+        perm_outer.setContentsMargins(0, 0, 0, 0)
+        perm = QGroupBox()
+        perm.setFlat(True)
+        perm_l = QVBoxLayout(perm)
         self.chk_stay_on_top = QCheckBox("置顶")
         self.chk_stay_on_top.setChecked(True)
         self.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层，点到游戏也不会被盖住")
         self.chk_stay_on_top.toggled.connect(self._on_stay_on_top_toggled)
         perm_l.addWidget(self.chk_stay_on_top)
         self.lbl_perm_screen = QLabel("屏幕…")
-        self.lbl_perm_screen.setMinimumWidth(140)
         perm_l.addWidget(self.lbl_perm_screen)
         self.btn_perm_screen = QPushButton("授权屏幕")
         self.btn_perm_screen.clicked.connect(self._on_perm_screen)
         perm_l.addWidget(self.btn_perm_screen)
         self.lbl_perm_input = QLabel("控鼠…")
-        self.lbl_perm_input.setMinimumWidth(180)
         perm_l.addWidget(self.lbl_perm_input)
         self.btn_perm_input = QPushButton("授权控鼠")
         self.btn_perm_input.clicked.connect(self._on_perm_input)
         perm_l.addWidget(self.btn_perm_input)
+        row_perm = QHBoxLayout()
         self.btn_perm_refresh = QPushButton("刷新")
         self.btn_perm_refresh.clicked.connect(self._refresh_permissions)
-        perm_l.addWidget(self.btn_perm_refresh)
+        row_perm.addWidget(self.btn_perm_refresh)
         self.btn_perm_reset = QPushButton("清理授权")
         self.btn_perm_reset.setToolTip(
             "清除本应用屏幕录制/辅助功能记录并打开系统设置（仅 macOS）"
         )
         self.btn_perm_reset.clicked.connect(self._on_perm_reset)
         self.btn_perm_reset.setVisible(sys.platform == "darwin")
-        perm_l.addWidget(self.btn_perm_reset)
-        perm_l.addStretch(1)
-        layout.addWidget(perm)
+        row_perm.addWidget(self.btn_perm_reset)
+        row_perm.addStretch(1)
+        perm_l.addLayout(row_perm)
+        perm_outer.addWidget(perm)
+        col.addWidget(self.perm_panel)
 
-        # —— 感知：POS + 监控 + 框选 ——
-        sense = QGroupBox("感知")
-        sense_l = QHBoxLayout(sense)
-        self.lbl_pos = QLabel("无漂")
-        self.lbl_pos.setStyleSheet("font-size:28px; font-weight:600; color:#d24e46;")
-        self.lbl_pos.setMinimumWidth(100)
-        sense_l.addWidget(QLabel("POS"))
-        sense_l.addWidget(self.lbl_pos)
+        # 1. 画面工作台：MONITOR + BAR 同组相邻（框选/标界）
+        vision = QGroupBox("画面工作台")
+        vis = QVBoxLayout(vision)
+        vis.setSpacing(8)
+
+        mon_title = QLabel("MONITOR")
+        mon_title.setStyleSheet("font-weight:600;")
+        vis.addWidget(mon_title)
+        row_mon = QHBoxLayout()
         self.chk_monitor = QCheckBox("监控")
         self.chk_monitor.toggled.connect(self._on_monitor_toggled)
-        sense_l.addWidget(self.chk_monitor)
-        sense_l.addStretch(1)
+        row_mon.addWidget(self.chk_monitor)
         self.btn_capture = QPushButton("截屏框选")
         self.btn_rebox = QPushButton("重框")
         self.btn_confirm = QPushButton("确认框选")
@@ -374,10 +453,87 @@ class PreviewApp(QMainWindow):
         self.btn_confirm.clicked.connect(self._confirm_selection)
         self.btn_cancel.clicked.connect(self._cancel_selection)
         for b in (self.btn_capture, self.btn_rebox, self.btn_confirm, self.btn_cancel):
-            sense_l.addWidget(b)
-        layout.addWidget(sense)
+            row_mon.addWidget(b)
+        row_mon.addStretch(1)
+        vis.addLayout(row_mon)
+        self.monitor = ImageCanvas("MONITOR · 等待截屏/监控")
+        self.monitor.setMinimumHeight(220)
+        vis.addWidget(self.monitor)
 
-        # —— 策略：范围抽样阈值 + 实时意图 ——
+        # 读数嵌在工作台内（MONITOR 与 BAR 之间，便于对照画面）
+        readout = QFrame()
+        readout.setObjectName("readout")
+        readout.setStyleSheet(
+            "QFrame#readout { background:#ffffff; border:1px solid #d2d2d7;"
+            " border-radius:3px; }"
+        )
+        ro = QVBoxLayout(readout)
+        ro.setContentsMargins(6, 4, 6, 4)
+        ro.setSpacing(1)
+        row1 = QHBoxLayout()
+        row1.setSpacing(6)
+        self.lbl_pos = QLabel("POS: 无漂")
+        self.lbl_pos.setStyleSheet("font-size:13px; font-weight:600; color:#c62828;")
+        row1.addWidget(self.lbl_pos)
+        self.lbl_strat_detail = QLabel("")
+        self.lbl_strat_detail.setStyleSheet("font-size:12px; color:#6e6e73;")
+        row1.addWidget(self.lbl_strat_detail, 1)
+        self.lbl_perf = QLabel("")
+        self.lbl_perf.setStyleSheet("font-size:11px; color:#8e8e93;")
+        row1.addWidget(self.lbl_perf)
+        ro.addLayout(row1)
+        self.lbl_mouse = QLabel("意图 — · 程序 — · 系统 —")
+        self.lbl_mouse.setStyleSheet("font-size:12px; color:#3c3c43;")
+        ro.addWidget(self.lbl_mouse)
+        self.lbl_hint = QLabel("先截屏框选")
+        self.lbl_hint.setStyleSheet("font-size:11px; color:#8e8e93;")
+        ro.addWidget(self.lbl_hint)
+        # 兼容旧刷新路径：意图单独控件改为隐藏占位（文案并入 mouse 行由策略刷新）
+        self.lbl_intent = QLabel("")
+        self.lbl_intent.hide()
+        vis.addWidget(readout)
+
+        bar_title = QHBoxLayout()
+        bar_lbl = QLabel("BAR · 条界标记")
+        bar_lbl.setStyleSheet("font-weight:600;")
+        bar_title.addWidget(bar_lbl)
+        self.lbl_bar_hint = QLabel("蓝=程序 黄=手动")
+        self.lbl_bar_hint.setStyleSheet("color:#6e6e73;")
+        bar_title.addWidget(self.lbl_bar_hint, 1)
+        self.btn_bar_refresh = QPushButton("刷新参考图")
+        self.btn_bar_refresh.setToolTip(
+            "点击后等待下一次鱼漂识别成功，用该帧更新条界参考图"
+        )
+        self.btn_bar_refresh.clicked.connect(self._refresh_bar_ref)
+        bar_title.addWidget(self.btn_bar_refresh)
+        self.btn_bar_clear = QPushButton("清除我的标记")
+        self.btn_bar_clear.clicked.connect(self._clear_manual_bar)
+        bar_title.addWidget(self.btn_bar_clear)
+        vis.addLayout(bar_title)
+        self.bar_canvas = BarMarkCanvas()
+        self.bar_canvas.setMinimumHeight(180)
+        self.bar_canvas.manual_changed.connect(self._on_manual_bar_changed)
+        vis.addWidget(self.bar_canvas)
+        col.addWidget(vision)
+
+        # 设置（可收起，默认展开）：仅策略 / 操作
+        self.btn_settings_toggle = QToolButton()
+        self.btn_settings_toggle.setText("设置")
+        self.btn_settings_toggle.setCheckable(True)
+        self.btn_settings_toggle.setChecked(True)
+        self.btn_settings_toggle.setToolButtonStyle(
+            Qt.ToolButtonStyle.ToolButtonTextBesideIcon
+        )
+        self.btn_settings_toggle.setArrowType(Qt.ArrowType.DownArrow)
+        self.btn_settings_toggle.setStyleSheet("font-weight:600; padding:4px 0;")
+        self.btn_settings_toggle.toggled.connect(self._on_settings_toggled)
+        col.addWidget(self.btn_settings_toggle)
+
+        self.settings_panel = QWidget()
+        set_l = QVBoxLayout(self.settings_panel)
+        set_l.setContentsMargins(0, 0, 0, 0)
+        set_l.setSpacing(8)
+
         strat = QGroupBox("策略（只决策，不点鼠标）")
         strat_l = QVBoxLayout(strat)
         row1 = QHBoxLayout()
@@ -387,102 +543,72 @@ class PreviewApp(QMainWindow):
         self.btn_apply_policy = QPushButton("应用")
         self.btn_apply_policy.clicked.connect(self._apply_policy)
         row1.addWidget(self.btn_apply_policy)
-        row1.addWidget(QLabel("拖动数轴调范围 · 两段不重叠且间隔≥1 · 精度0.1 · 切换后重抽"))
         row1.addStretch(1)
         strat_l.addLayout(row1)
+        strat_l.addWidget(
+            QLabel("拖动数轴调范围 · 两段不重叠且间隔≥1 · 精度0.1 · 切换后重抽")
+        )
         self.range_axis = DualRangeAxis(
             press=(70.6, 74.4), release=(76.6, 79.2), min_gap=1.0
         )
         strat_l.addWidget(self.range_axis)
-        row2 = QHBoxLayout()
-        row2.addWidget(QLabel("实时输出："))
-        self.lbl_intent = QLabel("未启用")
-        self.lbl_intent.setStyleSheet("font-size:18px; font-weight:600; color:#787c80;")
-        self.lbl_intent.setMinimumWidth(160)
-        row2.addWidget(self.lbl_intent)
-        self.lbl_strat_detail = QLabel("")
-        self.lbl_strat_detail.setStyleSheet("color:#787c80;")
-        row2.addWidget(self.lbl_strat_detail, 1)
-        self.lbl_perf = QLabel("")
-        self.lbl_perf.setStyleSheet("color:#787c80;")
-        self.lbl_perf.setMinimumWidth(90)
-        row2.addWidget(self.lbl_perf)
-        strat_l.addLayout(row2)
-        layout.addWidget(strat)
+        set_l.addWidget(strat)
 
-        # —— 操作：执行策略 → 真鼠标 ——
         act = QGroupBox("操作（执行策略：控制鼠标）")
         act_l = QVBoxLayout(act)
-        row_act = QHBoxLayout()
         self.chk_act = QCheckBox("启用操作")
         self.chk_act.setToolTip("勾选后按策略意图对当前光标按下/松开左键")
         self.chk_act.toggled.connect(self._on_act_toggled)
-        row_act.addWidget(self.chk_act)
-        row_act.addWidget(QLabel("实时："))
-        self.lbl_mouse = QLabel("…")
-        self.lbl_mouse.setStyleSheet("font-size:16px; font-weight:600; color:#787c80;")
-        self.lbl_mouse.setMinimumWidth(420)
-        row_act.addWidget(self.lbl_mouse, 1)
-        row_act.addWidget(QLabel("（光标请放在游戏窗口上）"))
-        act_l.addLayout(row_act)
+        act_l.addWidget(self.chk_act)
+        act_l.addWidget(QLabel("（光标请放在游戏窗口上）"))
         row_gap = QHBoxLayout()
         row_gap.addWidget(QLabel("按下间隔"))
         self.sld_press_interval = QSlider(Qt.Orientation.Horizontal)
-        self.sld_press_interval.setRange(0, 300)  # 0～0.3s，毫秒
+        self.sld_press_interval.setRange(0, 300)
         self.sld_press_interval.setSingleStep(10)
         self.sld_press_interval.setPageStep(50)
-        self.sld_press_interval.setValue(20)
+        self.sld_press_interval.setValue(0)
         self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
         self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
         self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
         row_gap.addWidget(self.sld_press_interval, 1)
-        self.lbl_press_interval = QLabel("0.02s")
+        self.lbl_press_interval = QLabel("0.00s")
         self.lbl_press_interval.setMinimumWidth(48)
         row_gap.addWidget(self.lbl_press_interval)
         row_gap.addWidget(QLabel("（0～0.3s）"))
         act_l.addLayout(row_gap)
         self.lbl_mouse_diag = QLabel("")
-        self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
+        self.lbl_mouse_diag.setStyleSheet("color:#6e6e73;")
+        self.lbl_mouse_diag.setWordWrap(True)
         act_l.addWidget(self.lbl_mouse_diag)
-        layout.addWidget(act)
+        set_l.addWidget(act)
 
-        # —— 中栏：监控 | 条界 ——
-        mid = QHBoxLayout()
-        left = QVBoxLayout()
-        left.addWidget(QLabel("MONITOR"))
-        self.monitor = ImageCanvas("MONITOR · 等待截屏/监控")
-        left.addWidget(self.monitor, 1)
-        mid.addLayout(left, 1)
+        col.addWidget(self.settings_panel)
+        col.addStretch(1)
+        scroll.setWidget(column)
+        layout.addWidget(scroll, 1)
 
-        right = QVBoxLayout()
-        bar_bar = QHBoxLayout()
-        bar_bar.addWidget(QLabel("BAR · 条界标记"))
-        self.lbl_bar_hint = QLabel("蓝=程序 黄=手动")
-        self.lbl_bar_hint.setStyleSheet("color:#787c80;")
-        bar_bar.addWidget(self.lbl_bar_hint, 1)
-        self.btn_bar_refresh = QPushButton("刷新参考图")
-        self.btn_bar_refresh.setToolTip("用当前监控帧更新右侧参考图")
-        self.btn_bar_refresh.clicked.connect(self._refresh_bar_ref)
-        bar_bar.addWidget(self.btn_bar_refresh)
-        self.btn_bar_clear = QPushButton("清除我的标记")
-        self.btn_bar_clear.clicked.connect(self._clear_manual_bar)
-        bar_bar.addWidget(self.btn_bar_clear)
-        right.addLayout(bar_bar)
-        self.bar_canvas = BarMarkCanvas()
-        self.bar_canvas.manual_changed.connect(self._on_manual_bar_changed)
-        right.addWidget(self.bar_canvas, 1)
-        mid.addLayout(right, 1)
-        layout.addLayout(mid, 1)
-
+        # 4. 底栏日志
         self.log = QPlainTextEdit()
         self.log.setReadOnly(True)
-        self.log.setMaximumHeight(140)
-        self.log.setStyleSheet("background:#101114; color:#dcdeda;")
+        self.log.setMinimumHeight(100)
+        self.log.setMaximumHeight(120)
+        self.log.setStyleSheet(
+            "background:#ffffff; color:#1d1d1f; border:1px solid #d2d2d7;"
+        )
         layout.addWidget(self.log)
 
-        self.lbl_hint = QLabel("截屏框选 → 确认（自动监控）→ 可调条界 → 策略 → 操作")
-        self.lbl_hint.setStyleSheet("color:#787c80;")
-        layout.addWidget(self.lbl_hint)
+    def _on_perm_toggled(self, expanded: bool) -> None:
+        self.perm_panel.setVisible(expanded)
+        self.btn_perm_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
+
+    def _on_settings_toggled(self, expanded: bool) -> None:
+        self.settings_panel.setVisible(expanded)
+        self.btn_settings_toggle.setArrowType(
+            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow
+        )
 
     def _log(self, msg: str) -> None:
         line = f"{time.strftime('%H:%M:%S')}  {msg}"
@@ -625,14 +751,31 @@ class PreviewApp(QMainWindow):
         self._bar_ref_saved = True
 
     def _refresh_bar_ref(self) -> None:
-        if self.frame is None:
-            self._log("无当前帧 · 无法刷新参考图")
+        """不立即截空图：挂起等待，下一帧有漂再落参考图。"""
+        if self._bar_ref_wait_bobber:
+            self._bar_ref_wait_bobber = False
+            self.btn_bar_refresh.setText("刷新参考图")
+            self._log("已取消等待参考图")
+            self.lbl_hint.setText("已取消等待参考图")
             return
-        self._save_bar_ref(self.frame)
+        self._bar_ref_wait_bobber = True
+        self.btn_bar_refresh.setText("等待鱼漂…")
+        self._log("刷新参考图：等待下一次鱼漂识别")
+        self.lbl_hint.setText("等待鱼漂出现后自动更新参考图")
+
+    def _maybe_commit_bar_ref_wait(self, event: PosEvent) -> None:
+        if not self._bar_ref_wait_bobber:
+            return
+        if event.hit is None or event.frame is None:
+            return
+        self._save_bar_ref(event.frame)
         det = get_detector()
         if hasattr(det, "program_bar"):
             self.bar_canvas.set_program_bar(det.program_bar)
-        self._log("已刷新条界参考图")
+        self._bar_ref_wait_bobber = False
+        self.btn_bar_refresh.setText("刷新参考图")
+        self._log("已刷新条界参考图（等漂命中）")
+        self.lbl_hint.setText("参考图已更新")
 
     def _clear_manual_bar(self) -> None:
         clear_bar_mark(self.roi_path)
@@ -668,6 +811,8 @@ class PreviewApp(QMainWindow):
         self.bar_canvas.set_program_bar(None)
         self.bar_canvas.set_rgb(None)
         self._bar_ref_saved = False
+        self._bar_ref_wait_bobber = False
+        self.btn_bar_refresh.setText("刷新参考图")
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
@@ -746,6 +891,7 @@ class PreviewApp(QMainWindow):
                 self._log("已出条界参考图（有漂·无条，可手动标左右）")
             else:
                 self._log("已自动保存条界参考图")
+        self._maybe_commit_bar_ref_wait(event)
         man = getattr(det, "manual_bar", None)
         if man is not None:
             self.bar_canvas.set_manual_bar(man)
@@ -758,7 +904,7 @@ class PreviewApp(QMainWindow):
         self._refresh_monitor()
 
     def _note_detect_ms(self, ms: float) -> None:
-        """累计识别耗时；每 2s 记一条日志，便于看效率。"""
+        """累计识别耗时；每 2s 记一条（仅本窗口，打完清空，避免尖峰粘住）。"""
         if ms <= 0:
             return
         self._ms_window.append(ms)
@@ -767,12 +913,15 @@ class PreviewApp(QMainWindow):
             return
         self._ms_log_ts = now
         vals = list(self._ms_window)
+        self._ms_window.clear()
         avg = sum(vals) / len(vals)
         fps = 1000.0 / avg if avg > 0 else 0.0
-        name = get_detector().name
+        det = get_detector()
+        mode = "条内" if getattr(det, "bar_locked", False) else "全图"
         self._log(
-            f"识别 {name} 均 {avg:.1f}ms 最大 {max(vals):.1f}ms"
-            f" 最小 {min(vals):.1f}ms ≈{fps:.0f} FPS"
+            f"识别 {det.name}[{mode}] 均 {avg:.1f}ms"
+            f" 最大 {max(vals):.1f}ms 最小 {min(vals):.1f}ms"
+            f" ≈{fps:.0f} FPS（近{len(vals)}帧）"
         )
 
     def _on_intent_ui(self, event: ActionIntentEvent) -> None:
@@ -789,37 +938,15 @@ class PreviewApp(QMainWindow):
     ) -> None:
         pipe = self._pipe
         if pipe is None or not pipe.decide_on:
-            self.lbl_intent.setText("未启用")
-            self.lbl_intent.setStyleSheet(
-                "font-size:18px; font-weight:600; color:#787c80;"
-            )
             self.lbl_strat_detail.setText("")
+            self._refresh_mouse()
             return
-        if self._holding is None:
-            self.lbl_intent.setText("等待…")
-            self.lbl_intent.setStyleSheet(
-                "font-size:18px; font-weight:600; color:#787c80;"
-            )
-        elif self._holding:
-            self.lbl_intent.setText("要按住（点击）")
-            self.lbl_intent.setStyleSheet(
-                "font-size:18px; font-weight:600; color:#ff8c28;"
-            )
-        else:
-            self.lbl_intent.setText("要松开")
-            self.lbl_intent.setStyleSheet(
-                "font-size:18px; font-weight:600; color:#48b46e;"
-            )
         low, high = self._current_policy_thresholds()
-        pos_s = "—" if pos is None else f"{pos:.1f}"
-        plo, phi, rlo, rhi = self.range_axis.ranges()
-        detail = (
-            f"POS={pos_s} · 当前 <{low:.1f} 按住 / >{high:.1f} 松开"
-            f" · 范围 U({plo:.1f}～{phi:.1f})/U({rlo:.1f}～{rhi:.1f})"
-        )
+        detail = f"· <{low:.1f}按 / >{high:.1f}松"
         if reason:
             detail += f" · {reason}"
         self.lbl_strat_detail.setText(detail)
+        self._refresh_mouse()
 
     def _current_policy_thresholds(self) -> tuple[float, float]:
         pipe = self._pipe
@@ -830,22 +957,22 @@ class PreviewApp(QMainWindow):
 
     def _refresh_pos(self) -> None:
         if self.hit is None:
-            self.lbl_pos.setText("无漂")
+            self.lbl_pos.setText("POS: 无漂")
             self.lbl_pos.setStyleSheet(
-                "font-size:28px; font-weight:600; color:#d24e46;"
+                "font-size:13px; font-weight:600; color:#c62828;"
             )
         elif self.hit.bar_width <= 0:
-            self.lbl_pos.setText("有漂·无条")
+            self.lbl_pos.setText("POS: 有漂·无条")
             self.lbl_pos.setStyleSheet(
-                "font-size:22px; font-weight:600; color:#e6b84d;"
+                "font-size:13px; font-weight:600; color:#b86e00;"
             )
         else:
-            self.lbl_pos.setText(f"{self.hit.pos:.1f}")
+            self.lbl_pos.setText(f"POS: {self.hit.pos:.1f}")
             self.lbl_pos.setStyleSheet(
-                "font-size:28px; font-weight:600; color:#48b46e;"
+                "font-size:13px; font-weight:600; color:#2e7d32;"
             )
         ms = getattr(self, "_last_detect_ms", 0.0)
-        self.lbl_perf.setText(f"{ms:.1f} ms")
+        self.lbl_perf.setText(f"{ms:.0f}ms")
 
     def _refresh_monitor(self) -> None:
         if self.phase == SELECT and self.screen_grab is not None:
