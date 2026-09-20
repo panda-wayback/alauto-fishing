@@ -29,5 +29,8 @@ class WorkerBase:
             self._thread.join(timeout=timeout)
             self._thread = None
 
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive()
+
     def _run(self) -> None:  # pragma: no cover
         raise NotImplementedError

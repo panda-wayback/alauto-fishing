@@ -4,6 +4,8 @@
 
 真机自动拉鱼的**功能架构**：按五段拆开，每段只做一件事；段与段经总线交接。与 [`docs/simulator/`](../simulator/) 模拟器分离。不含 YOLO。
 
+可选：**声音开钓（A）** 与 **自动拉漂（B）** 独立开关，支持全自动 / 只拉漂 / 全手钓。
+
 ## 要实现的
 
 | 段 | 只做什么 | 产出 | 子文档 |
@@ -13,30 +15,29 @@
 | **3. 识别** | 订 ROI+Frame：在手框画面内绿+5% 找白得 0～100；**不改 mss** | Pos | [`docs/autofish/detect/`](detect/) |
 | **4. 算法** | 订 Pos，阈值策略产出按住/松开意图 | ActionIntent | [`docs/autofish/decide/`](decide/) |
 | **5. 执行** | 订意图，系统级鼠标按下/松开（当前光标） | 键态变化 | [`docs/autofish/act/`](act/) |
+| **（可选）声音开钓 A** | 会话状态机：听声 → 点第一下 → 等漂 → 交 B | 开钓第一下 / 会话态 | [`docs/autofish/first_click_trigger/`](first_click_trigger/) |
+| **调试壳** | 主控只打勾；标定/声音/更多分页面 | — | [`docs/autofish/shell/`](shell/) |
+
+### 能力组合（A / B）
+
+| 模式 | A 声音开钓 | B 自动拉漂 | 谁点第一下 | 谁拉漂 |
+|---|---|---|---|---|
+| 全自动 | 开 | 开 | 程序（水声） | 程序（Pos） |
+| 只拉漂 | 关 | 开 | 用户 | 程序（Pos） |
+| 全手钓 | 关 | 关 | 用户 | 用户 |
 
 约束：
 
-- 主线：**手框（存盘）→ 同步 mss（=手框，不再被 CV 改）→ 截帧 → 绿+5% 找白 → Pos**。定框只靠人选；Detect 不改 mss。
-- **规则 A**：手框 = 天花板 = 当前 mss；CV **禁止**缩小或撑大手框。
-- 各段不越权：截图不管识别；识别不点鼠标；算法不截屏；执行不做决策。
-- 段 1～3 为感知；段 4～5 为决策与执行。串接见 [`docs/autofish/pipeline/`](pipeline/)。
-- **允许的例外**：Locate 可读 Capture 主屏一帧；Capture 可依赖公共 `Roi`。
-- **预览/调试壳**：属 `src/tools/`，**不是**五段之一。**PySide6** 单窗，按**操作对象**竖列分组（禁止把「在画面上点的东西」丢进远处设置）：
-  1. **权限**（可收起，**默认展开**；置顶整窗最上）：置顶开关、屏幕/控鼠授权与状态；不进「设置」。
-  2. **画面工作台**（一体，上下排）：内嵌**精简读数**（`POS: 读数 · 范围` / `意图 · 程序 · 系统`，与画面同区便于对照）；**MONITOR**（工具行 + 画布）与 **BAR**（刷新/清除 + 参考图标左右界）。框选/标界/读数禁止拆进设置或被其它大块隔开。
-  3. **设置**（可收起，**默认展开**）：只含**策略 / 操作**；**禁止**再放监控/框选/条界标定/权限/读数。
-  4. **日志**：钉在窗口底，自带滚动，不随上区滚。
-  - **上区可滚动**；默认窗约 **440×780**；订 Frame + Pos；策略与操作默认开；不嵌模拟器；只要按钮/勾选、不要快捷键；确认框选后自动开监控；有存盘手框（及条界）时启动自动载入并开监控。详见 [`docs/common/permissions/`](../common/permissions/)。
-- 代码：`src/autofish/{locate,capture,detect,decide,act}/`；总线 `src/common/pubsub/`。
+- 主线：手框存盘 → mss=手框 → 截帧 → 识别 Pos；Detect 不改 mss。  
+- 段不越权；串接见 [`docs/autofish/pipeline/`](pipeline/)。  
+- A 独立会话机；仅 `WAIT` 听声；细则见 [`docs/autofish/first_click_trigger/`](first_click_trigger/)。  
+- **壳 UI**：主控仅「自动拉漂(B) / 声音开钓(A)」勾选 + 精简状态 + 日志；无监控开关（有 ROI 则常开 Capture/Detect）；其余进标定/声音/更多页面。见 [`docs/autofish/shell/`](shell/)。  
+- 代码：`src/autofish/...`、`src/tools/`；总线 `src/common/pubsub/`。
 
-失败（总览）：任一段失败不得由其他段「顺手修补」职责；应回到该段或清空 ROI / 停止执行。
+失败：段失败不互相顶替职责；A 回 `WAIT` 不拖垮 Capture/Detect。
 
 ## 解决步骤
 
-1. 五段分工与子文档架子（已完成；目录由 `vision` 更名为 `autofish`）。
-2. 订阅串接 → [`docs/autofish/pipeline/`](pipeline/)。
-3. Locate / Detect / Decide / Act 契约已写入并对齐实现。
-4. 调试壳解耦与三开关、读数提频（已完成）。
-5. mss 仅随手框；Detect 不改范围（已完成）。
-6. 调试壳改 PySide6（已完成）。
-7. 调试壳布局按操作对象收敛：权限最上可收起；画面工作台 MONITOR+BAR；设置仅策略/操作（已完成）。
+1. 五段与 pipeline / Decide / Act（已完成）。  
+2. 声音开钓能力与会话状态机（已完成）→ [`first_click_trigger/`](first_click_trigger/)。  
+3. 壳 UI（主控 A/B + 分页面）（已完成）→ [`shell/`](shell/)。

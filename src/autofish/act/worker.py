@@ -8,6 +8,7 @@ from autofish.act.mouse import MouseActuator, os_left_down
 from autofish.bus import AutofishBus
 from autofish.topics import (
     ActionIntentEvent,
+    CastSessionState,
     FishingState,
     PressIntervalEvent,
     Topic,
@@ -23,7 +24,8 @@ class ActWorker:
     按下受 press_interval 门控；松开立刻。
     优先级：系统左键 > 程序。系统按下且非本程序按下 → 让位，
     直到系统松开后才按快照意图接管。
-    FISHING 才控鼠；单帧无 Pos 不松手；非钓鱼态 = 自由态。
+    FISHING 才控鼠；A 开时仅会话 FISHING 才控鼠。
+    单帧无 Pos 不松手；非钓鱼态 = 自由态。
     """
 
     def __init__(self, bus: AutofishBus) -> None:
@@ -72,11 +74,14 @@ class ActWorker:
 
     def _apply_snapshot(self) -> None:
         snap = self.bus.snapshot()
-        self._apply(snap.holding, snap.fishing_state)
+        self._apply(snap.holding, snap)
 
     @staticmethod
-    def _in_fishing(state: FishingState) -> bool:
-        return state == FishingState.FISHING
+    def _may_control(snap) -> bool:
+        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
+        if snap.cast_session == CastSessionState.DISABLED:
+            return snap.fishing_state == FishingState.FISHING
+        return snap.cast_session == CastSessionState.FISHING
 
     def _system_owns(self) -> bool:
         """系统按下且不是本程序按的 → 系统占用。"""
@@ -88,7 +93,7 @@ class ActWorker:
     def _apply(
         self,
         holding: bool | None,
-        state: FishingState,
+        snap,
     ) -> None:
         if self._system_owns():
             self._yield_to_system = True
@@ -97,7 +102,7 @@ class ActWorker:
         was_yielding = self._yield_to_system
         self._yield_to_system = False
 
-        if not self._in_fishing(state):
+        if not self._may_control(snap):
             if self._mouse.pressed:
                 self._mouse.set_holding(False)
             return
@@ -120,7 +125,7 @@ class ActWorker:
 
     def _on_intent(self, event: ActionIntentEvent) -> None:
         snap = self.bus.snapshot()
-        self._apply(event.holding, snap.fishing_state)
+        self._apply(event.holding, snap)
 
     def _on_press_interval(self, event: PressIntervalEvent) -> None:
         self._press_interval = max(
