@@ -13,7 +13,13 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
 from autofish.detect.bobber import BobberHit, pixel_to_pos
-from autofish.detect.find_bobber import BODY_Y0, BODY_Y1, FindBobber
+from autofish.detect.find_bobber import (
+    BODY_Y0,
+    BODY_Y1,
+    FindBobber,
+    fit_detect_frame,
+    scale_box,
+)
 from common.paths import assets_dir
 
 _ASSET_DIR = assets_dir() / "bobber_anchor"
@@ -157,6 +163,7 @@ class BobberAnchorDetector:
         self._follow_scale = None
         self._follow_xy = None
         self._recover_tick = 0
+        self._finder.clear_locked_scale()
 
     def set_manual_bar(
         self, box: tuple[float, float, float, float] | None
@@ -167,6 +174,7 @@ class BobberAnchorDetector:
             self._follow_scale = None
             self._follow_xy = None
             self._recover_tick = 0
+            self._finder.clear_locked_scale()
 
     @property
     def bar_locked(self) -> bool:
@@ -184,6 +192,7 @@ class BobberAnchorDetector:
         tw = float(self._finder._rgb.shape[1])
         if tw > 0 and loc.width > 0:
             self._follow_scale = float(loc.width) / tw
+            self._finder.lock_scale(self._follow_scale)
         self._follow_xy = (float(loc.x), float(loc.y))
         self._recover_tick = 0
 
@@ -194,46 +203,97 @@ class BobberAnchorDetector:
         body_frac = max(0.35, BODY_Y1 - BODY_Y0)
         tpl_h = float(self._finder._rgb.shape[0])
         raw = (float(bar[3]) / body_frac) / max(1.0, tpl_h)
-        return float(np.clip(raw, 0.12, 0.64))
+        return float(np.clip(raw, 0.12, 1.0))
 
     def _bar_neighborhood(
         self, bar: tuple[float, float, float, float]
     ) -> tuple[float, float, float, float]:
+        """整条邻域：左右略扩；底贴条底，仅向上留羽冠容差。"""
         left, top, bw, bh = bar
         y_pad = max(20.0, bh * 1.0)
-        return (left - 4.0, top - y_pad, bw + 8.0, bh + 2.0 * y_pad)
+        return (left - 4.0, top - y_pad, bw + 8.0, bh + y_pad)
 
-    def _follow_search_box(
+    def _follow_y_span(
+        self,
+        bar: tuple[float, float, float, float],
+        *,
+        up: float,
+    ) -> tuple[float, float]:
+        """跟漂竖直范围：底=条底，顶不超过漂心−up，且至少高出条顶一截。"""
+        _left, top, _bw, bh = bar
+        bar_bottom = top + bh
+        assert self._follow_xy is not None
+        _cx, cy = self._follow_xy
+        y0 = min(cy - up, top - max(16.0, bh * 0.4))
+        min_h = max(20.0, bh + max(20.0, bh * 0.5))
+        if bar_bottom - y0 < min_h:
+            y0 = bar_bottom - min_h
+        return y0, bar_bottom
+
+    def _intersect_box(
+        self,
+        box: tuple[float, float, float, float],
+        limit: tuple[float, float, float, float],
+    ) -> tuple[float, float, float, float] | None:
+        """box 与 limit 求交；过小则 None。保证 mid 不超出 full-nbr。"""
+        ax, ay, aw, ah = box
+        bx, by, bw, bh = limit
+        x0 = max(ax, bx)
+        y0 = max(ay, by)
+        x1 = min(ax + aw, bx + bw)
+        y1 = min(ay + ah, by + bh)
+        if x1 - x0 < 28 or y1 - y0 < 20:
+            return None
+        return (x0, y0, x1 - x0, y1 - y0)
+
+    def _follow_x_span(
+        self,
+        bar: tuple[float, float, float, float],
+        *,
+        target_w: float,
+        x_limit: tuple[float, float],
+    ) -> tuple[float, float] | None:
+        """水平跟窗：目标宽度；限制在 [x_lo,x_hi] 内，靠边向内平移保宽。"""
+        if self._follow_xy is None:
+            return None
+        cx, _cy = self._follow_xy
+        x_lo, x_hi = x_limit
+        span = max(28.0, x_hi - x_lo)
+        tw = float(np.clip(target_w, 28.0, span))
+        x0 = cx - tw * 0.5
+        x1 = cx + tw * 0.5
+        if x0 < x_lo:
+            x0 = x_lo
+            x1 = x_lo + tw
+        if x1 > x_hi:
+            x1 = x_hi
+            x0 = x1 - tw
+        x0 = max(x_lo, x0)
+        x1 = min(x_hi, x1)
+        if x1 - x0 < 28:
+            return None
+        return x0, x1
+
+    def _mid_follow_box(
         self, bar: tuple[float, float, float, float]
     ) -> tuple[float, float, float, float]:
-        """条内跟漂：有上一帧漂位则缩到局部窗，否则整条邻域。"""
-        left, top, bw, bh = bar
+        """中等跟窗：水平≈条长 1/2；底贴条底、只向上扩；长宽夹在 full-nbr 内。"""
+        full = self._bar_neighborhood(bar)
         if self._follow_xy is None:
-            return self._bar_neighborhood(bar)
-        cx, cy = self._follow_xy
-        half_w = max(40.0, (self._follow_scale or 0.32) * 119 * 1.6)
-        half_h = max(28.0, bh * 0.9)
-        x0 = max(left, cx - half_w)
-        x1 = min(left + bw, cx + half_w)
-        if x1 - x0 < 28:
-            return self._bar_neighborhood(bar)
-        return (x0, cy - half_h, x1 - x0, 2.0 * half_h)
-
-    def _expanded_follow_box(
-        self, bar: tuple[float, float, float, float]
-    ) -> tuple[float, float, float, float]:
-        """局部丢漂后的中等窗：大于局部、小于整条，同帧只搜一次。"""
-        left, top, bw, bh = bar
-        if self._follow_xy is None:
-            return self._bar_neighborhood(bar)
-        cx, cy = self._follow_xy
-        half_w = max(72.0, (self._follow_scale or 0.32) * 119 * 2.8)
-        half_h = max(40.0, bh * 1.6)
-        x0 = max(left, cx - half_w)
-        x1 = min(left + bw, cx + half_w)
-        if x1 - x0 < 28:
-            return self._bar_neighborhood(bar)
-        return (x0, cy - half_h, x1 - x0, 2.0 * half_h)
+            return full
+        _left, _top, bw, bh = bar
+        fx, fy, fw, fh = full
+        xs = self._follow_x_span(
+            bar, target_w=bw / 2.0, x_limit=(fx, fx + fw)
+        )
+        if xs is None:
+            return full
+        x0, x1 = xs
+        up = max(48.0, bh * 1.8)
+        y0, y1 = self._follow_y_span(bar, up=up)
+        mid = (x0, y0, x1 - x0, y1 - y0)
+        clipped = self._intersect_box(mid, full)
+        return clipped if clipped is not None else full
 
     def _hit_from_bar(
         self,
@@ -386,7 +446,57 @@ class BobberAnchorDetector:
         t0 = time.perf_counter()
         if rgb.ndim != 3 or rgb.shape[2] != 3:
             return None
-        active = self._active_bar()
+        work, sf = fit_detect_frame(rgb)
+        inv = 1.0 / sf
+        active_o = self._active_bar()
+        active = scale_box(active_o, sf) if active_o is not None else None
+        follow_o = self._follow_xy
+        if follow_o is not None:
+            self._follow_xy = (follow_o[0] * sf, follow_o[1] * sf)
+        locked_before = self._locked_bar
+        try:
+            hit = self._detect_work(work, active, t0=t0)
+        finally:
+            if self._follow_xy is not None:
+                self._follow_xy = (
+                    self._follow_xy[0] * inv,
+                    self._follow_xy[1] * inv,
+                )
+        # 本帧新锁的条界在工作图坐标 → 映回原图存盘
+        if (
+            self._locked_bar is not None
+            and self._locked_bar is not locked_before
+            and abs(inv - 1.0) >= 1e-9
+        ):
+            self._locked_bar = scale_box(self._locked_bar, inv)
+            self._program_bar = (
+                scale_box(self._program_bar, inv)
+                if self._program_bar is not None
+                else None
+            )
+        if hit is None or abs(inv - 1.0) < 1e-9:
+            return hit
+        return BobberHit(
+            pos=hit.pos,
+            x=hit.x * inv,
+            y=hit.y * inv,
+            pixel_count=hit.pixel_count,
+            bar_left=hit.bar_left * inv,
+            bar_top=hit.bar_top * inv,
+            bar_width=hit.bar_width * inv,
+            bar_height=hit.bar_height * inv,
+            score=hit.score,
+            detect_ms=hit.detect_ms,
+        )
+
+    def _detect_work(
+        self,
+        rgb: np.ndarray,
+        active: tuple[float, float, float, float] | None,
+        *,
+        t0: float,
+    ) -> BobberHit | None:
+        """在已压入 1000×1000 的工作图上识别；条界/跟点均为工作图坐标。"""
         if active is not None:
             hint = self._follow_scale
             if hint is None:
@@ -402,16 +512,16 @@ class BobberAnchorDetector:
                     scale_hint=hint,
                 )
             else:
+                # mid → 同帧 full-nbr；禁止再走 local
                 loc = self._finder.find(
                     rgb,
-                    search_box=self._follow_search_box(active),
+                    search_box=self._mid_follow_box(active),
                     scale_hint=hint,
                 )
                 if loc is None:
-                    # 局部丢：同帧只放大一次中等窗，禁止再叠整条二次搜
                     loc = self._finder.find(
                         rgb,
-                        search_box=self._expanded_follow_box(active),
+                        search_box=self._bar_neighborhood(active),
                         scale_hint=hint,
                     )
                     if loc is None:
@@ -456,6 +566,8 @@ class BobberAnchorDetector:
         hh = float(max(left[2] + left[4], right[2] + right[4]) - yb)
         hit = self._hit_from_bar(loc, x0=x0, yb=yb, bar_w=bar_w, hh=hh, t0=t0)
         if hit is not None:
+            # 工作图条界 → 存原图坐标（detect 出口按 inv 映回 hit；锁存须原图）
+            # 此处仍在工作图；外层 detect 用 sf 映回前先写入工作坐标，再换算
             box = (x0, yb, bar_w, hh)
             self._locked_bar = box
             self._program_bar = box
