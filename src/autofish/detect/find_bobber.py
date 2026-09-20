@@ -63,7 +63,8 @@ BODY_Y1 = 0.98
 _BAR_Y_PAD_FRAC = 1.0
 _BAR_Y_PAD_MIN = 20
 _BAR_X_PAD = 4
-_BAR_SCALE_NEAR = 5  # 条内跟漂邻近尺度档
+_BAR_SCALE_NEAR = 5  # 条内未锁档时邻近尺度档
+_BAR_SCALE_LOCKED = 2  # 已锁档：少档 + 命中即停
 
 
 def fit_detect_frame(
@@ -580,11 +581,12 @@ class FindBobber:
                 plume=float(plume),
             )
 
-        # 有条邻域：按尺度提示 / 锁定档 / 条高估档，多档模板扫
+        # 有条邻域：按尺度提示 / 锁定档 / 条高估档；锁档则少档且命中即停
         if search_box is not None:
+            locked = self._locked_scale is not None
             if scale_hint is not None and scale_hint > 0:
                 s_est = float(scale_hint)
-            elif self._locked_scale is not None:
+            elif locked:
                 s_est = float(self._locked_scale)
             else:
                 body_frac = max(0.35, BODY_Y1 - BODY_Y0)
@@ -592,7 +594,8 @@ class FindBobber:
                 # 邻域高常含羽冠 pad，按搜区短边封顶，避免尺度虚高
                 s_cap = (min(img.shape[0], img.shape[1]) * 0.55) / tpl_h
                 s_est = min(s_est, s_cap)
-            scales = _neighbor_scales(s_est, n=_BAR_SCALE_NEAR)
+            n_near = _BAR_SCALE_LOCKED if locked else _BAR_SCALE_NEAR
+            scales = _neighbor_scales(s_est, n=n_near)
             for scale in scales:
                 tpl, mask = self._tpl(float(scale))
                 for sc, x, y, w, h in _match_peaks(
@@ -601,6 +604,12 @@ class FindBobber:
                     hit = _consider(sc, x + ox, y + oy, w, h)
                     if hit is not None:
                         raw.append(hit)
+                        if locked and hit.score >= self.accept_min_score:
+                            # 锁档命中即停：不再试其它档
+                            raw.sort(
+                                key=lambda c: (c.rank, c.score), reverse=True
+                            )
+                            return raw[:max_n]
             raw.sort(key=lambda c: (c.rank, c.score), reverse=True)
             kept: list[BobberLoc] = []
             for c in raw:

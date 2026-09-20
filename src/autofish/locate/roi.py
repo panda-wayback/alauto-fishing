@@ -10,6 +10,10 @@ from common.paths import data_root
 
 DEFAULT_ROI_PATH = data_root() / "roi.json"
 DEFAULT_BAR_REF_PATH = data_root() / "bar_ref.png"
+# 无存盘时：居中，宽高各为屏幕 1/4
+_DEFAULT_ROI_FRAC = 0.25
+ROI_SOURCE_DEFAULT = "default"
+ROI_SOURCE_MANUAL = "manual"
 
 
 @dataclass(frozen=True)
@@ -32,6 +36,30 @@ class Roi:
             "width": self.width,
             "height": self.height,
         }
+
+
+def default_center_roi(screen_w: int, screen_h: int) -> Roi:
+    """主屏居中默认手框：宽、高各为屏幕的 1/4。"""
+    if screen_w <= 0 or screen_h <= 0:
+        raise ValueError("screen size must be positive")
+    width = max(32, int(round(screen_w * _DEFAULT_ROI_FRAC)))
+    height = max(32, int(round(screen_h * _DEFAULT_ROI_FRAC)))
+    width = min(width, screen_w)
+    height = min(height, screen_h)
+    left = max(0, (screen_w - width) // 2)
+    top = max(0, (screen_h - height) // 2)
+    return Roi(left=left, top=top, width=width, height=height)
+
+
+def primary_screen_size() -> tuple[int, int]:
+    """主屏逻辑宽高（mss monitor[1]）。"""
+    try:
+        import mss
+    except ImportError as exc:  # pragma: no cover
+        raise ImportError("需要安装 mss") from exc
+    with mss.mss() as sct:
+        mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
+        return int(mon["width"]), int(mon["height"])
 
 
 @dataclass(frozen=True)
@@ -92,17 +120,41 @@ def load_bar_mark(path: Path | None = None) -> BarMark | None:
         return None
 
 
+def load_roi_source(path: Path | None = None) -> str:
+    """存盘来源：manual | default；缺省或未知当 manual（手调优先语义）。"""
+    p = path or DEFAULT_ROI_PATH
+    if not p.is_file():
+        return ROI_SOURCE_DEFAULT
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return ROI_SOURCE_MANUAL
+    src = str(data.get("source", ROI_SOURCE_MANUAL)).strip().lower()
+    if src == ROI_SOURCE_DEFAULT:
+        return ROI_SOURCE_DEFAULT
+    return ROI_SOURCE_MANUAL
+
+
 def save_roi(
     roi: Roi,
     path: Path | None = None,
     *,
     bar: BarMark | None = None,
     keep_bar: bool = False,
+    source: str | None = None,
 ) -> Path:
-    """写 ROI。keep_bar=True 时保留文件中已有手动条界；bar= 显式写入或清除。"""
+    """写 ROI。keep_bar=True 时保留文件中已有手动条界；bar= 显式写入或清除。
+    source= manual|default；None 则保留文件已有来源（无则 manual）。"""
     p = path or DEFAULT_ROI_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     data = asdict(roi)
+    if source is None:
+        src = load_roi_source(p) if p.is_file() else ROI_SOURCE_MANUAL
+    elif source == ROI_SOURCE_DEFAULT:
+        src = ROI_SOURCE_DEFAULT
+    else:
+        src = ROI_SOURCE_MANUAL
+    data["source"] = src
     existing_bar: BarMark | None = None
     if p.is_file() and (keep_bar or bar is not None):
         try:

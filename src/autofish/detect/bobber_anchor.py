@@ -512,21 +512,16 @@ class BobberAnchorDetector:
                     scale_hint=hint,
                 )
             else:
-                # mid → 同帧 full-nbr；禁止再走 local
+                # 只扫 mid；禁止同帧再扫 full-nbr（重钓尖峰）
                 loc = self._finder.find(
                     rgb,
                     search_box=self._mid_follow_box(active),
                     scale_hint=hint,
                 )
                 if loc is None:
-                    loc = self._finder.find(
-                        rgb,
-                        search_box=self._bar_neighborhood(active),
-                        scale_hint=hint,
-                    )
-                    if loc is None:
-                        self._follow_xy = None
-                        self._recover_tick = 0
+                    self._follow_xy = None
+                    self._recover_tick = 0
+                    return None
             if loc is None:
                 return None
             hit = self._hit_from_bar(

@@ -46,13 +46,18 @@ from autofish.capture.screen import (
 )
 from autofish.locate.roi import (
     DEFAULT_ROI_PATH,
+    ROI_SOURCE_DEFAULT,
+    ROI_SOURCE_MANUAL,
     BarMark,
     Roi,
     bar_ref_path,
     clear_bar_mark,
     clear_bar_ref,
+    default_center_roi,
     load_bar_mark,
     load_roi,
+    load_roi_source,
+    primary_screen_size,
     save_roi,
 )
 from autofish.pipeline import AutofishPipeline
@@ -347,13 +352,13 @@ class PreviewApp(QMainWindow):
         self._build_ui()
         self._reload_roi()
         self._sync_buttons()
-        # 策略 / 操作默认开启；有存盘手框则自动开监控
+        # 策略 / 操作默认开启；有 ROI（存盘或默认居中框）则自动开监控
         self.chk_decide.setChecked(True)
         self.chk_act.setChecked(True)
         if self.roi is not None:
             self._ensure_monitor_on()
-            self.lbl_hint.setText("已载入上次框选 · 监控中")
-            self._log("启动自动开监控（沿用存盘 ROI）")
+            self.lbl_hint.setText("ROI 就绪 · 监控中")
+            self._log("启动自动开监控")
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._refresh_mouse)
@@ -448,11 +453,19 @@ class PreviewApp(QMainWindow):
         self.btn_rebox = QPushButton("重框")
         self.btn_confirm = QPushButton("确认框选")
         self.btn_cancel = QPushButton("取消框选")
+        self.btn_roi_default = QPushButton("恢复默认框")
         self.btn_capture.clicked.connect(self._capture_fullscreen)
         self.btn_rebox.clicked.connect(self._load_screen_for_select)
         self.btn_confirm.clicked.connect(self._confirm_selection)
         self.btn_cancel.clicked.connect(self._cancel_selection)
-        for b in (self.btn_capture, self.btn_rebox, self.btn_confirm, self.btn_cancel):
+        self.btn_roi_default.clicked.connect(self._restore_default_roi)
+        for b in (
+            self.btn_capture,
+            self.btn_rebox,
+            self.btn_confirm,
+            self.btn_cancel,
+            self.btn_roi_default,
+        ):
             row_mon.addWidget(b)
         row_mon.addStretch(1)
         vis.addLayout(row_mon)
@@ -702,18 +715,59 @@ class PreviewApp(QMainWindow):
 
     def _reload_roi(self) -> None:
         try:
-            self.roi = load_roi(self.roi_path) if self.roi_path.exists() else None
-            if self.roi is not None:
+            if self.roi_path.exists():
+                self.roi = load_roi(self.roi_path)
+                src = load_roi_source(self.roi_path)
                 self.phase = READY
-                self.lbl_hint.setText("ROI 已载入")
-                self._log(f"载入 ROI {self.roi.width}x{self.roi.height}")
+                tag = "手动" if src == ROI_SOURCE_MANUAL else "默认"
+                self.lbl_hint.setText(f"ROI 已载入（{tag}）")
+                self._log(
+                    f"载入 ROI {self.roi.width}x{self.roi.height} · {tag}"
+                )
                 self._apply_saved_bar_mark()
                 self._load_bar_ref_image()
                 if load_bar_mark(self.roi_path) is not None:
                     self._log("已载入上次条界标记")
+                return
+            # 无存盘：主屏居中 1/4×1/4 默认框
+            self._apply_default_roi(persist=True, reason="启动无存盘")
         except Exception as exc:  # noqa: BLE001
             self.roi = None
             self.lbl_hint.setText(f"ROI 失败：{exc}")
+
+    def _apply_default_roi(self, *, persist: bool, reason: str) -> None:
+        """写入/应用居中默认框。persist 时存盘 source=default。"""
+        sw, sh = primary_screen_size()
+        self.roi = default_center_roi(sw, sh)
+        if persist:
+            save_roi(self.roi, self.roi_path, source=ROI_SOURCE_DEFAULT)
+        self.phase = READY
+        self.lbl_hint.setText("默认居中框")
+        self._log(
+            f"{reason} · 默认 ROI {self.roi.width}x{self.roi.height} "
+            f"@({self.roi.left},{self.roi.top}) · 屏 {sw}x{sh}"
+        )
+
+    def _restore_default_roi(self) -> None:
+        """恢复默认框（覆盖手动存盘）；清空条界与参考图。"""
+        if self.phase == SELECT:
+            self.monitor.set_selecting(False)
+        if self._pipe and self._pipe.monitor_on:
+            self._block_checks(True)
+            self.chk_monitor.setChecked(False)
+            self._block_checks(False)
+            self._pipe.stop_monitor()
+            self.frame = None
+            self.hit = None
+        self._clear_bar_on_rebox()
+        self._apply_default_roi(persist=True, reason="恢复默认框")
+        pipe = self._ensure_pipe()
+        pipe.set_roi_manual(self.roi)
+        self._sync_buttons()
+        self._refresh_monitor()
+        self._ensure_monitor_on()
+        self.lbl_hint.setText("已恢复默认框 · 监控中")
+        self._log("已恢复默认居中框并开监控")
 
     def _apply_saved_bar_mark(self) -> None:
         mark = load_bar_mark(self.roi_path)
@@ -991,6 +1045,7 @@ class PreviewApp(QMainWindow):
         self.btn_cancel.setEnabled(selecting)
         self.btn_capture.setEnabled(not selecting)
         self.btn_rebox.setEnabled(not selecting and DEFAULT_SCREEN_PATH.exists())
+        self.btn_roi_default.setEnabled(not selecting)
 
     def _block_checks(self, block: bool) -> None:
         for chk in (self.chk_monitor, self.chk_decide, self.chk_act):
@@ -1237,14 +1292,14 @@ class PreviewApp(QMainWindow):
             width=w,
             height=h,
         )
-        save_roi(roi, self.roi_path)
+        save_roi(roi, self.roi_path, source=ROI_SOURCE_MANUAL)
         self._clear_bar_on_rebox()
         self.roi = roi
         self.phase = READY
         self.monitor.set_selecting(False)
         pipe = self._ensure_pipe()
         pipe.set_roi_manual(roi)
-        self._log(f"手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
+        self._log(f"手动手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
         self._sync_buttons()
         self._refresh_monitor()
         self._ensure_monitor_on()

@@ -8,7 +8,7 @@
 
 ## 目录清单
 
-- `locate/` — 段1 手框 ROI（存盘 + 可选手动条界 bar_* + 同步 mss）
+- `locate/` — 段1 手框 ROI（存盘 `source=manual|default`；手动优先；无存盘/恢复默认→主屏居中 1/4×1/4；可选手动条界 bar_* + 同步 mss）
 - `capture/` — 段2 按手框 ROI mss 截帧
 - `detect/` — 段3 可替换识别器（默认 bobber_anchor）→ Pos（**不改 mss**）
 - `decide/` — 段4 策略
@@ -32,8 +32,8 @@
 - Detect 计时：`PosEvent.detect_ms` = 单帧识别耗时；壳显示 + 每 2s 日志（仅近 2s、标条内/全图）
 - template 识别器：模板构造时加载一次并缓存多尺度；压缩灰度匹配 + 上一位置跟踪；模板须与实机同比例
 - color_blocks 识别器（可选）：入图过宽先等比压缩定条、坐标映回；漂在原图像素条框附近找；每帧 HSV/RGB 通道只算一次给四掩膜共用；`use_color_blocks()` 切换
-- bobber_anchor 识别器（默认）：先准确定漂 → 手动/自动锁条 → 有条后只在条内跟漂；入图**等比压入 800×800** 再识、坐标映回；模板档约 0.14～1.0、多试邻近档、**命中锁档**；**无 local**；跟漂 mid≈条长½（夹在 full-nbr 内）→ 同帧 full-nbr；隔帧恢复；邻域**底贴条底、只向上扩**；**监控开关保留程序锁**（ROI 未变）；**有漂无条仍回报漂位**（pos 空）；整段 ≥20fps；`use_bobber_anchor()` / `apply_manual_bar`
-- find_bobber（独立）：入图同压 800×800；颜色结构 + 小 ROI 彩色复核；多档邻近/失败扩档；命中锁定尺度；宁可 miss 不可错
+- bobber_anchor 识别器（默认）：先准确定漂 → 手动/自动锁条 → 有条后只在条内跟漂；入图**等比压入 800×800** 再识、坐标映回；模板档约 0.14～1.0、多试邻近档、**命中锁档**；**无 local**；跟漂 mid≈条长½（夹在 full-nbr 内）；**禁止同帧 mid+full**；mid 丢→隔帧 full-nbr 恢复；邻域**底贴条底、只向上扩**；锁档条内**命中即停**；**监控开关保留程序锁**（ROI 未变）；**有漂无条仍回报漂位**（pos 空）；整段 ≥20fps；`use_bobber_anchor()` / `apply_manual_bar`
+- find_bobber（独立）：入图同压 800×800；颜色结构 + 小 ROI 彩色复核；多档邻近/失败扩档；命中锁定尺度；条邻域锁档少档且命中即停；宁可 miss 不可错
 - 壳订 Frame（画面）+ Pos（读数）。
 - Decide 不点鼠标；Act 不决策。
 - 禁止依赖 `sim` / `ui` / `algo`。
