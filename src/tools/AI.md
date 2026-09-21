@@ -1,38 +1,32 @@
 # src/tools/ 功能说明
 
-更新时间：2026-09-20
+更新时间：2026-09-22
 
 ## 本文件夹职责
 
-调试壳（**PySide6**）：按操作对象竖列；画面工作台（MONITOR+BAR）→ 读数 → 设置 → 底栏日志。无快捷键。
+调试壳（**PySide6**）：主控干净（A/B 勾选）+ 分页面；同一窗可切**紧凑态**看运行阶段。视觉：柔暗仪表（见 `docs/autofish/shell/`）。
 
 ## 目录清单
 
-- `preview_app.py` — 调试壳 UI
-- `bar_mark_canvas.py` — 条界参考图 + 程序/手动竖线（手动可拖）
-- `dual_range_axis.py` — 策略双区间数轴（拖动；不重叠；间隔≥1；精度 0.1）
+- `preview_app.py` — 调试壳主窗（完整态 ↔ 紧凑态；`mode_stack`）
+- `status_hud.py` — `StatusHudPanel`（紧凑态内容：阶段灯 + 主界面）
+- `macos_overlay.py` — macOS 抬窗层级 / 加入全屏 Space（紧凑态叠游戏）
+- `shell_theme.py` — 柔暗色板 + `global_qss()` / `preview_canvas_qss()`
+- `shell_config.py` — 用户 `data/shell_settings.json` + 打包默认 `assets/shell_settings.json`；「写入打包默认」
+- `bar_mark_canvas.py` — 条界参考图 + 程序/手动竖线
+- `dual_range_axis.py` — 策略双区间数轴；`SingleRangeBar` 单段可拖（开钓等待/长按）
+- `first_click_trigger_window.py` — 开钓配置 + 回测面板
+- `waveform_select.py` — 回测波形长条
 
 ## 对外契约
 
-- `PreviewApp`（QMainWindow）
-- 布局：上区可滚竖列；**权限（最上可收起）** → **画面工作台**（MONITOR + 内嵌读数 + BAR）→ **设置**（策略/操作）；**日志钉底自滚**
-- **权限**：可收起，**默认展开**；置顶 + 屏幕/控鼠授权；不进设置
-- **画面工作台**：MONITOR 工具行 + 画布；其下精简读数两行（`POS: 读数 · 范围` / `意图 · 程序 · 系统`）；BAR（刷新/清除 + 标界）；框选/标界/读数不得进设置
-- **设置**：可收起，**默认展开**；仅策略 / 操作
-- 默认窗约 440×780
-- 策略：启用默认开 + 数轴 U(70.6～74.4)/U(76.6～79.2)
-- 操作：启用默认开；按下间隔 0～0.3s（默认 **0**）；`FISHING` 才控鼠
-- 配色：默认浅色（白底）
-- 确认框选 → 存盘 `source=manual` + 自动开监控；重框清空手动条界与参考图
-- **恢复默认框**：主屏居中宽高各 1/4，覆盖存盘 `source=default`，清空条界/参考图并开监控
-- 有存盘 ROI 时启动载入并自动开监控（手动优先于默认）；**无存盘**则写入默认框后开监控
-- ROI 存盘字段 `source`：`manual` | `default`；改条界不改来源
-- 监控叠层：有漂画漂（有漂无条亦画），有条画框；UI ≤15fps
-- BAR：有漂即出参考图；「刷新参考图」等待下次鱼漂命中再更新；蓝=程序、黄=手动；`bar_*` + `bar_ref.png`
-- POS：无漂 / 有漂·无条 / 数值
-- 识别耗时：读数条当前帧 ms；每 2s 日志（近 2s，`[条内]`/`[全图]`）
+- `PreviewApp`：一窗两态；主控「浮窗」→ 紧凑；紧凑「主界面」→ 完整
+- 紧凑态：阶段灯（听声/触发/开局/拉松漂/结束）；不另开独立 Tool 窗
+- 持久化：用户 `data/shell_settings.json`；打包默认 `assets/shell_settings.json`（更多页可写入）；A/B、设备名、开钓等待/长按、完整窗几何、阈值/策略/间隔/置顶、`compact_mode`；模板→`active.json`；ROI→既有存盘
+- 浮窗：就地缩小/放大（不跨屏瞬移）；启动已是紧凑时才用上次拖动落点
+- 有 ROI：Capture/Detect 常开；B=Decide+Act；A=会话机
 
 ## 约束
 
-- 允许依赖 `autofish` / PySide6；壳内**不再嵌模拟器**。
+- 允许依赖 `autofish` / PySide6；壳内不再嵌模拟器。
 - 禁止实现五段业务。

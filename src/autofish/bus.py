@@ -14,6 +14,8 @@ from autofish.detect.bobber import BobberHit
 from autofish.locate.roi import Roi
 from autofish.topics import (
     ActionIntentEvent,
+    CastSessionEvent,
+    CastSessionState,
     FishingState,
     FishingStateEvent,
     FrameEvent,
@@ -39,6 +41,9 @@ class AutofishSnapshot:
     fishing_state: FishingState = FishingState.IDLE
     fishing_detail: str = ""
     state_ts: float = 0.0
+    cast_session: CastSessionState = CastSessionState.DISABLED
+    cast_detail: str = ""
+    cast_ts: float = 0.0
     holding: bool | None = None
     intent_reason: str = ""
     intent_ts: float = 0.0
@@ -123,6 +128,18 @@ class AutofishBus:
             self._snap.fishing_detail = event.detail
             self._snap.state_ts = event.ts
         self._events.publish(Topic.FISHING_STATE, event)
+
+    def publish_cast_session(self, event: CastSessionEvent) -> None:
+        with self._lock:
+            if (
+                event.state == self._snap.cast_session
+                and event.detail == self._snap.cast_detail
+            ):
+                return
+            self._snap.cast_session = event.state
+            self._snap.cast_detail = event.detail
+            self._snap.cast_ts = event.ts
+        self._events.publish(Topic.CAST_SESSION, event)
 
     def publish_action_intent(self, event: ActionIntentEvent) -> None:
         with self._lock:

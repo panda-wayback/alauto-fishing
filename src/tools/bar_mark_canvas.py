@@ -7,6 +7,8 @@ from PySide6.QtCore import QPoint, QRect, Qt, Signal
 from PySide6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QLabel, QSizePolicy
 
+from tools.shell_theme import preview_canvas_qss
+
 _MIN_BAR_W = 40.0
 _HIT_PX = 10
 
@@ -27,9 +29,7 @@ class BarMarkCanvas(QLabel):
         super().__init__(parent)
         self.setMinimumSize(320, 200)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet(
-            "background:#f5f5f7; color:#3c3c43; border:1px solid #d2d2d7;"
-        )
+        self.setStyleSheet(preview_canvas_qss())
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMouseTracking(True)
         self._rgb: np.ndarray | None = None

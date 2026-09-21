@@ -16,6 +16,7 @@ class Topic(str, Enum):
     FRAME = "frame"
     POS = "pos"
     FISHING_STATE = "fishing_state"
+    CAST_SESSION = "cast_session"
     ACTION_INTENT = "action_intent"
     PRESS_INTERVAL = "press_interval"
 
@@ -24,6 +25,16 @@ class FishingState(str, Enum):
     IDLE = "idle"
     FISHING = "fishing"
     LOST = "lost"
+
+
+class CastSessionState(str, Enum):
+    """开钓会话态（A）；DISABLED = A 关。"""
+
+    DISABLED = "disabled"
+    WAIT = "wait"
+    FIRST_CLICK = "first_click"
+    WAIT_BOBBER = "wait_bobber"
+    FISHING = "fishing"
 
 
 @dataclass(frozen=True)
@@ -61,6 +72,13 @@ class PosEvent:
 @dataclass(frozen=True)
 class FishingStateEvent:
     state: FishingState
+    ts: float
+    detail: str = ""
+
+
+@dataclass(frozen=True)
+class CastSessionEvent:
+    state: CastSessionState
     ts: float
     detail: str = ""
 

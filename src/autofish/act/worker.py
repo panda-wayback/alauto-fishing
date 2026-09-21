@@ -8,6 +8,8 @@ from autofish.act.mouse import MouseActuator, os_left_down
 from autofish.bus import AutofishBus
 from autofish.topics import (
     ActionIntentEvent,
+    CastSessionEvent,
+    CastSessionState,
     FishingState,
     PressIntervalEvent,
     Topic,
@@ -23,7 +25,8 @@ class ActWorker:
     按下受 press_interval 门控；松开立刻。
     优先级：系统左键 > 程序。系统按下且非本程序按下 → 让位，
     直到系统松开后才按快照意图接管。
-    FISHING 才控鼠；单帧无 Pos 不松手；非钓鱼态 = 自由态。
+    A 关：鱼漂 FISHING 才控鼠；A 开：仅会话 FISHING（第一下/等漂不抢键）。
+    单帧无 Pos 不松手；非可控鼠 = 自由态（松手）。
     """
 
     def __init__(self, bus: AutofishBus) -> None:
@@ -54,6 +57,7 @@ class ActWorker:
             return
         self._press_interval = self.bus.snapshot().press_interval_s
         self.bus.subscribe(Topic.ACTION_INTENT, self._on_intent)
+        self.bus.subscribe(Topic.CAST_SESSION, self._on_cast)
         self._active = True
         self.poll()
 
@@ -61,6 +65,7 @@ class ActWorker:
         if not self._active:
             return
         self.bus.unsubscribe(Topic.ACTION_INTENT, self._on_intent)
+        self.bus.unsubscribe(Topic.CAST_SESSION, self._on_cast)
         self._active = False
         self._yield_to_system = False
         self._mouse.force_release()
@@ -72,11 +77,14 @@ class ActWorker:
 
     def _apply_snapshot(self) -> None:
         snap = self.bus.snapshot()
-        self._apply(snap.holding, snap.fishing_state)
+        self._apply(snap.holding, snap)
 
     @staticmethod
-    def _in_fishing(state: FishingState) -> bool:
-        return state == FishingState.FISHING
+    def _may_control(snap) -> bool:
+        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
+        if snap.cast_session == CastSessionState.DISABLED:
+            return snap.fishing_state == FishingState.FISHING
+        return snap.cast_session == CastSessionState.FISHING
 
     def _system_owns(self) -> bool:
         """系统按下且不是本程序按的 → 系统占用。"""
@@ -85,22 +93,40 @@ class ActWorker:
             return False
         return bool(os_down) and not self._mouse.pressed
 
+    def _release_program(self) -> None:
+        self._yield_to_system = False
+        if self._mouse.pressed:
+            self._mouse.set_holding(False)
+
+    def _on_cast(self, event: CastSessionEvent) -> None:
+        """会话离开 FISHING（含进入 FIRST_CLICK）→ 立刻松本段落键，让出第一下。"""
+        if not self._active:
+            return
+        snap = self.bus.snapshot()
+        # 快照可能已更新；以事件态为准判断是否仍可拉
+        if event.state == CastSessionState.DISABLED:
+            if snap.fishing_state != FishingState.FISHING:
+                self._release_program()
+            return
+        if event.state != CastSessionState.FISHING:
+            self._release_program()
+
     def _apply(
         self,
         holding: bool | None,
-        state: FishingState,
+        snap,
     ) -> None:
+        # 无权控鼠时优先松手（即使开钓第一下正按着系统键，也只清本段键态）
+        if not self._may_control(snap):
+            self._release_program()
+            return
+
         if self._system_owns():
             self._yield_to_system = True
             return
 
         was_yielding = self._yield_to_system
         self._yield_to_system = False
-
-        if not self._in_fishing(state):
-            if self._mouse.pressed:
-                self._mouse.set_holding(False)
-            return
 
         if holding is True:
             self._try_press()
@@ -120,7 +146,7 @@ class ActWorker:
 
     def _on_intent(self, event: ActionIntentEvent) -> None:
         snap = self.bus.snapshot()
-        self._apply(event.holding, snap.fishing_state)
+        self._apply(event.holding, snap)
 
     def _on_press_interval(self, event: PressIntervalEvent) -> None:
         self._press_interval = max(

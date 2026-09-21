@@ -1,6 +1,6 @@
 # src/autofish/decide/ 功能说明
 
-更新时间：2026-09-17
+更新时间：2026-09-22
 
 ## 本文件夹职责
 
@@ -13,7 +13,7 @@
 
 ## 对外契约
 
-- `DecideWorker.start/stop` — 订阅/退订；`FISHING` 下单帧无 Pos 保持意图；离开钓鱼态才松
+- `DecideWorker.start/stop` — 订阅/退订；A 开时仅会话 `FISHING` 才发按住；离开可拉漂条件强制松开
 - `DecideWorker.set_ranges(press_lo, press_hi, release_lo, release_hi)`
 - `DecideWorker.current_thresholds` → `(low, high)`
 - `ThresholdPosPolicy.decide(pos, t) -> (holding, reason)`

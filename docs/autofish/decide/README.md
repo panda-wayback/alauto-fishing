@@ -16,9 +16,10 @@
   - 松开阈值 high 从 **[release_lo, release_hi]** 均匀抽取（默认 76.6～79.2）
   - **每次意图切换成功**（按住↔松开）后立刻重抽下一组；`reset` / 策略启动时也先抽一组
 - **不做按下间隔**：意图切换立刻发出；点击间隔只由 Act 段经总线控制。
-- **有效 Pos**：在 `FISHING` 下按当前 low/high 出意图。
-- **单帧无 Pos**：仍在 `FISHING` 时**保持上一意图**（不因闪断立刻松开）。
-- **离开钓鱼态**（`LOST` / `IDLE` 等）→ 意图为松开并重置策略；连续丢漂由状态机判定后再离开 `FISHING`。
+- **有效 Pos**：在鱼漂 `FISHING` 下按当前 low/high 出意图。  
+- **开钓会话（A 开）**：仅会话态 `FISHING` 才允许发**按住**意图；`WAIT` / `FIRST_CLICK` / `WAIT_BOBBER` 须发松开（或保持松开），把鼠标留给开钓第一下。A 关（会话 `DISABLED`）时仍只跟鱼漂 FSM。  
+- **单帧无 Pos**：仍在可拉漂条件（上两条）时**保持上一意图**（不因闪断立刻松开）。  
+- **离开可拉漂条件**（鱼漂离开 `FISHING`，或 A 开且会话离开 `FISHING`）→ 意图为松开并重置策略。
 - **范围**由调试壳/配置注入；Decide 只在范围内抽样，不越界改范围。
 - 调试壳：**策略默认开启**；界面可改四端点并显示当前抽到的 low/high。
 - 不做：mss、CV、键鼠落点。
@@ -26,5 +27,5 @@
 ## 解决步骤
 
 1. 约定主题名 `ActionIntent`（载荷：要按住 / 要松开 + 时间戳 + 可选原因）。
-2. DecideWorker 订 `Pos`（+ `FishingState`）→ 范围抽样阈值策略 → 发 `ActionIntent`。
+2. DecideWorker 订 `Pos`（+ `FishingState` + `CAST_SESSION`）→ 范围抽样阈值策略 → 发 `ActionIntent`；A 开时非会话 `FISHING` 强制松开。
 3. 与模拟器侧阈值策略同型；真机 Pos 直接当绿区 0～100 使用。

@@ -8,6 +8,8 @@ from autofish.bus import AutofishBus
 from autofish.decide.policy import ThresholdPosPolicy
 from autofish.topics import (
     ActionIntentEvent,
+    CastSessionEvent,
+    CastSessionState,
     FishingState,
     FishingStateEvent,
     PosEvent,
@@ -36,6 +38,7 @@ class DecideWorker:
         )
         self._t0 = time.perf_counter()
         self._state = FishingState.IDLE
+        self._cast = CastSessionState.DISABLED
         self._last_holding: bool | None = None
         self._active = False
 
@@ -60,6 +63,7 @@ class DecideWorker:
         self._last_holding = None
         self.bus.subscribe(Topic.POS, self._on_pos)
         self.bus.subscribe(Topic.FISHING_STATE, self._on_state)
+        self.bus.subscribe(Topic.CAST_SESSION, self._on_cast)
         self._active = True
         self._sync_from_snapshot()
 
@@ -68,32 +72,50 @@ class DecideWorker:
             return
         self.bus.unsubscribe(Topic.POS, self._on_pos)
         self.bus.unsubscribe(Topic.FISHING_STATE, self._on_state)
+        self.bus.unsubscribe(Topic.CAST_SESSION, self._on_cast)
         self._active = False
         self._emit(False, "decide_stop", None)
 
     def _now(self) -> float:
         return time.perf_counter() - self._t0
 
+    def _may_pull(self) -> bool:
+        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
+        if self._cast == CastSessionState.DISABLED:
+            return self._state == FishingState.FISHING
+        return self._cast == CastSessionState.FISHING
+
     def _sync_from_snapshot(self) -> None:
         snap = self.bus.snapshot()
         self._state = snap.fishing_state
+        self._cast = snap.cast_session
         self._apply_pos(snap.pos)
 
     def _on_state(self, event: FishingStateEvent) -> None:
         self._state = event.state
-        if event.state != FishingState.FISHING:
+        if not self._may_pull():
             self._policy.reset()
             self._emit(False, f"state_{event.state.value}", None)
+            return
+        self._apply_pos(self.bus.snapshot().pos)
+
+    def _on_cast(self, event: CastSessionEvent) -> None:
+        self._cast = event.state
+        if not self._may_pull():
+            self._policy.reset()
+            self._emit(False, f"cast_{event.state.value}", None)
+            return
+        self._apply_pos(self.bus.snapshot().pos)
 
     def _on_pos(self, event: PosEvent) -> None:
         self._apply_pos(event.pos)
 
     def _apply_pos(self, pos: float | None) -> None:
-        if self._state != FishingState.FISHING:
-            self._emit(False, "no_pos", pos)
+        if not self._may_pull():
+            self._emit(False, "not_pulling", pos)
             return
         if pos is None:
-            # 单帧无漂：保持上一意图，等状态机离开 FISHING 再松
+            # 单帧无漂：保持上一意图，等离开可拉漂条件再松
             return
         holding, reason = self._policy.decide(pos, self._now())
         self._emit(holding, reason, pos)

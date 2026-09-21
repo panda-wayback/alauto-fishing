@@ -31,14 +31,15 @@
 
 ### 钓鱼状态
 
-- `IDLE` / `FISHING` / `LOST`；供算法与执行做安全判断。
+- 五段侧：`IDLE` / `FISHING` / `LOST`；供算法与执行做安全判断（能力块 **B**）。
+- 声音开钓侧：另有开钓会话态（`WAIT` / `FIRST_CLICK` / `WAIT_BOBBER` / `FISHING`）；仅等待态听声。见 [`docs/autofish/first_click_trigger/`](../first_click_trigger/)。
 
 ### 约束
 
 - 禁止跨段直调业务逻辑。
 - 允许：Locate 用主屏一帧；共用 `Roi`。
 - 推送 + 快照均可；高频 Frame latest-wins。
-- **调试壳（PySide6）**：订 Frame + Pos；**权限（顶栏可收起）** → 画面工作台（MONITOR + 内嵌读数 + BAR）→ 可收起设置（仅策略/操作）→ 底栏独立日志；ROI 手框同步 mss；条界手动优先；三独立勾选；策略与操作默认开；无快捷键。
+- **调试壳**：主控两勾选（自动拉漂 B / 声音开钓 A）+ 精简状态 + 日志；有 ROI 则 Capture/Detect 常开；标定/声音/更多分页面。见 [`docs/autofish/shell/`](../shell/)。
 
 ## 解决步骤
 
