@@ -734,26 +734,24 @@ class PreviewApp(QMainWindow):
         click_l.addWidget(self.bar_after)
         more_l.addWidget(click)
 
-        pack = QGroupBox("打包默认")
-        pack_l = QVBoxLayout(pack)
-        hint_pack = QLabel(
-            "把当前玩法配置写入 assets/shell_settings.json，提交后直接打包即可；"
-            "不含窗位置/设备名等本机项"
-        )
-        hint_pack.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-        hint_pack.setWordWrap(True)
-        pack_l.addWidget(hint_pack)
-        self.btn_save_bundled = QPushButton("写入打包默认")
-        self.btn_save_bundled.setObjectName("btnPrimary")
-        self.btn_save_bundled.setToolTip(
-            "仅源码运行可用；写入仓库 assets/shell_settings.json"
-        )
-        self.btn_save_bundled.clicked.connect(self._on_save_bundled_defaults)
-        if is_frozen_app():
-            self.btn_save_bundled.setEnabled(False)
-            self.btn_save_bundled.setToolTip("已打包应用无法改内置默认")
-        pack_l.addWidget(self.btn_save_bundled)
-        more_l.addWidget(pack)
+        if not is_frozen_app():
+            pack = QGroupBox("打包默认")
+            pack_l = QVBoxLayout(pack)
+            hint_pack = QLabel(
+                "把当前玩法配置写入 assets/shell_settings.json，提交后直接打包即可；"
+                "不含窗位置/设备名等本机项"
+            )
+            hint_pack.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+            hint_pack.setWordWrap(True)
+            pack_l.addWidget(hint_pack)
+            self.btn_save_bundled = QPushButton("写入打包默认")
+            self.btn_save_bundled.setObjectName("btnPrimary")
+            self.btn_save_bundled.setToolTip(
+                "仅源码运行可用；写入仓库 assets/shell_settings.json"
+            )
+            self.btn_save_bundled.clicked.connect(self._on_save_bundled_defaults)
+            pack_l.addWidget(self.btn_save_bundled)
+            more_l.addWidget(pack)
 
         more_l.addStretch(1)
         more_scroll.setWidget(more_inner)
