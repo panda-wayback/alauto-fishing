@@ -33,15 +33,31 @@ _WAIT_BOBBER_TIMEOUT_S = 3.0
 _LOST_BOBBER_END_S = 1.0
 _WAIT_LISTEN_COOLDOWN_S = 3.0
 _DEFAULT_THRESHOLD = 0.70
-_RING_SECONDS = 5.0
+_RING_SECONDS = 20.0
+_LIVE_WAVE_SECONDS = 20.0
 _MARK_SECONDS = 1.0
 _SILENT_DB = -55.0
+# 试听时峰值归一化目标（只影响播放，不改模板文件）
+_AUDITION_PEAK = 0.85
 
 
 def _db(rms: float) -> float:
     if rms <= 0:
         return -120.0
     return 20.0 * float(np.log10(max(rms, 1e-12)))
+
+
+def _audition_wave(wave: "npt.NDArray[np.float32]") -> "npt.NDArray[np.float32]":
+    """试听用：按峰值放大到可听响度，不改原模板。"""
+    mono = np.asarray(wave, dtype=np.float32)
+    if mono.ndim > 1:
+        mono = mono.mean(axis=1)
+    peak = float(np.max(np.abs(mono))) if mono.size else 0.0
+    if peak < 1e-8:
+        return mono
+    gain = _AUDITION_PEAK / peak
+    out = mono * gain
+    return np.clip(out, -1.0, 1.0).astype(np.float32)
 
 
 class FirstClickTrigger(WorkerBase):
@@ -97,12 +113,52 @@ class FirstClickTrigger(WorkerBase):
         self._session_range_start: float | None = None
         self._session_samples: int = 0
         self._session_started_at: float = 0.0
+        # 实时波形命中：墙钟时刻 + 分数（展示时映射到最近 20s）
+        self._live_hits: deque[dict[str, float]] = deque(maxlen=40)
+        self._was_listening = False
         if template_path is not None:
             self.load_template(template_path)
 
     @property
     def trigger_count(self) -> int:
         return self._trigger_count
+
+    @property
+    def samplerate(self) -> int:
+        return int(self._audio.samplerate)
+
+    def recent_monitor_wave(self, seconds: float = _LIVE_WAVE_SECONDS) -> np.ndarray:
+        """最近 N 秒单声道（供开钓页波形）。"""
+        n = int(max(0.5, float(seconds)) * self._audio.samplerate)
+        with self._lock:
+            return self._ring.last(n)
+
+    def live_hits_for_monitor(
+        self, seconds: float = _LIVE_WAVE_SECONDS
+    ) -> list[dict[str, float]]:
+        """把墙钟命中映射到「最近 N 秒波形」的相对秒。"""
+        now = time.time()
+        window = max(0.5, float(seconds))
+        t0 = now - window
+        tpl_s = float(getattr(self._matcher, "template_duration_s", 0.5) or 0.5)
+        out: list[dict[str, float]] = []
+        with self._lock:
+            hits = list(self._live_hits)
+        for h in hits:
+            end_wall = float(h["t_wall"])
+            if end_wall < t0:
+                continue
+            end_s = end_wall - t0
+            start_s = max(0.0, end_s - tpl_s)
+            out.append(
+                {
+                    "start_s": start_s,
+                    "end_s": min(window, end_s),
+                    "t_s": end_s,
+                    "score": float(h.get("score", 0.0)),
+                }
+            )
+        return out
 
     @property
     def last_trigger_at(self) -> float:
@@ -200,7 +256,7 @@ class FirstClickTrigger(WorkerBase):
         sd.stop()
         device = self._playback_device()
         sd.play(
-            wave,
+            _audition_wave(wave),
             samplerate=self._audio.samplerate,
             device=device,
             blocking=False,
@@ -560,8 +616,14 @@ class FirstClickTrigger(WorkerBase):
                         and self._session == CastSessionState.WAIT
                         and time.time() >= self._listen_after
                     )
+                    if can_listen and not self._was_listening:
+                        # 进入听声：基线归零，与回测独立匹配器一致
+                        self._matcher.reset_score_baseline()
+                    self._was_listening = can_listen
                     if can_listen and self._matcher.has_template:
-                        triggered, score = self._matcher.feed(mono)
+                        triggered, score = self._matcher.feed(
+                            mono, update_baseline=True
+                        )
                         self._last_score = score
                         if (
                             not triggered
@@ -579,8 +641,10 @@ class FirstClickTrigger(WorkerBase):
                         score = float(rms)
                         self._last_score = rms
                     elif self._matcher.has_template:
-                        # 非可听：仍喂缓冲，清连击，忽略命中
-                        _, score = self._matcher.feed(mono)
+                        # 非听声态：只填缓冲，不更新抬升基线（与回测独立匹配器一致）
+                        _, score = self._matcher.feed(
+                            mono, update_baseline=False
+                        )
                         self._matcher.clear_streak()
                         self._last_score = score
                         if (
@@ -636,6 +700,9 @@ class FirstClickTrigger(WorkerBase):
             hold_s = random.uniform(_MIN_HOLD_S, _MAX_HOLD_S)
             detail = (
                 f"splash|{float(score):.2f}|{delay_s:.2f}|{hold_s:.2f}|{thr:.2f}"
+            )
+            self._live_hits.append(
+                {"t_wall": time.time(), "score": float(score)}
             )
             self._set_session(CastSessionState.FIRST_CLICK, detail)
             self._emit_log(

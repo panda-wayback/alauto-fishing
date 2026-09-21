@@ -14,7 +14,8 @@ if TYPE_CHECKING:
 
 DEFAULT_SAMPLERATE = 48000
 TEMPLATE_DURATION_S = 2.0
-MIN_ENERGY_DB = -65.0
+# 游戏环回常见峰值短时 RMS 约 -45dB；门限留足余量，过严会整段「太静」跳过匹配
+MIN_ENERGY_DB = -80.0
 SEARCH_PAD_S = 0.80
 N_MELS = 64
 FMIN_HZ = 80.0
@@ -113,6 +114,12 @@ class TemplateMatcher:
         self.last_prominence = 0.0
         self.last_rise = 0.0
 
+    def reset_score_baseline(self) -> None:
+        """入听声态时清抬升基线（保留音频缓冲），与回测从零基线一致。"""
+        self._score_ema = 0.0
+        self.last_reject = ""
+        self.last_rise = 0.0
+
     def clone_for_offline(self) -> "TemplateMatcher":
         """拷贝模板与参数，供回测独占（避免与实时 feed 抢缓冲）。"""
         other = TemplateMatcher(
@@ -153,7 +160,12 @@ class TemplateMatcher:
             return False
         return 20.0 * float(np.log10(rms)) >= self.min_energy_db
 
-    def feed(self, block: "npt.NDArray[np.float32]") -> tuple[bool, float]:
+    def feed(
+        self,
+        block: "npt.NDArray[np.float32]",
+        *,
+        update_baseline: bool = True,
+    ) -> tuple[bool, float]:
         if self._template_img is None or self._template_len <= 0:
             return False, 0.0
 
@@ -169,17 +181,21 @@ class TemplateMatcher:
 
         if not self._buffer_loud_enough(self._buffer):
             self.last_reject = "太静"
+            # 静音始终衰减基线（与是否听声无关），避免非听声态卡住高基线后无法抬升
             self._score_ema *= 0.95
             return False, 0.0
 
-        report = self.analyze_buffer(self._buffer, update_baseline=True)
+        report = self.analyze_buffer(
+            self._buffer, update_baseline=update_baseline
+        )
         self.last_prominence = float(report["prominence"])
         self.last_rise = float(report["rise"])
         self.last_ambient = float(report["ambient"])
         score = float(report["score"])
         if report["would_trigger"]:
             self.last_reject = ""
-            self._score_ema = max(self._score_ema, score)
+            if update_baseline:
+                self._score_ema = max(self._score_ema, score)
             return True, score
         if score >= self.threshold * 0.9 and report["reason"]:
             self.last_reject = str(report["reason"])
@@ -340,6 +356,13 @@ class TemplateMatcher:
 
     def _wave_to_mel(self, wave: "npt.NDArray[np.float32]") -> "npt.NDArray[np.float32]":
         n_fft, hop = self._n_fft, self._hop
+        wave = np.asarray(wave, dtype=np.float32)
+        if wave.ndim > 1:
+            wave = wave.mean(axis=1)
+        # 峰值归一化：log-Mel 对绝对音量敏感，录音变轻/变响时仍可对上模板
+        peak = float(np.max(np.abs(wave))) if wave.size else 0.0
+        if peak > 1e-8:
+            wave = wave * (0.9 / peak)
         window = np.hanning(n_fft).astype(np.float32)
         if len(wave) < n_fft:
             wave = np.pad(wave, (0, n_fft - len(wave)), mode="constant")

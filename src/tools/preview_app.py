@@ -82,6 +82,8 @@ from tools.shell_theme import (
     global_qss,
     preview_canvas_qss,
 )
+from tools.macos_overlay import elevate_over_fullscreen, restore_window_level
+from tools.status_hud import StatusHudPanel
 from tools.bar_mark_canvas import BarMarkCanvas
 from tools.dual_range_axis import DualRangeAxis
 from tools.first_click_trigger_window import AudioBacktestPanel, FirstClickTriggerPanel
@@ -326,16 +328,21 @@ class PreviewApp(QMainWindow):
         self._bridge.pos.connect(self._on_pos_ui)
         self._bridge.intent.connect(self._on_intent_ui)
 
+        self._compact = False
+        self._full_geo = None
         self._build_ui()
+        self._apply_saved_window_geometry()
         self._reload_roi()
         self._sync_buttons()
-        # B 默认开；A 默认关；有 ROI 则常开 Capture/Detect
-        self.chk_b.setChecked(True)
-        self.chk_a.setChecked(False)
+        # 恢复持久化 A/B；有 ROI 则常开 Capture/Detect
+        self._restore_ab_from_settings()
         if self.roi is not None:
             self._ensure_monitor_on()
             self.lbl_hint.setText("ROI 就绪 · 监控中")
             self._cal_log("启动 · Capture/Detect 常开")
+        self._refresh_hud_steady()
+        if self._settings.compact_mode:
+            self._set_compact_mode(True, persist=False, from_startup=True)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -349,7 +356,15 @@ class PreviewApp(QMainWindow):
     def _build_ui(self) -> None:
         root = QWidget()
         self.setCentralWidget(root)
-        layout = QVBoxLayout(root)
+        outer = QVBoxLayout(root)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        self.mode_stack = QStackedWidget()
+        outer.addWidget(self.mode_stack)
+
+        page_full = QWidget()
+        layout = QVBoxLayout(page_full)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
@@ -405,6 +420,12 @@ class PreviewApp(QMainWindow):
         self.chk_a.setToolTip("听开钓水声 → 点第一下 → 等漂后交给自动拉漂")
         self.chk_a.toggled.connect(self._on_a_toggled)
         sw.addWidget(self.chk_a)
+        self.btn_float = QPushButton("浮窗")
+        self.btn_float.setObjectName("btnPrimary")
+        self.btn_float.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_float.setToolTip("同一窗口切到紧凑状态显示")
+        self.btn_float.clicked.connect(lambda: self._set_compact_mode(True))
+        sw.addWidget(self.btn_float)
         main_l.addWidget(switches)
 
         readout = QFrame()
@@ -600,10 +621,12 @@ class PreviewApp(QMainWindow):
         sound_l = QVBoxLayout(page_sound)
         sound_l.setContentsMargins(0, 0, 0, 0)
         self._sound_panel = FirstClickTriggerPanel(self)
+        self._sound_panel.set_preferred_device_name(self._settings.audio_device_name)
         self._sound_panel.set_threshold_value(
             self._settings.sound_threshold, emit=False
         )
         self._sound_panel.on_threshold_changed(self._on_sound_threshold_persist)
+        self._sound_panel.on_device_changed(self._on_sound_device_persist)
         sound_l.addWidget(self._sound_panel)
         self.stack.addWidget(page_sound)
 
@@ -664,6 +687,11 @@ class PreviewApp(QMainWindow):
         self.stack.addWidget(page_more)
 
         layout.addWidget(self.stack, 1)
+        self.mode_stack.addWidget(page_full)
+
+        self._hud = StatusHudPanel()
+        self._hud.expand_requested.connect(lambda: self._set_compact_mode(False))
+        self.mode_stack.addWidget(self._hud)
 
     def _goto_page(self, idx: int) -> None:
         self.stack.setCurrentIndex(idx)
@@ -691,7 +719,11 @@ class PreviewApp(QMainWindow):
         if prev is not None and cs != prev:
             if cs == CastSessionState.FIRST_CLICK:
                 self._main_log(self._format_splash_trigger(snap.cast_detail))
+                hud = getattr(self, "_hud", None)
+                if hud is not None:
+                    hud.flash("heard")
         self._last_cast_session = cs
+        self._refresh_hud_steady()
 
     @staticmethod
     def _format_splash_trigger(detail: str) -> str:
@@ -743,6 +775,25 @@ class PreviewApp(QMainWindow):
             if self._sound_panel is not None
             else self._settings.sound_threshold
         )
+        hx = self._settings.hud_x
+        hy = self._settings.hud_y
+        wx = self._settings.window_x
+        wy = self._settings.window_y
+        ww = self._settings.window_w
+        wh = self._settings.window_h
+        if self._compact:
+            hx, hy = self.x(), self.y()
+            if self._full_geo is not None:
+                fg = self._full_geo
+                wx, wy, ww, wh = fg.x(), fg.y(), fg.width(), fg.height()
+        else:
+            g = self.geometry()
+            wx, wy, ww, wh = g.x(), g.y(), g.width(), g.height()
+        device_name = (
+            self._sound_panel.current_device_name()
+            if self._sound_panel is not None
+            else self._settings.audio_device_name
+        )
         self._settings = ShellSettings(
             sound_threshold=thr,
             press_lo=plo,
@@ -751,14 +802,190 @@ class PreviewApp(QMainWindow):
             release_hi=rhi,
             press_interval_s=self.sld_press_interval.value() / 1000.0,
             stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+            compact_mode=bool(self._compact),
+            hud_x=int(hx),
+            hud_y=int(hy),
+            sound_enabled=bool(self.chk_a.isChecked()),
+            auto_bobber_enabled=bool(self.chk_b.isChecked()),
+            audio_device_name=str(device_name or ""),
+            window_x=int(wx),
+            window_y=int(wy),
+            window_w=int(ww),
+            window_h=int(wh),
         )
         save_shell_settings(self._settings)
+
+    def _apply_saved_window_geometry(self) -> None:
+        s = self._settings
+        if s.window_w < 360 or s.window_h < 480:
+            return
+        pt = self._clamp_to_screens(
+            s.window_x, s.window_y, s.window_w, s.window_h
+        )
+        self.setGeometry(pt.x(), pt.y(), s.window_w, s.window_h)
+
+    def _restore_ab_from_settings(self) -> None:
+        """启动时恢复 A/B 勾选并应用。"""
+        s = self._settings
+        want_b = bool(s.auto_bobber_enabled)
+        want_a = bool(s.sound_enabled)
+        # 先把勾选摆到目标态，再应用逻辑——避免 B 落盘时把 A 偏好写成 false
+        self._block_checks(True)
+        self.chk_b.setChecked(want_b)
+        self.chk_a.setChecked(want_a)
+        self._block_checks(False)
+        self._on_b_toggled(want_b)
+        if want_a:
+            # 延后一拍：声音面板设备列表已就绪后再开会话
+            QTimer.singleShot(0, self._restore_sound_enabled)
+
+    def _restore_sound_enabled(self) -> None:
+        """按已勾选的 A 偏好尝试启动听声；失败不改勾选、不抹掉偏好。"""
+        if not self.chk_a.isChecked():
+            return
+        self._activate_sound_session(persist=True)
 
     def _on_sound_threshold_persist(self, _thr: float) -> None:
         self._persist_settings()
 
+    def _on_sound_device_persist(self, _name: str) -> None:
+        self._persist_settings()
+
     def _on_ranges_changed(self, *_args) -> None:
         self._persist_settings()
+
+    def _clamp_to_screens(self, x: int, y: int, w: int, h: int) -> QPoint:
+        """把左上角夹到某块屏可用区内（避免跨屏幽灵坐标）。"""
+        pt = QPoint(int(x), int(y))
+        screens = QApplication.screens()
+        if not screens:
+            return pt
+        for scr in screens:
+            ag = scr.availableGeometry()
+            if ag.contains(pt):
+                return pt
+        # 落点不在任何屏：夹到最近屏
+        best = screens[0].availableGeometry()
+        best_d = None
+        for scr in screens:
+            ag = scr.availableGeometry()
+            cx = min(max(pt.x(), ag.left()), ag.right() - max(w, 1))
+            cy = min(max(pt.y(), ag.top()), ag.bottom() - max(h, 1))
+            d = abs(cx - pt.x()) + abs(cy - pt.y())
+            if best_d is None or d < best_d:
+                best_d = d
+                best = ag
+                pt = QPoint(cx, cy)
+        _ = best
+        return pt
+
+    def _set_compact_mode(
+        self,
+        compact: bool,
+        *,
+        persist: bool = True,
+        from_startup: bool = False,
+    ) -> None:
+        """同一窗口：完整态 ↔ 紧凑态（就地缩放，不跨屏瞬移）。"""
+        compact = bool(compact)
+        if compact == self._compact and self.mode_stack.currentIndex() == (
+            1 if compact else 0
+        ):
+            if persist:
+                self._persist_settings()
+            return
+        if compact:
+            if not self._compact:
+                self._full_geo = self.geometry()
+            self.mode_stack.setCurrentIndex(1)
+            self._compact = True
+            self.setMinimumSize(200, 100)
+            # 就地缩小：保留左上角；仅「启动即紧凑」才用上次拖动落点
+            anchor = self.geometry().topLeft()
+            self.resize(220, 120)
+            if from_startup:
+                s = self._settings
+                if s.hud_x >= 0 and s.hud_y >= 0:
+                    anchor = self._clamp_to_screens(
+                        s.hud_x, s.hud_y, self.width(), self.height()
+                    )
+            self.move(anchor)
+            # 紧凑态强制置顶；macOS 再抬原生层级以便压过全屏游戏
+            self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.show()
+            self._refresh_hud_steady()
+            QTimer.singleShot(0, self._apply_compact_overlay)
+        else:
+            if self._compact:
+                self._settings.hud_x = self.x()
+                self._settings.hud_y = self.y()
+            self.mode_stack.setCurrentIndex(0)
+            self._compact = False
+            self.setMinimumSize(360, 480)
+            # 就地放大：保留当前左上角，恢复完整尺寸
+            anchor = self.geometry().topLeft()
+            if self._full_geo is not None:
+                self.resize(self._full_geo.width(), self._full_geo.height())
+            else:
+                self.resize(460, 800)
+            self.move(anchor)
+            # 恢复用户置顶偏好
+            self.setWindowFlag(
+                Qt.WindowType.WindowStaysOnTopHint,
+                bool(self.chk_stay_on_top.isChecked()),
+            )
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            QTimer.singleShot(0, self._restore_normal_overlay)
+        if persist:
+            self._persist_settings()
+
+    def _apply_compact_overlay(self) -> None:
+        if not self._compact:
+            return
+        self.raise_()
+        elevate_over_fullscreen(self)
+
+    def _restore_normal_overlay(self) -> None:
+        if self._compact:
+            return
+        restore_window_level(
+            self, floating=bool(self.chk_stay_on_top.isChecked())
+        )
+
+    def _refresh_hud_steady(self) -> None:
+        hud = getattr(self, "_hud", None)
+        if hud is None:
+            return
+        a_on = bool(self.chk_a.isChecked())
+        b_on = bool(self.chk_b.isChecked())
+        if not a_on and not b_on:
+            hud.set_steady("idle")
+            return
+        if self._had_bobber:
+            if self._holding is True:
+                hud.set_steady("pull")
+            else:
+                hud.set_steady("release")
+            return
+        pipe = self._pipe
+        cs = CastSessionState.DISABLED
+        if pipe is not None:
+            cs = pipe.bus.snapshot().cast_session
+        if a_on:
+            if cs == CastSessionState.WAIT_BOBBER:
+                hud.set_steady("wait_bobber")
+            elif cs == CastSessionState.FIRST_CLICK:
+                hud.set_steady("heard")
+            elif cs == CastSessionState.FISHING:
+                hud.set_steady("wait_bobber")
+            elif cs == CastSessionState.WAIT:
+                hud.set_steady("listen")
+            else:
+                hud.set_steady("listen")
+            return
+        hud.set_steady("idle")
 
     def _policy_cfg_text(self) -> str:
         low, high = self._current_policy_thresholds()
@@ -1068,6 +1295,7 @@ class PreviewApp(QMainWindow):
         has_bobber = event.hit is not None
         prev = self._had_bobber
         if prev is not None and has_bobber != prev:
+            hud = getattr(self, "_hud", None)
             if has_bobber:
                 if event.hit is not None and event.hit.bar_width > 0:
                     self._main_log(
@@ -1075,9 +1303,14 @@ class PreviewApp(QMainWindow):
                     )
                 else:
                     self._main_log(f"游戏开始 · 出漂（暂无条） · {self._policy_cfg_text()}")
+                if hud is not None:
+                    hud.flash("game_start")
             else:
                 self._main_log(f"游戏结束 · 丢漂 · {self._policy_cfg_text()}")
+                if hud is not None:
+                    hud.flash("game_end")
         self._had_bobber = has_bobber
+        self._refresh_hud_steady()
 
     def _update_bar_panel(self, event: PosEvent) -> None:
         det = get_detector()
@@ -1143,9 +1376,16 @@ class PreviewApp(QMainWindow):
         reason = f" · {event.reason}" if event.reason else ""
         if event.holding and prev is not True:
             self._cal_log(f"开始拉漂 · {pos_s} · {cfg}{reason}")
+            hud = getattr(self, "_hud", None)
+            if hud is not None and self._had_bobber:
+                hud.note_last("拉漂")
         elif (not event.holding) and prev is True:
             self._cal_log(f"结束拉漂 · {pos_s} · {cfg}{reason}")
+            hud = getattr(self, "_hud", None)
+            if hud is not None and self._had_bobber:
+                hud.note_last("松漂")
         self._refresh_mouse()
+        self._refresh_hud_steady()
 
     def _refresh_strategy(
         self, pos: float | None = None, reason: str = ""
@@ -1219,6 +1459,7 @@ class PreviewApp(QMainWindow):
                 self._block_checks(True)
                 self.chk_b.setChecked(False)
                 self._block_checks(False)
+                self._persist_settings()
                 return
             self._ensure_monitor_on()
             if not pipe.decide_on:
@@ -1239,40 +1480,62 @@ class PreviewApp(QMainWindow):
             self._refresh_strategy()
             self._main_log("自动拉漂 OFF")
         self._refresh_mouse()
+        self._refresh_hud_steady()
+        self._persist_settings()
 
     def _on_a_toggled(self, checked: bool) -> None:
-        """声音开钓 = 会话机。"""
-        pipe = self._ensure_pipe()
-        if self._sound_panel is None:
-            self._block_checks(True)
-            self.chk_a.setChecked(False)
-            self._block_checks(False)
-            return
-        self._sound_panel.attach_bus(pipe.bus)
+        """声音开钓 = 会话机。勾选即偏好；启动失败不取消勾选，以免抹掉持久化。"""
         if not checked:
-            self._sound_panel.set_session_enabled(False)
+            if self._sound_panel is not None:
+                self._sound_panel.set_session_enabled(False)
             self.lbl_hint.setText("声音开钓已关")
             self._main_log("声音开钓 OFF")
+            self._refresh_hud_steady()
+            self._persist_settings()
             return
+        self._activate_sound_session(persist=True)
+
+    def _activate_sound_session(self, *, persist: bool) -> bool:
+        """尝试开监听+会话。成功 True；失败保留勾选，只提示。"""
+        pipe = self._ensure_pipe()
+        if self._sound_panel is None:
+            self.lbl_hint.setText("声音开钓失败：面板未就绪")
+            self._main_log("声音开钓失败：面板未就绪")
+            self._refresh_hud_steady()
+            if persist:
+                self._persist_settings()
+            return False
+        self._sound_panel.attach_bus(pipe.bus)
         try:
             self._sound_panel.set_session_enabled(True)
             t = self._sound_panel.trigger
             if t is None or not t.has_template or not t.is_running():
                 self._sound_panel.set_session_enabled(False)
-                self._block_checks(True)
-                self.chk_a.setChecked(False)
-                self._block_checks(False)
-                self.lbl_hint.setText("请先到「声音开钓配置」页监听并确认模板")
-                return
+                self.lbl_hint.setText(
+                    "声音开钓未就绪：请到「开钓配置」确认设备与模板后重试"
+                )
+                self._main_log("声音开钓未就绪 · 已保留勾选")
+                self._refresh_hud_steady()
+                if persist:
+                    self._persist_settings()
+                return False
             self.lbl_hint.setText("声音开钓中")
             self._main_log("声音开钓 ON")
+            self._refresh_hud_steady()
+            if persist:
+                self._persist_settings()
+            return True
         except Exception as exc:  # noqa: BLE001
-            self._sound_panel.set_session_enabled(False)
-            self._block_checks(True)
-            self.chk_a.setChecked(False)
-            self._block_checks(False)
+            try:
+                self._sound_panel.set_session_enabled(False)
+            except Exception:  # noqa: BLE001
+                pass
             self.lbl_hint.setText(f"声音开钓失败：{exc}")
-            self._main_log(f"声音开钓失败：{exc}")
+            self._main_log(f"声音开钓失败：{exc} · 已保留勾选")
+            self._refresh_hud_steady()
+            if persist:
+                self._persist_settings()
+            return False
 
     def _apply_policy(self) -> bool:
         plo, phi, rlo, rhi = self.range_axis.ranges()
@@ -1485,6 +1748,7 @@ class PreviewApp(QMainWindow):
             self._ensure_monitor_on()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._persist_settings()
         if self._backtest_panel is not None:
             self._backtest_panel.shutdown()
             self._backtest_panel = None

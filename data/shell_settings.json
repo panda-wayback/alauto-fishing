@@ -5,5 +5,15 @@
   "release_lo": 76.60000000000001,
   "release_hi": 79.2,
   "press_interval_s": 0.0,
-  "stay_on_top": true
+  "stay_on_top": true,
+  "compact_mode": false,
+  "hud_x": 1192,
+  "hud_y": -781,
+  "sound_enabled": true,
+  "auto_bobber_enabled": true,
+  "audio_device_name": "BlackHole 2ch",
+  "window_x": 1192,
+  "window_y": -725,
+  "window_w": 460,
+  "window_h": 800
 }

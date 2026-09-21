@@ -78,6 +78,8 @@ class FirstClickTriggerPanel(QWidget):
         self._external_log = log_fn
         self._library_cbs: list[Callable[[], None]] = []
         self._threshold_cbs: list[Callable[[float], None]] = []
+        self._device_cbs: list[Callable[[str], None]] = []
+        self._preferred_device_name = ""
 
         self._build_ui()
         self._refresh_devices()
@@ -100,6 +102,26 @@ class FirstClickTriggerPanel(QWidget):
 
     def on_threshold_changed(self, cb: Callable[[float], None]) -> None:
         self._threshold_cbs.append(cb)
+
+    def on_device_changed(self, cb: Callable[[str], None]) -> None:
+        self._device_cbs.append(cb)
+
+    def set_preferred_device_name(self, name: str) -> None:
+        self._preferred_device_name = str(name or "").strip()
+        self._refresh_devices()
+
+    def current_device_name(self) -> str:
+        idx = self.cmb_device.currentData()
+        if idx is None:
+            return ""
+        for d in AudioInput.list_devices():
+            if d.index == idx:
+                return str(d.name)
+        # 列表瞬时变化时用下拉显示文案去掉提示后缀
+        text = self.cmb_device.currentText().strip()
+        if "  ← " in text:
+            text = text.split("  ← ", 1)[0]
+        return text
 
     def set_threshold_value(self, threshold: float, *, emit: bool = True) -> None:
         thr = max(0.15, min(0.80, float(threshold)))
@@ -229,6 +251,7 @@ class FirstClickTriggerPanel(QWidget):
         row_dev.addWidget(QLabel("设备"))
         self.cmb_device = QComboBox()
         self.cmb_device.setEnabled(False)
+        self.cmb_device.currentIndexChanged.connect(self._on_device_combo)
         row_dev.addWidget(self.cmb_device, 1)
         self.btn_refresh = QPushButton("刷新")
         self.btn_refresh.clicked.connect(self._refresh_devices)
@@ -272,9 +295,17 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_count.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_thr.addWidget(self.lbl_count)
         layout.addLayout(row_thr)
-        hint = QLabel("长录音 / 回测 / 模板库 →「回测」页")
+        hint = QLabel("下方为最近约 20s 实时波形；橙=命中。长录音/回测 →「回测」页")
         hint.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         layout.addWidget(hint)
+
+        self.live_wave = WaveformSelectWidget()
+        self.live_wave.setMinimumHeight(110)
+        self.live_wave.setToolTip("监听中滚动显示；命中区域橙色标记")
+        layout.addWidget(self.live_wave)
+        self.lbl_live_wave = QLabel("未监听 · 无波形")
+        self.lbl_live_wave.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+        layout.addWidget(self.lbl_live_wave)
         layout.addStretch(1)
 
         top_scroll = QScrollArea()
@@ -301,23 +332,53 @@ class FirstClickTriggerPanel(QWidget):
         root.addWidget(splitter)
 
     def _refresh_devices(self) -> None:
+        self.cmb_device.blockSignals(True)
         self.cmb_device.clear()
         devices = AudioInput.list_devices()
-        current_index = 0
+        preferred = self._preferred_device_name.strip().lower()
+        exact_i: int | None = None
+        fuzzy_i: int | None = None
+        fallback_i = 0
         for i, d in enumerate(devices):
             label = d.name
             if d.is_virtual_capture:
                 label = f"{d.name}  ← 录游戏声用这个"
             self.cmb_device.addItem(label, d.index)
+            name_l = d.name.lower()
+            if preferred and name_l == preferred:
+                exact_i = i
+            elif preferred and preferred in name_l and fuzzy_i is None:
+                fuzzy_i = i
             if d.is_virtual_capture or d.is_loopback:
-                current_index = i
+                fallback_i = i
         self.cmb_device.setEnabled(
             len(devices) > 0
             and (self._trigger is None or not self._trigger.is_running())
         )
         if len(devices) > 0:
-            self.cmb_device.setCurrentIndex(current_index)
+            if exact_i is not None:
+                sel = exact_i
+            elif fuzzy_i is not None:
+                sel = fuzzy_i
+            else:
+                sel = fallback_i
+            self.cmb_device.setCurrentIndex(sel)
+        self.cmb_device.blockSignals(False)
         self._update_device_hint()
+
+    def _on_device_combo(self, _idx: int) -> None:
+        name = self.current_device_name()
+        if name:
+            self._preferred_device_name = name
+        self._notify_device()
+
+    def _notify_device(self) -> None:
+        name = self.current_device_name()
+        for cb in self._device_cbs:
+            try:
+                cb(name)
+            except Exception:  # noqa: BLE001
+                pass
 
     def _update_device_hint(self) -> None:
         if sys.platform == "darwin":
@@ -430,7 +491,13 @@ class FirstClickTriggerPanel(QWidget):
             self._trigger.set_session_enabled(True)
         self.btn_listen.setText("停止监听")
         self.cmb_device.setEnabled(False)
+        self.live_wave.clear()
+        self.lbl_live_wave.setText("监听中 · 采集波形…")
         self._log(f"开始监听 · {self.cmb_device.currentText()}")
+        name = self.current_device_name()
+        if name:
+            self._preferred_device_name = name
+        self._notify_device()
 
     def _stop_listen(self) -> None:
         if self._trigger is not None:
@@ -438,6 +505,7 @@ class FirstClickTriggerPanel(QWidget):
             self._trigger.stop()
         self.btn_listen.setText("开始监听")
         self.cmb_device.setEnabled(True)
+        self.lbl_live_wave.setText("未监听 · 无波形")
         self._log("已停止监听")
 
     def _play_template(self) -> None:
@@ -477,6 +545,27 @@ class FirstClickTriggerPanel(QWidget):
         else:
             self.lbl_last.setText("触发：—")
         self.lbl_count.setText(f"×{self._trigger.trigger_count}")
+        self._refresh_live_wave()
+
+    def _refresh_live_wave(self) -> None:
+        t = self._trigger
+        if t is None or not t.is_running():
+            return
+        try:
+            wave = t.recent_monitor_wave(20.0)
+            sr = t.samplerate
+            if wave.size == 0:
+                self.lbl_live_wave.setText("监听中 · 等待音频…")
+                return
+            dur = float(wave.size) / float(max(sr, 1))
+            hits = t.live_hits_for_monitor(dur)
+            self.live_wave.set_audio(wave, sr, keep_view=True)
+            self.live_wave.set_hits(hits)
+            self.lbl_live_wave.setText(
+                f"最近 {dur:.1f}s · 橙命中 {len(hits)} · 相似 {t.last_score:.2f}"
+            )
+        except Exception:  # noqa: BLE001
+            pass
 
     def _log(self, msg: str) -> None:
         # 只写本页日志，不转发主控
@@ -866,8 +955,11 @@ class AudioBacktestPanel(QWidget):
             i0 = int(a * self._last_session_sr)
             i1 = int(b * self._last_session_sr)
             device = FirstClickTrigger._playback_device()
+            from autofish.first_click_trigger.trigger import _audition_wave
+
+            sd.stop()
             sd.play(
-                wave[i0:i1],
+                _audition_wave(wave[i0:i1]),
                 samplerate=self._last_session_sr,
                 device=device,
                 blocking=False,
