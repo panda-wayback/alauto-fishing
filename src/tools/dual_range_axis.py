@@ -307,3 +307,198 @@ class DualRangeAxis(QWidget):
             self._drag_snapshot = None
             self.setCursor(Qt.CursorShape.ArrowCursor)
             self.rangesChanged.emit(*self.ranges())
+
+
+class SingleRangeBar(QWidget):
+    """单段可拖区间（如等待/长按秒数）；精度 0.1。"""
+
+    rangeChanged = Signal(float, float)
+
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        *,
+        vmin: float = 0.0,
+        vmax: float = 5.0,
+        value: tuple[float, float] = (0.3, 1.5),
+        unit: str = "s",
+        title: str = "",
+        min_span: float = 0.1,
+    ) -> None:
+        super().__init__(parent)
+        self._vmin = float(vmin)
+        self._vmax = float(vmax)
+        self._unit = unit
+        self._title = title
+        self._min_span = float(min_span)
+        self._lo, self._hi = float(value[0]), float(value[1])
+        self._drag: str | None = None
+        self._drag_origin = 0.0
+        self._drag_snapshot: tuple[float, float] | None = None
+        self.setMinimumHeight(52)
+        self.setMinimumWidth(200)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self.setMouseTracking(True)
+        self._normalize()
+
+    def range(self) -> tuple[float, float]:
+        return self._lo, self._hi
+
+    def setRange(self, lo: float, hi: float, *, emit: bool = True) -> None:
+        self._lo, self._hi = float(lo), float(hi)
+        self._normalize()
+        self.update()
+        if emit:
+            self.rangeChanged.emit(*self.range())
+
+    def _q(self, v: float) -> float:
+        return round(float(v) / _STEP) * _STEP
+
+    def _normalize(self) -> None:
+        lo = max(self._vmin, min(self._vmax, self._q(self._lo)))
+        hi = max(self._vmin, min(self._vmax, self._q(self._hi)))
+        if hi < lo:
+            lo, hi = hi, lo
+        if hi - lo < self._min_span:
+            hi = min(self._vmax, lo + self._min_span)
+            if hi - lo < self._min_span:
+                lo = max(self._vmin, hi - self._min_span)
+        self._lo, self._hi = self._q(lo), self._q(hi)
+
+    def _track(self) -> QRectF:
+        return QRectF(12, 22, max(1.0, self.width() - 24), 14)
+
+    def _x_of(self, v: float) -> float:
+        track = self._track()
+        span = max(1e-9, self._vmax - self._vmin)
+        t = (v - self._vmin) / span
+        return track.left() + t * track.width()
+
+    def _v_of(self, x: float) -> float:
+        track = self._track()
+        if track.width() <= 1:
+            return self._vmin
+        t = (x - track.left()) / track.width()
+        return max(
+            self._vmin,
+            min(self._vmax, self._vmin + t * (self._vmax - self._vmin)),
+        )
+
+    def _handle_at(self, pos: QPointF) -> str | None:
+        hits: list[tuple[float, str]] = []
+        for name, v in (("lo", self._lo), ("hi", self._hi)):
+            dist = abs(pos.x() - self._x_of(v))
+            if dist <= 10 and 8 <= pos.y() <= 48:
+                hits.append((dist, name))
+        if hits:
+            hits.sort()
+            return hits[0][1]
+        if 18 <= pos.y() <= 42:
+            if self._x_of(self._lo) <= pos.x() <= self._x_of(self._hi):
+                return "body"
+        return None
+
+    def paintEvent(self, _event) -> None:  # noqa: N802
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(PREVIEW_BG))
+        track = self._track()
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(BORDER))
+        p.drawRoundedRect(track, 4, 4)
+        p.setBrush(QColor(ACCENT_DIM))
+        p.drawRoundedRect(
+            QRectF(
+                self._x_of(self._lo),
+                track.top(),
+                max(2.0, self._x_of(self._hi) - self._x_of(self._lo)),
+                track.height(),
+            ),
+            3,
+            3,
+        )
+        font = QFont(self.font())
+        font.setPointSize(max(9, font.pointSize() - 1))
+        p.setFont(font)
+        p.setPen(QColor(TEXT_MUTED))
+        ticks = [self._vmin]
+        mid = self._q((self._vmin + self._vmax) / 2.0)
+        if self._vmin < mid < self._vmax:
+            ticks.append(mid)
+        ticks.append(self._vmax)
+        for tick in ticks:
+            x = self._x_of(tick)
+            p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 6))
+            p.drawText(
+                QRectF(x - 16, track.bottom() + 6, 32, 14),
+                Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
+                f"{tick:.1f}",
+            )
+        for v in (self._lo, self._hi):
+            cx = self._x_of(v)
+            cy = track.center().y()
+            p.setBrush(QColor(ACCENT))
+            p.setPen(QPen(QColor(TEXT), 1.5))
+            p.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
+        p.setPen(QColor(TEXT_MUTED))
+        prefix = f"{self._title} " if self._title else ""
+        label = f"{prefix}{self._lo:.1f}～{self._hi:.1f}{self._unit}"
+        p.drawText(
+            QRectF(12, 2, self.width() - 24, 18),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            label,
+        )
+        p.end()
+
+    def mousePressEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() != Qt.MouseButton.LeftButton:
+            return
+        hit = self._handle_at(event.position())
+        if hit is None:
+            return
+        self._drag = hit
+        self._drag_origin = self._v_of(event.position().x())
+        self._drag_snapshot = self.range()
+        self.setCursor(Qt.CursorShape.ClosedHandCursor)
+
+    def mouseMoveEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if self._drag is None:
+            hit = self._handle_at(event.position())
+            if hit == "body":
+                self.setCursor(Qt.CursorShape.OpenHandCursor)
+            elif hit:
+                self.setCursor(Qt.CursorShape.SizeHorCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+            return
+        v = self._q(self._v_of(event.position().x()))
+        lo, hi = self._drag_snapshot or self.range()
+        which = self._drag
+        if which == "lo":
+            lo = max(self._vmin, min(v, hi - self._min_span))
+        elif which == "hi":
+            hi = min(self._vmax, max(v, lo + self._min_span))
+        elif which == "body":
+            slo, shi = self._drag_snapshot
+            width = shi - slo
+            delta = v - self._q(self._drag_origin)
+            nlo = slo + delta
+            nhi = nlo + width
+            if nlo < self._vmin:
+                nlo = self._vmin
+                nhi = nlo + width
+            if nhi > self._vmax:
+                nhi = self._vmax
+                nlo = nhi - width
+            lo, hi = self._q(nlo), self._q(nhi)
+        self._lo, self._hi = lo, hi
+        self._normalize()
+        self.update()
+        self.rangeChanged.emit(*self.range())
+
+    def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:
+            self._drag = None
+            self._drag_snapshot = None
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+            self.rangeChanged.emit(*self.range())

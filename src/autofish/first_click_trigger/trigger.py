@@ -25,10 +25,12 @@ if TYPE_CHECKING:
     from autofish.bus import AutofishBus
 
 
-_MIN_HOLD_S = 0.3
-_MAX_HOLD_S = 0.8
-_MIN_DELAY_BEFORE_CLICK_S = 0.2
+_MIN_HOLD_S = 0.7
+_MAX_HOLD_S = 1.5
+_MIN_DELAY_BEFORE_CLICK_S = 0.3
 _MAX_DELAY_BEFORE_CLICK_S = 1.5
+_MIN_AFTER_RELEASE_S = 0.2
+_MAX_AFTER_RELEASE_S = 0.8
 _WAIT_BOBBER_TIMEOUT_S = 3.0
 _LOST_BOBBER_END_S = 1.0
 _WAIT_LISTEN_COOLDOWN_S = 3.0
@@ -63,7 +65,7 @@ def _audition_wave(wave: "npt.NDArray[np.float32]") -> "npt.NDArray[np.float32]"
 class FirstClickTrigger(WorkerBase):
     """
     开钓会话（A）：
-    WAIT →（水声）→ FIRST_CLICK（等 0.2～1.5s + 按住 0.3～0.8s）
+    WAIT →（水声）→ FIRST_CLICK（等待区间 + 长按区间，可配置）
          → WAIT_BOBBER →（出漂）→ FISHING →（丢漂满 1s）→ WAIT（≥3s 再听）
     仅 WAIT 且冷却已过才听声；A 关为 DISABLED。不订 ActionIntent。
     """
@@ -116,6 +118,12 @@ class FirstClickTrigger(WorkerBase):
         # 实时波形命中：墙钟时刻 + 分数（展示时映射到最近 20s）
         self._live_hits: deque[dict[str, float]] = deque(maxlen=40)
         self._was_listening = False
+        self._delay_lo_s = _MIN_DELAY_BEFORE_CLICK_S
+        self._delay_hi_s = _MAX_DELAY_BEFORE_CLICK_S
+        self._hold_lo_s = _MIN_HOLD_S
+        self._hold_hi_s = _MAX_HOLD_S
+        self._after_lo_s = _MIN_AFTER_RELEASE_S
+        self._after_hi_s = _MAX_AFTER_RELEASE_S
         if template_path is not None:
             self.load_template(template_path)
 
@@ -230,6 +238,35 @@ class FirstClickTrigger(WorkerBase):
 
     def set_threshold(self, threshold: float) -> None:
         self._matcher.threshold = threshold
+
+    def set_click_timing(
+        self,
+        delay_lo_s: float,
+        delay_hi_s: float,
+        hold_lo_s: float,
+        hold_hi_s: float,
+        after_lo_s: float = _MIN_AFTER_RELEASE_S,
+        after_hi_s: float = _MAX_AFTER_RELEASE_S,
+    ) -> None:
+        """开钓第一下：等待、长按、松开后停顿区间（秒）。"""
+        d0 = float(max(0.0, min(5.0, delay_lo_s)))
+        d1 = float(max(0.0, min(5.0, delay_hi_s)))
+        h0 = float(max(0.05, min(5.0, hold_lo_s)))
+        h1 = float(max(0.05, min(5.0, hold_hi_s)))
+        a0 = float(max(0.0, min(5.0, after_lo_s)))
+        a1 = float(max(0.0, min(5.0, after_hi_s)))
+        if d1 < d0:
+            d0, d1 = d1, d0
+        if h1 < h0:
+            h0, h1 = h1, h0
+        if a1 < a0:
+            a0, a1 = a1, a0
+        self._delay_lo_s = d0
+        self._delay_hi_s = d1
+        self._hold_lo_s = h0
+        self._hold_hi_s = h1
+        self._after_lo_s = a0
+        self._after_hi_s = a1
 
     def set_energy_threshold(self, db: float) -> None:
         self._detector.threshold_db = db
@@ -694,12 +731,12 @@ class FirstClickTrigger(WorkerBase):
             ):
                 return
             thr = float(self._matcher.threshold)
-            delay_s = random.uniform(
-                _MIN_DELAY_BEFORE_CLICK_S, _MAX_DELAY_BEFORE_CLICK_S
-            )
-            hold_s = random.uniform(_MIN_HOLD_S, _MAX_HOLD_S)
+            delay_s = random.uniform(self._delay_lo_s, self._delay_hi_s)
+            hold_s = random.uniform(self._hold_lo_s, self._hold_hi_s)
+            after_s = random.uniform(self._after_lo_s, self._after_hi_s)
             detail = (
-                f"splash|{float(score):.2f}|{delay_s:.2f}|{hold_s:.2f}|{thr:.2f}"
+                f"splash|{float(score):.2f}|{delay_s:.2f}|{hold_s:.2f}|"
+                f"{after_s:.2f}|{thr:.2f}"
             )
             self._live_hits.append(
                 {"t_wall": time.time(), "score": float(score)}
@@ -707,7 +744,8 @@ class FirstClickTrigger(WorkerBase):
             self._set_session(CastSessionState.FIRST_CLICK, detail)
             self._emit_log(
                 f"命中水花 · 相似 {score:.2f} / 阈值 {thr:.2f} · "
-                f"间隔 {delay_s:.2f}s · 按住 {hold_s:.2f}s"
+                f"等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s · "
+                f"松开后 {after_s:.2f}s"
             )
 
         try:
@@ -728,10 +766,19 @@ class FirstClickTrigger(WorkerBase):
                     or self._session != CastSessionState.FIRST_CLICK
                 ):
                     return
+            self._emit_log(f"已松开 · 停顿 {after_s:.2f}s 后再交拉漂")
+            time.sleep(after_s)
+            with self._lock:
+                if (
+                    not self._session_enabled
+                    or self._session != CastSessionState.FIRST_CLICK
+                ):
+                    return
                 self._last_trigger_at = time.time()
                 self._trigger_count += 1
                 self._emit_log(
-                    f"已松开 · 本次间隔 {delay_s:.2f}s · 按住 {hold_s:.2f}s"
+                    f"第一下完成 · 等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s · "
+                    f"松开后 {after_s:.2f}s"
                 )
                 self._set_session(CastSessionState.WAIT_BOBBER, "clicked")
         except Exception as exc:  # noqa: BLE001

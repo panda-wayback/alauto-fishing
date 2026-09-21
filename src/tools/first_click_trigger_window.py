@@ -80,6 +80,12 @@ class FirstClickTriggerPanel(QWidget):
         self._threshold_cbs: list[Callable[[float], None]] = []
         self._device_cbs: list[Callable[[str], None]] = []
         self._preferred_device_name = ""
+        self._delay_lo_s = 0.3
+        self._delay_hi_s = 1.5
+        self._hold_lo_s = 0.7
+        self._hold_hi_s = 1.5
+        self._after_lo_s = 0.2
+        self._after_hi_s = 0.8
 
         self._build_ui()
         self._refresh_devices()
@@ -110,6 +116,31 @@ class FirstClickTriggerPanel(QWidget):
         self._preferred_device_name = str(name or "").strip()
         self._refresh_devices()
 
+    def set_click_timing(
+        self,
+        delay_lo_s: float,
+        delay_hi_s: float,
+        hold_lo_s: float,
+        hold_hi_s: float,
+        after_lo_s: float = 0.2,
+        after_hi_s: float = 0.8,
+    ) -> None:
+        self._delay_lo_s = float(delay_lo_s)
+        self._delay_hi_s = float(delay_hi_s)
+        self._hold_lo_s = float(hold_lo_s)
+        self._hold_hi_s = float(hold_hi_s)
+        self._after_lo_s = float(after_lo_s)
+        self._after_hi_s = float(after_hi_s)
+        if self._trigger is not None:
+            self._trigger.set_click_timing(
+                self._delay_lo_s,
+                self._delay_hi_s,
+                self._hold_lo_s,
+                self._hold_hi_s,
+                self._after_lo_s,
+                self._after_hi_s,
+            )
+
     def current_device_name(self) -> str:
         idx = self.cmb_device.currentData()
         if idx is None:
@@ -124,7 +155,7 @@ class FirstClickTriggerPanel(QWidget):
         return text
 
     def set_threshold_value(self, threshold: float, *, emit: bool = True) -> None:
-        thr = max(0.15, min(0.80, float(threshold)))
+        thr = max(0.15, min(1.0, float(threshold)))
         self.sld_threshold.blockSignals(True)
         self.sld_threshold.setValue(int(round(thr * 100)))
         self.sld_threshold.blockSignals(False)
@@ -278,7 +309,7 @@ class FirstClickTriggerPanel(QWidget):
         row_thr = QHBoxLayout()
         row_thr.addWidget(QLabel("阈值"))
         self.sld_threshold = QSlider(Qt.Orientation.Horizontal)
-        self.sld_threshold.setRange(15, 80)
+        self.sld_threshold.setRange(15, 100)
         self.sld_threshold.setValue(70)
         self.sld_threshold.valueChanged.connect(self._on_threshold_changed)
         row_thr.addWidget(self.sld_threshold, 1)
@@ -438,6 +469,14 @@ class FirstClickTriggerPanel(QWidget):
                 device=device,
                 threshold=threshold,
             )
+            self._trigger.set_click_timing(
+                self._delay_lo_s,
+                self._delay_hi_s,
+                self._hold_lo_s,
+                self._hold_hi_s,
+                self._after_lo_s,
+                self._after_hi_s,
+            )
         return self._trigger
 
     def _on_threshold_changed(self, value: int) -> None:
@@ -478,6 +517,14 @@ class FirstClickTriggerPanel(QWidget):
             bus=self._bus,
             device=device,
             threshold=threshold,
+        )
+        self._trigger.set_click_timing(
+            self._delay_lo_s,
+            self._delay_hi_s,
+            self._hold_lo_s,
+            self._hold_hi_s,
+            self._after_lo_s,
+            self._after_hi_s,
         )
         if wave is not None:
             self._trigger.set_template(wave)

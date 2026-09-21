@@ -1,14 +1,32 @@
-"""调试壳可持久化设置（data/shell_settings.json）。"""
+"""调试壳设置：用户 data/shell_settings.json + 打包默认 assets/shell_settings.json。"""
 
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+import sys
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 
-from common.paths import data_root
+from common.paths import assets_dir, data_root
 
 _SETTINGS_NAME = "shell_settings.json"
+
+
+def _clamp_pair(
+    lo: float,
+    hi: float,
+    *,
+    min_v: float,
+    max_v: float,
+    min_span: float = 0.0,
+) -> tuple[float, float]:
+    a = float(max(min_v, min(max_v, lo)))
+    b = float(max(min_v, min(max_v, hi)))
+    if b < a:
+        a, b = b, a
+    if b - a < min_span:
+        b = min(max_v, a + min_span)
+    return a, b
 
 
 @dataclass
@@ -33,30 +51,49 @@ class ShellSettings:
     window_y: int = -1
     window_w: int = 0
     window_h: int = 0
+    # 开钓第一下：等待 / 长按（秒）
+    click_delay_lo_s: float = 0.3
+    click_delay_hi_s: float = 1.5
+    click_hold_lo_s: float = 0.7
+    click_hold_hi_s: float = 1.5
+    click_after_lo_s: float = 0.2
+    click_after_hi_s: float = 0.8
 
 
 def settings_path() -> Path:
+    """用户可写配置。"""
     return data_root() / _SETTINGS_NAME
 
 
-def load_shell_settings() -> ShellSettings:
-    path = settings_path()
+def bundled_settings_path() -> Path:
+    """随包默认配置（assets，冻结只读）。"""
+    return assets_dir() / _SETTINGS_NAME
+
+
+def is_frozen_app() -> bool:
+    return bool(getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None))
+
+
+def _parse_settings_file(path: Path) -> ShellSettings | None:
     if not path.is_file():
-        return ShellSettings()
+        return None
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return ShellSettings()
+        return None
+    if not isinstance(data, dict):
+        return None
     base = ShellSettings()
     out = ShellSettings()
     for k in asdict(base):
         if k in data:
             setattr(out, k, data[k])
-    out.sound_threshold = float(max(0.15, min(0.80, out.sound_threshold)))
+    return _normalize_settings(out)
+
+
+def _normalize_settings(out: ShellSettings) -> ShellSettings:
+    out.sound_threshold = float(max(0.15, min(1.0, out.sound_threshold)))
     out.press_interval_s = float(max(0.0, min(0.3, out.press_interval_s)))
-    # 兼容旧键 hud_enabled
-    if "compact_mode" not in data and "hud_enabled" in data:
-        out.compact_mode = bool(data.get("hud_enabled"))
     out.compact_mode = bool(out.compact_mode)
     out.hud_x = int(out.hud_x)
     out.hud_y = int(out.hud_y)
@@ -67,13 +104,87 @@ def load_shell_settings() -> ShellSettings:
     out.window_y = int(out.window_y)
     out.window_w = int(out.window_w)
     out.window_h = int(out.window_h)
+    out.click_delay_lo_s, out.click_delay_hi_s = _clamp_pair(
+        float(out.click_delay_lo_s),
+        float(out.click_delay_hi_s),
+        min_v=0.0,
+        max_v=5.0,
+        min_span=0.05,
+    )
+    out.click_hold_lo_s, out.click_hold_hi_s = _clamp_pair(
+        float(out.click_hold_lo_s),
+        float(out.click_hold_hi_s),
+        min_v=0.05,
+        max_v=5.0,
+        min_span=0.05,
+    )
+    out.click_after_lo_s, out.click_after_hi_s = _clamp_pair(
+        float(out.click_after_lo_s),
+        float(out.click_after_hi_s),
+        min_v=0.0,
+        max_v=5.0,
+        min_span=0.05,
+    )
     return out
+
+
+def package_defaults_from(settings: ShellSettings) -> ShellSettings:
+    """去掉机器相关字段，供写入 assets 打包默认。"""
+    return _normalize_settings(
+        replace(
+            settings,
+            compact_mode=False,
+            hud_x=-1,
+            hud_y=-1,
+            window_x=-1,
+            window_y=-1,
+            window_w=0,
+            window_h=0,
+            audio_device_name="",
+        )
+    )
+
+
+def load_shell_settings() -> ShellSettings:
+    """用户文件优先；否则打包默认；再否则代码内建。"""
+    user = _parse_settings_file(settings_path())
+    if user is not None:
+        # 兼容旧键 hud_enabled（仅用户文件）
+        try:
+            raw = json.loads(settings_path().read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raw = {}
+        if isinstance(raw, dict) and "compact_mode" not in raw and "hud_enabled" in raw:
+            user.compact_mode = bool(raw.get("hud_enabled"))
+        return _normalize_settings(user)
+    bundled = _parse_settings_file(bundled_settings_path())
+    if bundled is not None:
+        return bundled
+    return ShellSettings()
 
 
 def save_shell_settings(settings: ShellSettings) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        json.dumps(asdict(settings), ensure_ascii=False, indent=2) + "\n",
+        json.dumps(asdict(_normalize_settings(settings)), ensure_ascii=False, indent=2)
+        + "\n",
         encoding="utf-8",
     )
+
+
+def save_bundled_shell_settings(settings: ShellSettings) -> Path:
+    """
+    写入 assets/shell_settings.json（打包默认）。
+    仅源码树可写；冻结包会抛错。
+    """
+    if is_frozen_app():
+        raise RuntimeError("打包后的应用无法改内置默认，请在源码里「写入打包默认」后再打包")
+    path = bundled_settings_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = package_defaults_from(settings)
+    path.write_text(
+        json.dumps(asdict(payload), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path

@@ -72,7 +72,13 @@ from autofish.topics import (
     Topic,
 )
 from common import permissions as perms
-from tools.shell_config import ShellSettings, load_shell_settings, save_shell_settings
+from tools.shell_config import (
+    ShellSettings,
+    is_frozen_app,
+    load_shell_settings,
+    save_bundled_shell_settings,
+    save_shell_settings,
+)
 from tools.shell_theme import (
     DANGER,
     SUCCESS,
@@ -85,7 +91,7 @@ from tools.shell_theme import (
 from tools.macos_overlay import elevate_over_fullscreen, restore_window_level
 from tools.status_hud import StatusHudPanel
 from tools.bar_mark_canvas import BarMarkCanvas
-from tools.dual_range_axis import DualRangeAxis
+from tools.dual_range_axis import DualRangeAxis, SingleRangeBar
 from tools.first_click_trigger_window import AudioBacktestPanel, FirstClickTriggerPanel
 
 IDLE = "idle"
@@ -625,6 +631,14 @@ class PreviewApp(QMainWindow):
         self._sound_panel.set_threshold_value(
             self._settings.sound_threshold, emit=False
         )
+        self._sound_panel.set_click_timing(
+            self._settings.click_delay_lo_s,
+            self._settings.click_delay_hi_s,
+            self._settings.click_hold_lo_s,
+            self._settings.click_hold_hi_s,
+            self._settings.click_after_lo_s,
+            self._settings.click_after_hi_s,
+        )
         self._sound_panel.on_threshold_changed(self._on_sound_threshold_persist)
         self._sound_panel.on_device_changed(self._on_sound_device_persist)
         sound_l.addWidget(self._sound_panel)
@@ -679,6 +693,68 @@ class PreviewApp(QMainWindow):
         row_perm.addStretch(1)
         perm_l.addLayout(row_perm)
         more_l.addWidget(perm)
+
+        click = QGroupBox("开钓第一下")
+        click_l = QVBoxLayout(click)
+        hint_click = QLabel(
+            "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
+        )
+        hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+        hint_click.setWordWrap(True)
+        click_l.addWidget(hint_click)
+        self.bar_delay = SingleRangeBar(
+            title="等待",
+            vmin=0.0,
+            vmax=5.0,
+            value=(float(s.click_delay_lo_s), float(s.click_delay_hi_s)),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_delay.rangeChanged.connect(self._on_click_timing_changed)
+        click_l.addWidget(self.bar_delay)
+        self.bar_hold = SingleRangeBar(
+            title="长按",
+            vmin=0.0,
+            vmax=5.0,
+            value=(float(s.click_hold_lo_s), float(s.click_hold_hi_s)),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_hold.rangeChanged.connect(self._on_click_timing_changed)
+        click_l.addWidget(self.bar_hold)
+        self.bar_after = SingleRangeBar(
+            title="松开后",
+            vmin=0.0,
+            vmax=5.0,
+            value=(float(s.click_after_lo_s), float(s.click_after_hi_s)),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_after.rangeChanged.connect(self._on_click_timing_changed)
+        click_l.addWidget(self.bar_after)
+        more_l.addWidget(click)
+
+        pack = QGroupBox("打包默认")
+        pack_l = QVBoxLayout(pack)
+        hint_pack = QLabel(
+            "把当前玩法配置写入 assets/shell_settings.json，提交后直接打包即可；"
+            "不含窗位置/设备名等本机项"
+        )
+        hint_pack.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+        hint_pack.setWordWrap(True)
+        pack_l.addWidget(hint_pack)
+        self.btn_save_bundled = QPushButton("写入打包默认")
+        self.btn_save_bundled.setObjectName("btnPrimary")
+        self.btn_save_bundled.setToolTip(
+            "仅源码运行可用；写入仓库 assets/shell_settings.json"
+        )
+        self.btn_save_bundled.clicked.connect(self._on_save_bundled_defaults)
+        if is_frozen_app():
+            self.btn_save_bundled.setEnabled(False)
+            self.btn_save_bundled.setToolTip("已打包应用无法改内置默认")
+        pack_l.addWidget(self.btn_save_bundled)
+        more_l.addWidget(pack)
+
         more_l.addStretch(1)
         more_scroll.setWidget(more_inner)
         more_page_l = QVBoxLayout(page_more)
@@ -727,12 +803,18 @@ class PreviewApp(QMainWindow):
 
     @staticmethod
     def _format_splash_trigger(detail: str) -> str:
-        """splash|相似|间隔s|按住s|阈值 → 主控文案。"""
+        """splash|相似|等待s|按住s|松开后s|阈值 → 主控文案（兼容旧 5 段）。"""
         parts = (detail or "").split("|")
+        if len(parts) >= 6 and parts[0] == "splash":
+            return (
+                f"声音触发 · 相似 {parts[1]} · "
+                f"等待 {parts[2]}s · 按住 {parts[3]}s · "
+                f"松开后 {parts[4]}s · 阈值 {parts[5]}"
+            )
         if len(parts) >= 5 and parts[0] == "splash":
             return (
                 f"声音触发 · 相似 {parts[1]} · "
-                f"间隔 {parts[2]}s 后按下 · 按住 {parts[3]}s · 阈值 {parts[4]}"
+                f"等待 {parts[2]}s · 按住 {parts[3]}s · 阈值 {parts[4]}"
             )
         if detail:
             return f"声音触发 · 准备点第一下 · {detail}"
@@ -794,6 +876,15 @@ class PreviewApp(QMainWindow):
             if self._sound_panel is not None
             else self._settings.audio_device_name
         )
+        d_lo, d_hi = self.bar_delay.range()
+        h_lo, h_hi = self.bar_hold.range()
+        a_lo, a_hi = self.bar_after.range()
+        if d_hi < d_lo:
+            d_lo, d_hi = d_hi, d_lo
+        if h_hi < h_lo:
+            h_lo, h_hi = h_hi, h_lo
+        if a_hi < a_lo:
+            a_lo, a_hi = a_hi, a_lo
         self._settings = ShellSettings(
             sound_threshold=thr,
             press_lo=plo,
@@ -812,6 +903,12 @@ class PreviewApp(QMainWindow):
             window_y=int(wy),
             window_w=int(ww),
             window_h=int(wh),
+            click_delay_lo_s=d_lo,
+            click_delay_hi_s=d_hi,
+            click_hold_lo_s=h_lo,
+            click_hold_hi_s=h_hi,
+            click_after_lo_s=a_lo,
+            click_after_hi_s=a_hi,
         )
         save_shell_settings(self._settings)
 
@@ -850,6 +947,19 @@ class PreviewApp(QMainWindow):
 
     def _on_sound_device_persist(self, _name: str) -> None:
         self._persist_settings()
+
+    def _on_click_timing_changed(self, *_args) -> None:
+        self._apply_click_timing_from_ui()
+        self._persist_settings()
+
+    def _apply_click_timing_from_ui(self) -> None:
+        d_lo, d_hi = self.bar_delay.range()
+        h_lo, h_hi = self.bar_hold.range()
+        a_lo, a_hi = self.bar_after.range()
+        if self._sound_panel is not None:
+            self._sound_panel.set_click_timing(
+                d_lo, d_hi, h_lo, h_hi, a_lo, a_hi
+            )
 
     def _on_ranges_changed(self, *_args) -> None:
         self._persist_settings()
@@ -1039,6 +1149,22 @@ class PreviewApp(QMainWindow):
         if was_visible:
             self.show()
         self._persist_settings()
+
+    def _on_save_bundled_defaults(self) -> None:
+        self._persist_settings()
+        try:
+            path = save_bundled_shell_settings(self._settings)
+        except Exception as exc:  # noqa: BLE001
+            QMessageBox.warning(self, "打包默认", str(exc))
+            self.lbl_hint.setText(f"写入打包默认失败：{exc}")
+            return
+        self.lbl_hint.setText(f"已写入打包默认 · {path}")
+        self._main_log(f"写入打包默认 · {path}")
+        QMessageBox.information(
+            self,
+            "打包默认",
+            f"已写入：\n{path}\n\n提交后打包即可带上当前玩法默认。",
+        )
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()

@@ -27,7 +27,7 @@ Albion 拉鱼：**模拟器**测算法 + **真机自动拉鱼**。方案索引�
 | `packaging/` | macOS .app / Windows onedir 打包 |
 | `.github/workflows/release.yml` | tag 触发双端构建并上传 Release |
 | `run_preview_ui.py` | 单文件入口（等价 preview --ui） |
-| `assets/` | 运行时素材与几何 metrics；含默认水花模板 `audio/splash_template.npy` |
+| `assets/` | 运行时素材与几何 metrics；含默认水花模板 `audio/*.npy`；壳打包默认 `shell_settings.json` |
 | `data/` | ROI / 截图 / 调试输出 |
 | `docs/` | 方案索引 |
 | `docs/simulator/` | 模拟器方案 |
