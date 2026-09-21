@@ -1,0 +1,9 @@
+{
+  "sound_threshold": 0.7,
+  "press_lo": 70.60000000000001,
+  "press_hi": 73.9,
+  "release_lo": 76.60000000000001,
+  "release_hi": 79.2,
+  "press_interval_s": 0.0,
+  "stay_on_top": true
+}

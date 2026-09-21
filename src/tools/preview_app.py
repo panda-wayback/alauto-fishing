@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSlider,
+    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -71,9 +72,19 @@ from autofish.topics import (
     Topic,
 )
 from common import permissions as perms
+from tools.shell_config import ShellSettings, load_shell_settings, save_shell_settings
+from tools.shell_theme import (
+    DANGER,
+    SUCCESS,
+    TEXT_FAINT,
+    TEXT_MUTED,
+    WARN,
+    global_qss,
+    preview_canvas_qss,
+)
 from tools.bar_mark_canvas import BarMarkCanvas
 from tools.dual_range_axis import DualRangeAxis
-from tools.first_click_trigger_window import FirstClickTriggerPanel
+from tools.first_click_trigger_window import AudioBacktestPanel, FirstClickTriggerPanel
 
 IDLE = "idle"
 SELECT = "select"
@@ -161,9 +172,7 @@ class ImageCanvas(QLabel):
         self._title = title
         self.setMinimumSize(320, 200)
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet(
-            "background:#f5f5f7; color:#3c3c43; border:1px solid #d2d2d7;"
-        )
+        self.setStyleSheet(preview_canvas_qss())
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._rgb: np.ndarray | None = None
         self._pixmap = QPixmap()
@@ -280,82 +289,14 @@ def _hold_word(on: bool | None) -> str:
 class PreviewApp(QMainWindow):
     def __init__(self, roi_path: Path = DEFAULT_ROI_PATH) -> None:
         super().__init__()
-        self.setWindowTitle("Albion 拉鱼 · 调试壳 (PySide6)")
-        self.resize(440, 780)
-        self.setStyleSheet(
-            """
-            QMainWindow, QWidget {
-                background: #f5f5f7;
-                color: #1d1d1f;
-            }
-            QGroupBox {
-                font-weight: 600;
-                border: 1px solid #d2d2d7;
-                border-radius: 6px;
-                margin-top: 8px;
-                padding-top: 8px;
-                background: #ffffff;
-            }
-            QGroupBox::title {
-                subcontrol-origin: margin;
-                left: 8px;
-                padding: 0 4px;
-                color: #1d1d1f;
-            }
-            QPlainTextEdit {
-                background: #f0f2f5;
-                color: #3c3c43;
-                border: 1px solid #d2d2d7;
-                border-radius: 8px;
-                padding: 6px;
-                selection-background-color: #007aff;
-                selection-color: #ffffff;
-            }
-            QPlainTextEdit#mainLog {
-                background: #eef1f5;
-                color: #1d1d1f;
-                border: 1px solid #c7c7cc;
-                border-left: 3px solid #007aff;
-                font-size: 12px;
-            }
-            QPushButton {
-                background: #ffffff;
-                border: 1px solid #d2d2d7;
-                border-radius: 4px;
-                padding: 4px 10px;
-            }
-            QPushButton:hover { background: #e8e8ed; }
-            QPushButton:disabled { color: #8e8e93; }
-            QCheckBox {
-                color: #1d1d1f;
-                spacing: 8px;
-            }
-            QCheckBox::indicator {
-                width: 15px;
-                height: 15px;
-                max-width: 15px;
-                max-height: 15px;
-                border: 1.5px solid #8e8e93;
-                border-radius: 3px;
-                background: #ffffff;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #007aff;
-            }
-            QCheckBox::indicator:checked,
-            QCheckBox::indicator:checked:hover,
-            QCheckBox::indicator:checked:pressed,
-            QCheckBox::indicator:checked:disabled,
-            QCheckBox:!active::indicator:checked {
-                background: #007aff;
-                border-color: #007aff;
-            }
-            QLabel { color: #1d1d1f; }
-            QScrollArea { background: transparent; border: none; }
-            """
+        self.setWindowTitle("Albion 拉鱼")
+        self.resize(460, 800)
+        self.setStyleSheet(global_qss())
+        self._settings = load_shell_settings()
+        # 默认置顶：点到游戏窗口时调试壳不被盖住（可被持久化覆盖）
+        self.setWindowFlag(
+            Qt.WindowType.WindowStaysOnTopHint, bool(self._settings.stay_on_top)
         )
-        # 默认置顶：点到游戏窗口时调试壳不被盖住
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
         self.roi_path = roi_path
         self.roi: Roi | None = None
@@ -365,6 +306,8 @@ class PreviewApp(QMainWindow):
         self.screen_grab: ScreenGrab | None = None
         self._pipe: AutofishPipeline | None = None
         self._holding: bool | None = None
+        self._last_cast_session: CastSessionState | None = None
+        self._had_bobber: bool | None = None
         self._intent_reason = ""
         self._last_detect_ms: float = 0.0
         self._ms_window: deque[float] = deque(maxlen=60)
@@ -372,8 +315,10 @@ class PreviewApp(QMainWindow):
         self._mon_ui_ts: float = 0.0
         self._mon_ui_min_dt: float = 1.0 / 15.0  # 预览最多 ~15fps，避免 Windows 卡死
         self._mouse_mismatch_logged = False
-        self._logs: deque[str] = deque(maxlen=80)
+        self._logs: deque[str] = deque(maxlen=200)
+        self._cal_logs: deque[str] = deque(maxlen=200)
         self._sound_panel: FirstClickTriggerPanel | None = None
+        self._backtest_panel: AudioBacktestPanel | None = None
         self._bar_ref_saved = False
         self._bar_ref_wait_bobber = False
         self._bridge = BusBridge()
@@ -390,7 +335,7 @@ class PreviewApp(QMainWindow):
         if self.roi is not None:
             self._ensure_monitor_on()
             self.lbl_hint.setText("ROI 就绪 · 监控中")
-            self._log("启动 · Capture/Detect 常开")
+            self._cal_log("启动 · Capture/Detect 常开")
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)
@@ -405,17 +350,28 @@ class PreviewApp(QMainWindow):
         root = QWidget()
         self.setCentralWidget(root)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(10)
 
-        # 导航：主控 | 标定 | 声音 | 更多
+        # 导航：主控 | 自动拉漂配置 | 声音开钓配置 | 回测 | 更多
         nav = QHBoxLayout()
+        nav.setSpacing(2)
         self._nav_btns: list[QPushButton] = []
         self.stack = QStackedWidget()
-        for i, name in enumerate(("主控", "标定", "声音", "更多")):
+        nav_items = (
+            ("主控", "日常开关与状态"),
+            ("拉漂配置", "自动拉漂配置 · ROI / 条界 / 策略"),
+            ("开钓配置", "声音开钓配置 · 设备 / 模板 / 阈值"),
+            ("回测", "长录音与命中回测"),
+            ("更多", "权限与置顶"),
+        )
+        for i, (name, tip) in enumerate(nav_items):
             btn = QPushButton(name)
+            btn.setObjectName("navBtn")
             btn.setCheckable(True)
             btn.setChecked(i == 0)
+            btn.setToolTip(tip)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
             btn.clicked.connect(lambda _=False, idx=i: self._goto_page(idx))
             nav.addWidget(btn)
             self._nav_btns.append(btn)
@@ -424,16 +380,28 @@ class PreviewApp(QMainWindow):
 
         # —— 主控 ——
         page_main = QWidget()
-        main_l = QVBoxLayout(page_main)
+        main_root = QVBoxLayout(page_main)
+        main_root.setContentsMargins(0, 0, 0, 0)
+        main_root.setSpacing(0)
+        main_split = QSplitter(Qt.Orientation.Vertical)
+        main_split.setChildrenCollapsible(False)
+
+        main_top = QWidget()
+        main_l = QVBoxLayout(main_top)
         main_l.setContentsMargins(0, 0, 0, 0)
         main_l.setSpacing(8)
         switches = QGroupBox("开关")
         sw = QVBoxLayout(switches)
+        sw.setSpacing(8)
         self.chk_b = QCheckBox("自动拉漂")
+        self.chk_b.setObjectName("switchRow")
+        self.chk_b.setCursor(Qt.CursorShape.PointingHandCursor)
         self.chk_b.setToolTip("Decide + Act：有漂后按策略按住/松开")
         self.chk_b.toggled.connect(self._on_b_toggled)
         sw.addWidget(self.chk_b)
         self.chk_a = QCheckBox("声音开钓")
+        self.chk_a.setObjectName("switchRow")
+        self.chk_a.setCursor(Qt.CursorShape.PointingHandCursor)
         self.chk_a.setToolTip("听开钓水声 → 点第一下 → 等漂后交给自动拉漂")
         self.chk_a.toggled.connect(self._on_a_toggled)
         sw.addWidget(self.chk_a)
@@ -441,72 +409,91 @@ class PreviewApp(QMainWindow):
 
         readout = QFrame()
         readout.setObjectName("readout")
-        readout.setStyleSheet(
-            "QFrame#readout { background:#ffffff; border:1px solid #d2d2d7;"
-            " border-radius:3px; }"
-        )
         ro = QVBoxLayout(readout)
-        ro.setContentsMargins(6, 4, 6, 4)
-        ro.setSpacing(1)
+        ro.setContentsMargins(12, 10, 12, 10)
+        ro.setSpacing(4)
         row1 = QHBoxLayout()
-        row1.setSpacing(6)
+        row1.setSpacing(8)
         self.lbl_pos = QLabel("POS: 无漂")
-        self.lbl_pos.setStyleSheet("font-size:13px; font-weight:600; color:#c62828;")
+        self.lbl_pos.setStyleSheet(
+            f"font-size:16px; font-weight:700; color:{DANGER};"
+        )
         row1.addWidget(self.lbl_pos)
         self.lbl_strat_detail = QLabel("")
-        self.lbl_strat_detail.setStyleSheet("font-size:12px; color:#6e6e73;")
+        self.lbl_strat_detail.setStyleSheet(
+            f"font-size:12px; color:{TEXT_MUTED};"
+        )
         row1.addWidget(self.lbl_strat_detail, 1)
         self.lbl_perf = QLabel("")
-        self.lbl_perf.setStyleSheet("font-size:11px; color:#8e8e93;")
+        self.lbl_perf.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
         row1.addWidget(self.lbl_perf)
         ro.addLayout(row1)
         self.lbl_session = QLabel("会话：—")
-        self.lbl_session.setStyleSheet("font-size:12px; color:#3c3c43;")
+        self.lbl_session.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
         ro.addWidget(self.lbl_session)
         self.lbl_mouse = QLabel("意图 — · 程序 — · 系统 —")
-        self.lbl_mouse.setStyleSheet("font-size:12px; color:#3c3c43;")
+        self.lbl_mouse.setStyleSheet(f"font-size:13px; font-weight:600; color:{TEXT_MUTED};")
         ro.addWidget(self.lbl_mouse)
-        self.lbl_hint = QLabel("有 ROI 则持续监控；框选在「标定」")
-        self.lbl_hint.setStyleSheet("font-size:11px; color:#8e8e93;")
+        self.lbl_hint = QLabel("有 ROI 则持续监控；框选在「自动拉漂配置」")
+        self.lbl_hint.setObjectName("hint")
+        self.lbl_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
         ro.addWidget(self.lbl_hint)
         self.lbl_intent = QLabel("")
         self.lbl_intent.hide()
         self.lbl_mouse_diag = QLabel("")
-        self.lbl_mouse_diag.setStyleSheet("color:#6e6e73;")
+        self.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
         self.lbl_mouse_diag.setWordWrap(True)
         ro.addWidget(self.lbl_mouse_diag)
         main_l.addWidget(readout)
+        main_l.addStretch(1)
+        main_split.addWidget(main_top)
 
-        log_title = QLabel("日志")
-        log_title.setStyleSheet(
-            "font-weight:600; color:#6e6e73; font-size:12px; padding-top:2px;"
-        )
-        main_l.addWidget(log_title)
+        log_wrap = QWidget()
+        log_l = QVBoxLayout(log_wrap)
+        log_l.setContentsMargins(0, 8, 0, 0)
+        log_l.setSpacing(4)
+        log_title = QLabel("状态日志")
+        log_title.setObjectName("sectionTitle")
+        log_l.addWidget(log_title)
         self.log = QPlainTextEdit()
         self.log.setObjectName("mainLog")
         self.log.setReadOnly(True)
-        self.log.setMinimumHeight(160)
-        self.log.setPlaceholderText("运行日志会显示在这里…")
-        main_l.addWidget(self.log, 1)
+        self.log.setMinimumHeight(120)
+        self.log.setPlaceholderText("最新在上 · 游戏开始/结束 · A/B · 声音触发…")
+        log_l.addWidget(self.log, 1)
+        main_split.addWidget(log_wrap)
+        main_split.setStretchFactor(0, 1)
+        main_split.setStretchFactor(1, 2)
+        main_split.setSizes([180, 320])
+        main_root.addWidget(main_split)
         self.stack.addWidget(page_main)
 
-        # —— 标定 ——
+        # —— 自动拉漂配置（ROI / BAR / 策略 / 本页日志）——
         page_cal = QWidget()
+        cal_root = QVBoxLayout(page_cal)
+        cal_root.setContentsMargins(0, 0, 0, 0)
+        cal_root.setSpacing(0)
+        cal_split = QSplitter(Qt.Orientation.Vertical)
+        cal_split.setChildrenCollapsible(False)
+
         cal_scroll = QScrollArea()
         cal_scroll.setWidgetResizable(True)
         cal_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         cal_inner = QWidget()
         cal_l = QVBoxLayout(cal_inner)
         cal_l.setContentsMargins(0, 0, 4, 0)
-        vision = QGroupBox("标定 · ROI / MONITOR / BAR")
+        vision = QGroupBox("画面 · ROI / MONITOR / BAR")
         vis = QVBoxLayout(vision)
         vis.setSpacing(8)
         row_mon = QHBoxLayout()
         self.btn_capture = QPushButton("截屏框选")
         self.btn_rebox = QPushButton("重框")
         self.btn_confirm = QPushButton("确认框选")
+        self.btn_confirm.setObjectName("btnPrimary")
         self.btn_cancel = QPushButton("取消框选")
+        self.btn_cancel.setObjectName("btnGhost")
         self.btn_roi_default = QPushButton("恢复默认框")
+        self.btn_roi_default.setObjectName("btnGhost")
         self.btn_capture.clicked.connect(self._capture_fullscreen)
         self.btn_rebox.clicked.connect(self._load_screen_for_select)
         self.btn_confirm.clicked.connect(self._confirm_selection)
@@ -523,14 +510,14 @@ class PreviewApp(QMainWindow):
         row_mon.addStretch(1)
         vis.addLayout(row_mon)
         self.monitor = ImageCanvas("MONITOR · 等待截屏")
-        self.monitor.setMinimumHeight(220)
+        self.monitor.setMinimumHeight(180)
         vis.addWidget(self.monitor)
         bar_title = QHBoxLayout()
         bar_lbl = QLabel("BAR · 条界标记")
-        bar_lbl.setStyleSheet("font-weight:600;")
+        bar_lbl.setObjectName("sectionTitle")
         bar_title.addWidget(bar_lbl)
         self.lbl_bar_hint = QLabel("蓝=程序 黄=手动")
-        self.lbl_bar_hint.setStyleSheet("color:#6e6e73;")
+        self.lbl_bar_hint.setStyleSheet(f"color:{TEXT_MUTED};")
         bar_title.addWidget(self.lbl_bar_hint, 1)
         self.btn_bar_refresh = QPushButton("刷新参考图")
         self.btn_bar_refresh.setToolTip(
@@ -539,30 +526,96 @@ class PreviewApp(QMainWindow):
         self.btn_bar_refresh.clicked.connect(self._refresh_bar_ref)
         bar_title.addWidget(self.btn_bar_refresh)
         self.btn_bar_clear = QPushButton("清除我的标记")
+        self.btn_bar_clear.setObjectName("btnGhost")
         self.btn_bar_clear.clicked.connect(self._clear_manual_bar)
         bar_title.addWidget(self.btn_bar_clear)
         vis.addLayout(bar_title)
         self.bar_canvas = BarMarkCanvas()
-        self.bar_canvas.setMinimumHeight(180)
+        self.bar_canvas.setMinimumHeight(140)
         self.bar_canvas.manual_changed.connect(self._on_manual_bar_changed)
         vis.addWidget(self.bar_canvas)
         cal_l.addWidget(vision)
+
+        strat = QGroupBox("拉漂策略")
+        strat_l = QVBoxLayout(strat)
+        row_pol = QHBoxLayout()
+        self.btn_apply_policy = QPushButton("应用策略")
+        self.btn_apply_policy.setObjectName("btnPrimary")
+        self.btn_apply_policy.clicked.connect(self._apply_policy)
+        row_pol.addWidget(self.btn_apply_policy)
+        row_pol.addStretch(1)
+        strat_l.addLayout(row_pol)
+        strat_l.addWidget(QLabel("拖动数轴 · 两段不重叠且间隔≥1 · 精度0.1"))
+        s = self._settings
+        self.range_axis = DualRangeAxis(
+            press=(s.press_lo, s.press_hi),
+            release=(s.release_lo, s.release_hi),
+            min_gap=1.0,
+        )
+        self.range_axis.rangesChanged.connect(self._on_ranges_changed)
+        strat_l.addWidget(self.range_axis)
+        row_gap = QHBoxLayout()
+        row_gap.addWidget(QLabel("按下间隔"))
+        self.sld_press_interval = QSlider(Qt.Orientation.Horizontal)
+        self.sld_press_interval.setRange(0, 300)
+        self.sld_press_interval.setSingleStep(10)
+        self.sld_press_interval.setPageStep(50)
+        self.sld_press_interval.setValue(int(round(s.press_interval_s * 1000)))
+        self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
+        self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
+        self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
+        row_gap.addWidget(self.sld_press_interval, 1)
+        self.lbl_press_interval = QLabel(f"{s.press_interval_s:.2f}s")
+        self.lbl_press_interval.setMinimumWidth(48)
+        row_gap.addWidget(self.lbl_press_interval)
+        row_gap.addWidget(QLabel("（0～0.3s）"))
+        strat_l.addLayout(row_gap)
+        cal_l.addWidget(strat)
         cal_l.addStretch(1)
         cal_scroll.setWidget(cal_inner)
-        cal_page_l = QVBoxLayout(page_cal)
-        cal_page_l.setContentsMargins(0, 0, 0, 0)
-        cal_page_l.addWidget(cal_scroll)
+        cal_split.addWidget(cal_scroll)
+
+        cal_log_wrap = QWidget()
+        cal_log_l = QVBoxLayout(cal_log_wrap)
+        cal_log_l.setContentsMargins(0, 4, 0, 0)
+        cal_log_l.setSpacing(2)
+        cal_log_title = QLabel("本页日志（开始/结束拉漂 · 最新在上）")
+        cal_log_title.setObjectName("sectionTitle")
+        cal_log_l.addWidget(cal_log_title)
+        self.cal_log = QPlainTextEdit()
+        self.cal_log.setObjectName("calLog")
+        self.cal_log.setReadOnly(True)
+        self.cal_log.setMinimumHeight(100)
+        self.cal_log.setPlaceholderText("开始拉漂 / 结束拉漂 / ROI…")
+        cal_log_l.addWidget(self.cal_log, 1)
+        cal_split.addWidget(cal_log_wrap)
+        cal_split.setStretchFactor(0, 3)
+        cal_split.setStretchFactor(1, 2)
+        cal_split.setSizes([420, 180])
+        cal_root.addWidget(cal_split)
         self.stack.addWidget(page_cal)
 
-        # —— 声音 ——
+        # —— 声音开钓配置 ——
         page_sound = QWidget()
         sound_l = QVBoxLayout(page_sound)
         sound_l.setContentsMargins(0, 0, 0, 0)
-        self._sound_panel = FirstClickTriggerPanel(self, log_fn=self._log)
+        self._sound_panel = FirstClickTriggerPanel(self)
+        self._sound_panel.set_threshold_value(
+            self._settings.sound_threshold, emit=False
+        )
+        self._sound_panel.on_threshold_changed(self._on_sound_threshold_persist)
         sound_l.addWidget(self._sound_panel)
         self.stack.addWidget(page_sound)
 
-        # —— 更多：权限 + 策略细项 ——
+        # —— 回测 ——
+        page_backtest = QWidget()
+        bt_l = QVBoxLayout(page_backtest)
+        bt_l.setContentsMargins(0, 0, 0, 0)
+        self._backtest_panel = AudioBacktestPanel(self._sound_panel, self)
+        bt_l.addWidget(self._backtest_panel)
+        self.stack.addWidget(page_backtest)
+
+        # —— 更多：权限 ——
         page_more = QWidget()
         more_scroll = QScrollArea()
         more_scroll.setWidgetResizable(True)
@@ -575,7 +628,7 @@ class PreviewApp(QMainWindow):
         perm = QGroupBox("权限")
         perm_l = QVBoxLayout(perm)
         self.chk_stay_on_top = QCheckBox("置顶")
-        self.chk_stay_on_top.setChecked(True)
+        self.chk_stay_on_top.setChecked(bool(self._settings.stay_on_top))
         self.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层")
         self.chk_stay_on_top.toggled.connect(self._on_stay_on_top_toggled)
         perm_l.addWidget(self.chk_stay_on_top)
@@ -603,44 +656,6 @@ class PreviewApp(QMainWindow):
         row_perm.addStretch(1)
         perm_l.addLayout(row_perm)
         more_l.addWidget(perm)
-
-        strat = QGroupBox("策略细调")
-        strat_l = QVBoxLayout(strat)
-        row_pol = QHBoxLayout()
-        self.btn_apply_policy = QPushButton("应用")
-        self.btn_apply_policy.clicked.connect(self._apply_policy)
-        row_pol.addWidget(self.btn_apply_policy)
-        row_pol.addStretch(1)
-        strat_l.addLayout(row_pol)
-        strat_l.addWidget(
-            QLabel("拖动数轴 · 两段不重叠且间隔≥1 · 精度0.1")
-        )
-        self.range_axis = DualRangeAxis(
-            press=(70.6, 74.4), release=(76.6, 79.2), min_gap=1.0
-        )
-        strat_l.addWidget(self.range_axis)
-        more_l.addWidget(strat)
-
-        act = QGroupBox("操作细调")
-        act_l = QVBoxLayout(act)
-        act_l.addWidget(QLabel("光标请放在游戏窗口上"))
-        row_gap = QHBoxLayout()
-        row_gap.addWidget(QLabel("按下间隔"))
-        self.sld_press_interval = QSlider(Qt.Orientation.Horizontal)
-        self.sld_press_interval.setRange(0, 300)
-        self.sld_press_interval.setSingleStep(10)
-        self.sld_press_interval.setPageStep(50)
-        self.sld_press_interval.setValue(0)
-        self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
-        self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
-        self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
-        row_gap.addWidget(self.sld_press_interval, 1)
-        self.lbl_press_interval = QLabel("0.00s")
-        self.lbl_press_interval.setMinimumWidth(48)
-        row_gap.addWidget(self.lbl_press_interval)
-        row_gap.addWidget(QLabel("（0～0.3s）"))
-        act_l.addLayout(row_gap)
-        more_l.addWidget(act)
         more_l.addStretch(1)
         more_scroll.setWidget(more_inner)
         more_page_l = QVBoxLayout(page_more)
@@ -672,20 +687,95 @@ class PreviewApp(QMainWindow):
             self.lbl_session.setText("会话：关")
         else:
             self.lbl_session.setText(f"会话：{cs.value}")
+        prev = self._last_cast_session
+        if prev is not None and cs != prev:
+            if cs == CastSessionState.FIRST_CLICK:
+                self._main_log(self._format_splash_trigger(snap.cast_detail))
+        self._last_cast_session = cs
+
+    @staticmethod
+    def _format_splash_trigger(detail: str) -> str:
+        """splash|相似|间隔s|按住s|阈值 → 主控文案。"""
+        parts = (detail or "").split("|")
+        if len(parts) >= 5 and parts[0] == "splash":
+            return (
+                f"声音触发 · 相似 {parts[1]} · "
+                f"间隔 {parts[2]}s 后按下 · 按住 {parts[3]}s · 阈值 {parts[4]}"
+            )
+        if detail:
+            return f"声音触发 · 准备点第一下 · {detail}"
+        return "声音触发 · 准备点第一下"
 
     def _log(self, msg: str) -> None:
-        line = f"{time.strftime('%H:%M:%S')}  {msg}"
-        self._logs.appendleft(line)
+        """细节日志不再进主控（保留调用点，避免大面积改动）。"""
+        _ = msg
+
+    def _main_log(self, msg: str) -> None:
+        """主控状态日志（最新在上）。"""
+        ts = time.strftime("%H:%M:%S")
+        parts = str(msg).splitlines() or [""]
+        block = f"{ts}  {parts[0]}"
+        if len(parts) > 1:
+            pad = " " * (len(ts) + 2)
+            block = block + "\n" + "\n".join(f"{pad}{p}" for p in parts[1:])
+        self._logs.appendleft(block)
         if getattr(self, "log", None) is not None:
             self.log.setPlainText("\n".join(self._logs))
+            self.log.verticalScrollBar().setValue(0)
+
+    def _cal_log(self, msg: str) -> None:
+        """自动拉漂配置页日志（最新在上）。"""
+        ts = time.strftime("%H:%M:%S")
+        parts = str(msg).splitlines() or [""]
+        block = f"{ts}  {parts[0]}"
+        if len(parts) > 1:
+            pad = " " * (len(ts) + 2)
+            block = block + "\n" + "\n".join(f"{pad}{p}" for p in parts[1:])
+        self._cal_logs.appendleft(block)
+        if getattr(self, "cal_log", None) is not None:
+            self.cal_log.setPlainText("\n".join(self._cal_logs))
+            self.cal_log.verticalScrollBar().setValue(0)
+
+    def _persist_settings(self) -> None:
+        plo, phi, rlo, rhi = self.range_axis.ranges()
+        thr = (
+            self._sound_panel.current_threshold()
+            if self._sound_panel is not None
+            else self._settings.sound_threshold
+        )
+        self._settings = ShellSettings(
+            sound_threshold=thr,
+            press_lo=plo,
+            press_hi=phi,
+            release_lo=rlo,
+            release_hi=rhi,
+            press_interval_s=self.sld_press_interval.value() / 1000.0,
+            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+        )
+        save_shell_settings(self._settings)
+
+    def _on_sound_threshold_persist(self, _thr: float) -> None:
+        self._persist_settings()
+
+    def _on_ranges_changed(self, *_args) -> None:
+        self._persist_settings()
+
+    def _policy_cfg_text(self) -> str:
+        low, high = self._current_policy_thresholds()
+        return f"配置 <{low:.1f}按 / >{high:.1f}松"
+
+    def _pos_text(self, pos: float | None) -> str:
+        if pos is None:
+            return "pos=无"
+        return f"pos={pos:.1f}"
 
     @staticmethod
     def _perm_style(ok: bool | None) -> str:
         if ok is True:
-            return "color:#48b46e; font-weight:600;"
+            return f"color:{SUCCESS}; font-weight:600;"
         if ok is False:
-            return "color:#d24e46; font-weight:600;"
-        return "color:#787c80;"
+            return f"color:{DANGER}; font-weight:600;"
+        return f"color:{TEXT_FAINT};"
 
     def _refresh_permissions(self) -> None:
         st = perms.current_status()
@@ -694,7 +784,7 @@ class PreviewApp(QMainWindow):
         self.lbl_perm_input.setText(st.input_label)
         # Windows 非管理员标黄提示，不算硬失败
         if st.platform == "win32" and st.is_admin is False:
-            self.lbl_perm_input.setStyleSheet("color:#c9a227; font-weight:600;")
+            self.lbl_perm_input.setStyleSheet(f"color:{WARN}; font-weight:600;")
         else:
             self.lbl_perm_input.setStyleSheet(self._perm_style(st.input_ok))
         if st.platform == "darwin":
@@ -721,7 +811,7 @@ class PreviewApp(QMainWindow):
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
         if was_visible:
             self.show()
-        self._log("窗口置顶 ON" if checked else "窗口置顶 OFF")
+        self._persist_settings()
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()
@@ -772,13 +862,13 @@ class PreviewApp(QMainWindow):
                 self.phase = READY
                 tag = "手动" if src == ROI_SOURCE_MANUAL else "默认"
                 self.lbl_hint.setText(f"ROI 已载入（{tag}）")
-                self._log(
+                self._cal_log(
                     f"载入 ROI {self.roi.width}x{self.roi.height} · {tag}"
                 )
                 self._apply_saved_bar_mark()
                 self._load_bar_ref_image()
                 if load_bar_mark(self.roi_path) is not None:
-                    self._log("已载入上次条界标记")
+                    self._cal_log("已载入上次条界标记")
                 return
             # 无存盘：主屏居中 1/4×1/4 默认框
             self._apply_default_roi(persist=True, reason="启动无存盘")
@@ -794,7 +884,7 @@ class PreviewApp(QMainWindow):
             save_roi(self.roi, self.roi_path, source=ROI_SOURCE_DEFAULT)
         self.phase = READY
         self.lbl_hint.setText("默认居中框")
-        self._log(
+        self._cal_log(
             f"{reason} · 默认 ROI {self.roi.width}x{self.roi.height} "
             f"@({self.roi.left},{self.roi.top}) · 屏 {sw}x{sh}"
         )
@@ -815,7 +905,7 @@ class PreviewApp(QMainWindow):
         self._refresh_monitor()
         self._ensure_monitor_on()
         self.lbl_hint.setText("已恢复默认框 · 监控中")
-        self._log("已恢复默认居中框并开监控")
+        self._cal_log("已恢复默认居中框并开监控")
 
     def _apply_saved_bar_mark(self) -> None:
         mark = load_bar_mark(self.roi_path)
@@ -840,7 +930,7 @@ class PreviewApp(QMainWindow):
             det = get_detector()
             self.bar_canvas.set_program_bar(getattr(det, "program_bar", None))
         except Exception as exc:  # noqa: BLE001
-            self._log(f"参考图载入失败：{exc}")
+            self._cal_log(f"参考图载入失败：{exc}")
 
     def _save_bar_ref(self, rgb: np.ndarray) -> None:
         import cv2
@@ -857,12 +947,12 @@ class PreviewApp(QMainWindow):
         if self._bar_ref_wait_bobber:
             self._bar_ref_wait_bobber = False
             self.btn_bar_refresh.setText("刷新参考图")
-            self._log("已取消等待参考图")
+            self._cal_log("已取消等待参考图")
             self.lbl_hint.setText("已取消等待参考图")
             return
         self._bar_ref_wait_bobber = True
         self.btn_bar_refresh.setText("等待鱼漂…")
-        self._log("刷新参考图：等待下一次鱼漂识别")
+        self._cal_log("刷新参考图：等待下一次鱼漂识别")
         self.lbl_hint.setText("等待鱼漂出现后自动更新参考图")
 
     def _maybe_commit_bar_ref_wait(self, event: PosEvent) -> None:
@@ -876,14 +966,14 @@ class PreviewApp(QMainWindow):
             self.bar_canvas.set_program_bar(det.program_bar)
         self._bar_ref_wait_bobber = False
         self.btn_bar_refresh.setText("刷新参考图")
-        self._log("已刷新条界参考图（等漂命中）")
+        self._cal_log("已刷新条界参考图（等漂命中）")
         self.lbl_hint.setText("参考图已更新")
 
     def _clear_manual_bar(self) -> None:
         clear_bar_mark(self.roi_path)
         apply_manual_bar(None)
         self.bar_canvas.clear_manual()
-        self._log("已清除手动条界")
+        self._cal_log("已清除手动条界")
 
     def _on_manual_bar_changed(self, box: object) -> None:
         if self.roi is None:
@@ -944,7 +1034,8 @@ class PreviewApp(QMainWindow):
         self._publish_press_interval()
 
     def _on_press_interval_released(self) -> None:
-        self._log(f"按下间隔 {self.lbl_press_interval.text()}")
+        self._persist_settings()
+        self._cal_log(f"按下间隔 {self.lbl_press_interval.text()}")
 
     def _on_frame_bus(self, event: FrameEvent) -> None:
         self._bridge.frame.emit(event)
@@ -973,6 +1064,20 @@ class PreviewApp(QMainWindow):
         self._update_bar_panel(event)
         if self._pipe is not None and self._pipe.decide_on:
             self._refresh_strategy(event.pos, self._intent_reason)
+        # 游戏开始/结束：以是否识别到鱼漂为准
+        has_bobber = event.hit is not None
+        prev = self._had_bobber
+        if prev is not None and has_bobber != prev:
+            if has_bobber:
+                if event.hit is not None and event.hit.bar_width > 0:
+                    self._main_log(
+                        f"游戏开始 · 出漂 pos={event.hit.pos:.1f} · {self._policy_cfg_text()}"
+                    )
+                else:
+                    self._main_log(f"游戏开始 · 出漂（暂无条） · {self._policy_cfg_text()}")
+            else:
+                self._main_log(f"游戏结束 · 丢漂 · {self._policy_cfg_text()}")
+        self._had_bobber = has_bobber
 
     def _update_bar_panel(self, event: PosEvent) -> None:
         det = get_detector()
@@ -992,9 +1097,9 @@ class PreviewApp(QMainWindow):
         if event.hit is not None and event.frame is not None and not self._bar_ref_saved:
             self._save_bar_ref(event.frame)
             if event.hit.bar_width <= 0:
-                self._log("已出条界参考图（有漂·无条，可手动标左右）")
+                self._cal_log("已出条界参考图（有漂·无条，可手动标左右）")
             else:
-                self._log("已自动保存条界参考图")
+                self._cal_log("已自动保存条界参考图")
         self._maybe_commit_bar_ref_wait(event)
         man = getattr(det, "manual_bar", None)
         if man is not None:
@@ -1029,12 +1134,17 @@ class PreviewApp(QMainWindow):
         )
 
     def _on_intent_ui(self, event: ActionIntentEvent) -> None:
+        prev = self._holding
         self._holding = event.holding
         self._intent_reason = event.reason
         self._refresh_strategy(event.pos, event.reason)
-        pos_s = "—" if event.pos is None else f"{event.pos:.1f}"
-        want = "要按住" if event.holding else "要松开"
-        self._log(f"策略 {want} pos={pos_s} {event.reason}")
+        cfg = self._policy_cfg_text()
+        pos_s = self._pos_text(event.pos)
+        reason = f" · {event.reason}" if event.reason else ""
+        if event.holding and prev is not True:
+            self._cal_log(f"开始拉漂 · {pos_s} · {cfg}{reason}")
+        elif (not event.holding) and prev is True:
+            self._cal_log(f"结束拉漂 · {pos_s} · {cfg}{reason}")
         self._refresh_mouse()
 
     def _refresh_strategy(
@@ -1063,17 +1173,17 @@ class PreviewApp(QMainWindow):
         if self.hit is None:
             self.lbl_pos.setText("POS: 无漂")
             self.lbl_pos.setStyleSheet(
-                "font-size:13px; font-weight:600; color:#c62828;"
+                f"font-size:16px; font-weight:700; color:{DANGER};"
             )
         elif self.hit.bar_width <= 0:
             self.lbl_pos.setText("POS: 有漂·无条")
             self.lbl_pos.setStyleSheet(
-                "font-size:13px; font-weight:600; color:#b86e00;"
+                f"font-size:16px; font-weight:700; color:{WARN};"
             )
         else:
             self.lbl_pos.setText(f"POS: {self.hit.pos:.1f}")
             self.lbl_pos.setStyleSheet(
-                "font-size:13px; font-weight:600; color:#2e7d32;"
+                f"font-size:16px; font-weight:700; color:{SUCCESS};"
             )
         ms = getattr(self, "_last_detect_ms", 0.0)
         self.lbl_perf.setText(f"{ms:.0f}ms")
@@ -1119,7 +1229,7 @@ class PreviewApp(QMainWindow):
                 None if self.hit is None else self.hit.pos
             )
             low, high = self._current_policy_thresholds()
-            self._log(f"自动拉漂 ON · 阈值 <{low:.1f} / >{high:.1f}")
+            self._main_log(f"自动拉漂 ON · 配置 <{low:.1f}按 / >{high:.1f}松")
         else:
             if pipe.act_on:
                 pipe.stop_act()
@@ -1127,7 +1237,7 @@ class PreviewApp(QMainWindow):
                 pipe.stop_decide()
             self._holding = None
             self._refresh_strategy()
-            self._log("自动拉漂 OFF")
+            self._main_log("自动拉漂 OFF")
         self._refresh_mouse()
 
     def _on_a_toggled(self, checked: bool) -> None:
@@ -1142,6 +1252,7 @@ class PreviewApp(QMainWindow):
         if not checked:
             self._sound_panel.set_session_enabled(False)
             self.lbl_hint.setText("声音开钓已关")
+            self._main_log("声音开钓 OFF")
             return
         try:
             self._sound_panel.set_session_enabled(True)
@@ -1151,16 +1262,17 @@ class PreviewApp(QMainWindow):
                 self._block_checks(True)
                 self.chk_a.setChecked(False)
                 self._block_checks(False)
-                self.lbl_hint.setText("请先到「声音」页监听并确认模板")
+                self.lbl_hint.setText("请先到「声音开钓配置」页监听并确认模板")
                 return
             self.lbl_hint.setText("声音开钓中")
+            self._main_log("声音开钓 ON")
         except Exception as exc:  # noqa: BLE001
             self._sound_panel.set_session_enabled(False)
             self._block_checks(True)
             self.chk_a.setChecked(False)
             self._block_checks(False)
             self.lbl_hint.setText(f"声音开钓失败：{exc}")
-            self._log(f"声音开钓失败：{exc}")
+            self._main_log(f"声音开钓失败：{exc}")
 
     def _apply_policy(self) -> bool:
         plo, phi, rlo, rhi = self.range_axis.ranges()
@@ -1175,7 +1287,8 @@ class PreviewApp(QMainWindow):
         pipe = self._ensure_pipe()
         pipe.set_decide_ranges(plo, phi, rlo, rhi)
         low, high = pipe.decide.current_thresholds
-        self._log(
+        self._persist_settings()
+        self._cal_log(
             f"策略已应用 · 当前 <{low:.1f} / >{high:.1f} · "
             f"范围 U({plo:.1f}～{phi:.1f})/U({rlo:.1f}～{rhi:.1f})"
         )
@@ -1249,10 +1362,10 @@ class PreviewApp(QMainWindow):
 
         if issues:
             self.lbl_mouse.setStyleSheet(
-                "font-size:16px; font-weight:600; color:#d24e46;"
+                f"font-size:14px; font-weight:600; color:{DANGER};"
             )
             self.lbl_mouse_diag.setText("异常：" + " / ".join(issues))
-            self.lbl_mouse_diag.setStyleSheet("color:#d24e46;")
+            self.lbl_mouse_diag.setStyleSheet(f"color:{DANGER};")
             if not self._mouse_mismatch_logged:
                 self._mouse_mismatch_logged = True
                 self._log(
@@ -1264,17 +1377,17 @@ class PreviewApp(QMainWindow):
                 )
         else:
             if yielding:
-                color = "#c9a227"
+                color = WARN
             elif free:
-                color = "#787c80"
+                color = TEXT_FAINT
             elif act_on and prog:
-                color = "#ff8c28"
+                color = WARN
             elif act_on:
-                color = "#48b46e"
+                color = SUCCESS
             else:
-                color = "#787c80"
+                color = TEXT_FAINT
             self.lbl_mouse.setStyleSheet(
-                f"font-size:16px; font-weight:600; color:{color};"
+                f"font-size:14px; font-weight:600; color:{color};"
             )
             if not act_on:
                 diag = "操作未启用 · 仍监视系统左键"
@@ -1285,13 +1398,13 @@ class PreviewApp(QMainWindow):
             else:
                 diag = "控鼠中 · 钓鱼态，按策略按/松"
             self.lbl_mouse_diag.setText(diag)
-            self.lbl_mouse_diag.setStyleSheet("color:#787c80;")
+            self.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
             self._mouse_mismatch_logged = False
 
     def _capture_fullscreen(self) -> None:
         if self._pipe and self._pipe.monitor_on:
             self._pipe.stop_monitor()
-            self._log("暂停截图 · 准备框选")
+            self._cal_log("暂停截图 · 准备框选")
         self.lbl_hint.setText("截屏中…")
         QApplication.processEvents()
         try:
@@ -1302,7 +1415,7 @@ class PreviewApp(QMainWindow):
             self.monitor.set_rgb(grab.rgb)
             self.monitor.set_selecting(True)
             self.lbl_hint.setText("拖拽框选张力条 → 确认框选")
-            self._log("已截全屏 · 请手框 ROI")
+            self._cal_log("已截全屏 · 请手框 ROI")
         except Exception as exc:  # noqa: BLE001
             self.lbl_hint.setText(f"截图失败：{exc}")
             QMessageBox.warning(self, "截屏失败", str(exc))
@@ -1313,7 +1426,7 @@ class PreviewApp(QMainWindow):
             self._pipe.stop_monitor()
             self.frame = None
             self.hit = None
-            self._log("暂停截图 · 准备重框")
+            self._cal_log("暂停截图 · 准备重框")
             self._clear_bar_on_rebox()
         try:
             self.screen_grab = load_screen(DEFAULT_SCREEN_PATH)
@@ -1345,7 +1458,7 @@ class PreviewApp(QMainWindow):
         self.monitor.set_selecting(False)
         pipe = self._ensure_pipe()
         pipe.set_roi_manual(roi)
-        self._log(f"手动手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
+        self._cal_log(f"手动手框 {roi.width}x{roi.height} · 已存盘并同步 mss")
         self._sync_buttons()
         self._refresh_monitor()
         self._ensure_monitor_on()
@@ -1359,7 +1472,7 @@ class PreviewApp(QMainWindow):
         self._apply_saved_bar_mark()
         if not pipe.monitor_on:
             pipe.start_monitor()
-            self._log("Capture+Detect 常开")
+            self._cal_log("Capture+Detect 常开")
         self.lbl_hint.setText("监控中")
 
     def _cancel_selection(self) -> None:
@@ -1372,6 +1485,9 @@ class PreviewApp(QMainWindow):
             self._ensure_monitor_on()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._backtest_panel is not None:
+            self._backtest_panel.shutdown()
+            self._backtest_panel = None
         if self._sound_panel is not None:
             self._sound_panel.shutdown()
             self._sound_panel = None
@@ -1391,6 +1507,12 @@ class PreviewApp(QMainWindow):
 
 def main() -> int:
     app = QApplication.instance() or QApplication(sys.argv)
+    # Fusion：让 QSS 按钮字色在 macOS 上可靠生效
+    from PySide6.QtWidgets import QStyleFactory
+
+    fusion = QStyleFactory.create("Fusion")
+    if fusion is not None:
+        app.setStyle(fusion)
     win = PreviewApp()
     win.show()
     return app.exec()

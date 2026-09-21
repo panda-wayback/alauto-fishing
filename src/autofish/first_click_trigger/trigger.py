@@ -25,13 +25,14 @@ if TYPE_CHECKING:
     from autofish.bus import AutofishBus
 
 
-_MIN_HOLD_S = 0.1
-_MAX_HOLD_S = 1.0
+_MIN_HOLD_S = 0.3
+_MAX_HOLD_S = 0.8
 _MIN_DELAY_BEFORE_CLICK_S = 0.2
 _MAX_DELAY_BEFORE_CLICK_S = 1.5
 _WAIT_BOBBER_TIMEOUT_S = 3.0
 _LOST_BOBBER_END_S = 1.0
-_DEFAULT_THRESHOLD = 0.72
+_WAIT_LISTEN_COOLDOWN_S = 3.0
+_DEFAULT_THRESHOLD = 0.70
 _RING_SECONDS = 5.0
 _MARK_SECONDS = 1.0
 _SILENT_DB = -55.0
@@ -46,9 +47,9 @@ def _db(rms: float) -> float:
 class FirstClickTrigger(WorkerBase):
     """
     开钓会话（A）：
-    WAIT →（水声）→ FIRST_CLICK（等 0.2～1.5s + 按住 0.1～1.0s）
-         → WAIT_BOBBER →（出漂）→ FISHING →（丢漂满 1s）→ WAIT
-    仅 WAIT 听声；A 关为 DISABLED。不订 ActionIntent。
+    WAIT →（水声）→ FIRST_CLICK（等 0.2～1.5s + 按住 0.3～0.8s）
+         → WAIT_BOBBER →（出漂）→ FISHING →（丢漂满 1s）→ WAIT（≥3s 再听）
+    仅 WAIT 且冷却已过才听声；A 关为 DISABLED。不订 ActionIntent。
     """
 
     def __init__(
@@ -79,7 +80,7 @@ class FirstClickTrigger(WorkerBase):
         self._session = CastSessionState.DISABLED
         self._lock = threading.Lock()
         self._log_lock = threading.Lock()
-        self._pending_logs: deque[str] = deque(maxlen=40)
+        self._pending_logs: deque[tuple[str, str]] = deque(maxlen=80)
         self._last_trigger_at = 0.0
         self._trigger_count = 0
         self._last_score = 0.0
@@ -87,7 +88,15 @@ class FirstClickTrigger(WorkerBase):
         self._running_mode = "等待标记"
         self._wait_bobber_since: float | None = None
         self._miss_since: float | None = None
+        self._listen_after: float = 0.0
         self._pos_subscribed = False
+        self._last_reject_log_at = 0.0
+        self._session_recording = False
+        self._session_chunks: list = []
+        self._session_ranges: list[tuple[float, float]] = []
+        self._session_range_start: float | None = None
+        self._session_samples: int = 0
+        self._session_started_at: float = 0.0
         if template_path is not None:
             self.load_template(template_path)
 
@@ -118,6 +127,25 @@ class FirstClickTrigger(WorkerBase):
     @property
     def has_template(self) -> bool:
         return self._matcher.has_template
+
+    @property
+    def is_session_recording(self) -> bool:
+        return self._session_recording
+
+    @property
+    def session_record_duration_s(self) -> float:
+        with self._lock:
+            return self._session_samples / float(max(self._audio.samplerate, 1))
+
+    @property
+    def session_mark_count(self) -> int:
+        with self._lock:
+            return len(self._session_ranges)
+
+    @property
+    def session_pending_range_start(self) -> float | None:
+        with self._lock:
+            return self._session_range_start
 
     @property
     def template_wave(self) -> "npt.NDArray[np.float32] | None":
@@ -158,8 +186,8 @@ class FirstClickTrigger(WorkerBase):
     def save_template(self, path: str | Path) -> None:
         self._matcher.save_template(path)
 
-    def set_template(self, wave) -> None:
-        self._matcher.set_template(wave)
+    def set_template(self, wave, *, trim_energy: bool = True) -> None:
+        self._matcher.set_template(wave, trim_energy=trim_energy)
         self._running_mode = "频谱模板匹配"
 
     def play_template(self) -> None:
@@ -219,6 +247,199 @@ class FirstClickTrigger(WorkerBase):
             self.set_template(wave)
         return wave
 
+    def session_recording_preview(self) -> tuple["npt.NDArray[np.float32] | None", int, list[tuple[float, float]]]:
+        """长录音进行中：返回当前已录波形副本与已闭合区间（供波形条刷新）。"""
+        with self._lock:
+            if not self._session_recording or not self._session_chunks:
+                return None, int(self._audio.samplerate), list(self._session_ranges)
+            wave = np.concatenate(self._session_chunks).astype(np.float32)
+            return wave, int(self._audio.samplerate), list(self._session_ranges)
+
+    def start_session_recording(self) -> None:
+        """开始长录音（需已在监听）；与开钓会话无关。"""
+        with self._lock:
+            if self._session_recording:
+                raise RuntimeError("已在长录音中")
+            self._session_recording = True
+            self._session_chunks = []
+            self._session_ranges = []
+            self._session_range_start = None
+            self._session_samples = 0
+            self._session_started_at = time.time()
+        self._emit_log("长录音开始 · 录完后在波形条上拖选水花区间", channel="backtest")
+
+    def mark_session_range_start(self) -> float:
+        """长录音中：记下区间起点。"""
+        with self._lock:
+            if not self._session_recording:
+                raise RuntimeError("请先开始长录音")
+            t = self._session_samples / float(max(self._audio.samplerate, 1))
+            self._session_range_start = t
+        self._emit_log(f"区间起点 · {t:.2f}s · 再点「区间终点」", channel="backtest")
+        return t
+
+    def mark_session_range_end(self) -> tuple[float, float]:
+        """长录音中：用当前时刻作终点，闭合一个水花区间。"""
+        with self._lock:
+            if not self._session_recording:
+                raise RuntimeError("请先开始长录音")
+            if self._session_range_start is None:
+                raise RuntimeError("请先点「区间起点」")
+            end = self._session_samples / float(max(self._audio.samplerate, 1))
+            start = float(self._session_range_start)
+            self._session_range_start = None
+            if end < start:
+                start, end = end, start
+            if end - start < 0.05:
+                raise RuntimeError("区间太短，请稍后再点终点")
+            self._session_ranges.append((start, end))
+            n = len(self._session_ranges)
+        self._emit_log(f"水花区间 #{n} · [{start:.2f},{end:.2f}]s", channel="backtest")
+        return start, end
+
+    def stop_session_recording(self) -> dict:
+        """停止长录音并落盘；有模板则自动回测。"""
+        from autofish.first_click_trigger.session_eval import (
+            backtest_recording,
+            format_backtest_report,
+            save_session,
+        )
+
+        with self._lock:
+            if not self._session_recording:
+                raise RuntimeError("当前没有长录音")
+            self._session_recording = False
+            chunks = self._session_chunks
+            ranges = list(self._session_ranges)
+            pending = self._session_range_start
+            self._session_chunks = []
+            self._session_ranges = []
+            self._session_range_start = None
+            self._session_samples = 0
+        if pending is not None:
+            self._emit_log(
+                f"未闭合的起点 @{pending:.2f}s 已丢弃", channel="backtest"
+            )
+        if not chunks:
+            raise RuntimeError("长录音为空")
+        wave = np.concatenate(chunks).astype(np.float32)
+        sr = int(self._audio.samplerate)
+        paths = save_session(wave, sr, ranges)
+        self._emit_log(
+            f"长录音已保存 {paths.root.name} · {len(wave)/sr:.1f}s · 区间 {len(ranges)} 段",
+            channel="backtest",
+        )
+        out: dict = {
+            "paths": paths,
+            "wave": wave,
+            "samplerate": sr,
+            "ranges": ranges,
+            "report": None,
+            "report_text": "",
+        }
+        if self._matcher.has_template:
+            report = backtest_recording(wave, sr, self._matcher, ranges)
+            text = format_backtest_report(report)
+            out["report"] = report
+            out["report_text"] = text
+        else:
+            self._emit_log(
+                "无模板，已保存录音；选区入库后再回测", channel="backtest"
+            )
+        return out
+
+    def backtest_last_or_dir(self, root: Path | None = None) -> dict:
+        from autofish.first_click_trigger.session_eval import (
+            backtest_recording,
+            format_backtest_report,
+            load_session,
+        )
+
+        if root is None:
+            raise RuntimeError("请指定会话目录")
+        wave, sr, ranges = load_session(root)
+        if not self._matcher.has_template:
+            raise RuntimeError("请先加载模板再回测")
+        report = backtest_recording(wave, sr, self._matcher, ranges)
+        text = format_backtest_report(report)
+        report["report_text"] = text
+        return report
+
+    def replace_template_from_range(
+        self,
+        wave: "npt.NDArray[np.float32]",
+        samplerate: int,
+        start_s: float,
+        end_s: float,
+        *,
+        save_user: bool = True,
+    ) -> "npt.NDArray[np.float32]":
+        """用自选区间精确替换模板（不做能量再裁切）；可写入模板库。"""
+        from autofish.first_click_trigger.paths import (
+            save_wave_as_library_template,
+            template_source_label,
+        )
+        from autofish.first_click_trigger.session_eval import extract_range
+
+        seg = extract_range(wave, samplerate, start_s, end_s)
+        self.set_template(seg, trim_energy=False)
+        if save_user:
+            path = save_wave_as_library_template(seg)
+            dur = len(seg) / float(max(samplerate, 1))
+            self._emit_log(
+                f"模板已入库 {template_source_label(path)} · {dur:.2f}s",
+                channel="backtest",
+            )
+        else:
+            dur = len(seg) / float(max(samplerate, 1))
+            self._emit_log(f"模板已更新（未入库）· {dur:.2f}s", channel="backtest")
+        return seg
+
+    def mark_heard_splash(self) -> dict:
+        """
+        你听到水花时点：保存近 2 秒录音，并用当前模板立刻复盘判定。
+        不改模板；用于对照「人耳听到 vs 程序判定」。
+        """
+        from autofish.first_click_trigger.paths import user_heard_marks_dir
+
+        with self._lock:
+            if not self._matcher.has_template:
+                raise RuntimeError("还没有模板，请先标记/加载模板")
+            n = int(self._audio.samplerate * 2.0)
+            if self._ring.size < self._audio.samplerate // 4:
+                raise RuntimeError("录音还太短，请先听几秒再标记「听到」")
+            wave = self._ring.last(n)
+            # 用当前匹配缓冲复盘（与实时判定同一状态）
+            buf = self._matcher._buffer.copy()
+            report = self._matcher.analyze_buffer(buf)
+            # 同时用近 2 秒片段再分析一份（给人听的那截）
+            clip_report = self._matcher.analyze_clip(wave)
+
+        out_dir = user_heard_marks_dir()
+        out_dir.mkdir(parents=True, exist_ok=True)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        path = out_dir / f"heard_{stamp}.npy"
+        np.save(path, wave)
+
+        ok = bool(report["would_trigger"])
+        self._emit_log(
+            f"听到标记 · 实时窗 相似 {report['score']:.2f} "
+            f"峰差 {report['prominence']:.3f} 突兀={report['abrupt']} "
+            f"→ {'会触发' if ok else '不触发'} "
+            f"{('· ' + report['reason']) if report['reason'] else ''}"
+        )
+        self._emit_log(
+            f"听到标记 · 近2秒片段 相似 {clip_report['score']:.2f} "
+            f"→ {'会触发' if clip_report['would_trigger'] else '不触发'} "
+            f"{('· ' + clip_report['reason']) if clip_report['reason'] else ''} "
+            f"· 已存 {path.name}"
+        )
+        return {
+            "path": str(path),
+            "live": report,
+            "clip": clip_report,
+        }
+
     def start(self) -> None:
         self._subscribe_pos(True)
         super().start()
@@ -253,15 +474,29 @@ class FirstClickTrigger(WorkerBase):
         elif state == CastSessionState.FISHING:
             self._wait_bobber_since = None
             self._miss_since = None
-        elif state in (CastSessionState.WAIT, CastSessionState.DISABLED):
+        elif state == CastSessionState.WAIT:
             self._wait_bobber_since = None
             self._miss_since = None
+            # 从本轮其它态回到 WAIT：冷却 3s，清匹配缓冲，避免拉鱼尾声误触
+            if prev not in (CastSessionState.WAIT, CastSessionState.DISABLED):
+                self._listen_after = time.time() + _WAIT_LISTEN_COOLDOWN_S
+                self._matcher.reset_buffer()
+                self._emit_log(f"听声冷却 {_WAIT_LISTEN_COOLDOWN_S:.0f}s")
+            elif prev == CastSessionState.DISABLED:
+                self._listen_after = 0.0
+        elif state == CastSessionState.DISABLED:
+            self._wait_bobber_since = None
+            self._miss_since = None
+            self._listen_after = 0.0
         if self.bus is not None:
             self.bus.publish_cast_session(
                 CastSessionEvent(state=state, ts=time.time(), detail=detail)
             )
         if prev != state:
-            self._emit_log(f"会话 {prev.value} → {state.value}" + (f" · {detail}" if detail else ""))
+            self._emit_log(
+                f"会话 {prev.value} → {state.value}"
+                + (f" · {detail}" if detail else "")
+            )
 
     def _on_pos(self, event: PosEvent) -> None:
         with self._lock:
@@ -316,22 +551,49 @@ class FirstClickTrigger(WorkerBase):
                 can_listen = False
                 with self._lock:
                     self._ring.extend(mono)
+                    if self._session_recording:
+                        self._session_chunks.append(mono.copy())
+                        self._session_samples += int(mono.size)
                     self._level_db = level_db
                     can_listen = (
                         self._session_enabled
                         and self._session == CastSessionState.WAIT
+                        and time.time() >= self._listen_after
                     )
                     if can_listen and self._matcher.has_template:
                         triggered, score = self._matcher.feed(mono)
                         self._last_score = score
+                        if (
+                            not triggered
+                            and self._matcher.last_reject
+                            and time.time() - self._last_reject_log_at >= 1.0
+                        ):
+                            self._last_reject_log_at = time.time()
+                            self._emit_log(
+                                f"未触发 · 相似 {score:.2f} · "
+                                f"环境≈{self._matcher.last_ambient:.2f} · "
+                                f"{self._matcher.last_reject}"
+                            )
                     elif can_listen and self._use_fallback:
                         triggered = self._detector.feed(mono)
                         score = float(rms)
                         self._last_score = rms
                     elif self._matcher.has_template:
-                        # 非 WAIT：仍喂匹配器以免内部状态陈旧，但忽略命中
+                        # 非可听：仍喂缓冲，清连击，忽略命中
                         _, score = self._matcher.feed(mono)
+                        self._matcher.clear_streak()
                         self._last_score = score
+                        if (
+                            self._session == CastSessionState.WAIT
+                            and time.time() < self._listen_after
+                            and score >= self._matcher.threshold
+                            and time.time() - self._last_reject_log_at >= 1.5
+                        ):
+                            left = max(0.0, self._listen_after - time.time())
+                            self._last_reject_log_at = time.time()
+                            self._emit_log(
+                                f"听声冷却中 · 剩余 {left:.1f}s · 相似 {score:.2f}"
+                            )
 
                 if triggered and can_listen:
                     self._do_first_click(score)
@@ -339,16 +601,26 @@ class FirstClickTrigger(WorkerBase):
             self._audio.stop()
             self._mouse.force_release()
 
-    def drain_logs(self) -> list[str]:
-        """取出后台线程产生的日志（供 UI 轮询）。"""
+    def drain_logs(self, channel: str | None = None) -> list[str]:
+        """取出后台日志；channel 为 sound|backtest，None 表示全部。"""
         with self._log_lock:
-            lines = list(self._pending_logs)
-            self._pending_logs.clear()
-        return lines
+            if channel is None:
+                lines = [m for _ch, m in self._pending_logs]
+                self._pending_logs.clear()
+                return lines
+            kept: deque[tuple[str, str]] = deque(maxlen=self._pending_logs.maxlen)
+            out: list[str] = []
+            for ch, msg in self._pending_logs:
+                if ch == channel:
+                    out.append(msg)
+                else:
+                    kept.append((ch, msg))
+            self._pending_logs = kept
+            return out
 
-    def _emit_log(self, msg: str) -> None:
+    def _emit_log(self, msg: str, *, channel: str = "sound") -> None:
         with self._log_lock:
-            self._pending_logs.append(msg)
+            self._pending_logs.append((channel, msg))
 
     def _do_first_click(self, score: float = 0.0) -> None:
         with self._lock:
@@ -357,14 +629,18 @@ class FirstClickTrigger(WorkerBase):
                 or self._session != CastSessionState.WAIT
             ):
                 return
-            self._set_session(CastSessionState.FIRST_CLICK, "splash")
             thr = float(self._matcher.threshold)
             delay_s = random.uniform(
                 _MIN_DELAY_BEFORE_CLICK_S, _MAX_DELAY_BEFORE_CLICK_S
             )
+            hold_s = random.uniform(_MIN_HOLD_S, _MAX_HOLD_S)
+            detail = (
+                f"splash|{float(score):.2f}|{delay_s:.2f}|{hold_s:.2f}|{thr:.2f}"
+            )
+            self._set_session(CastSessionState.FIRST_CLICK, detail)
             self._emit_log(
                 f"命中水花 · 相似 {score:.2f} / 阈值 {thr:.2f} · "
-                f"等待 {delay_s:.2f}s 后按住"
+                f"间隔 {delay_s:.2f}s · 按住 {hold_s:.2f}s"
             )
 
         try:
@@ -375,7 +651,6 @@ class FirstClickTrigger(WorkerBase):
                     or self._session != CastSessionState.FIRST_CLICK
                 ):
                     return
-            hold_s = random.uniform(_MIN_HOLD_S, _MAX_HOLD_S)
             self._emit_log(f"开始按住 · {hold_s:.2f}s")
             self._mouse.set_holding(True)
             time.sleep(hold_s)
@@ -389,7 +664,7 @@ class FirstClickTrigger(WorkerBase):
                 self._last_trigger_at = time.time()
                 self._trigger_count += 1
                 self._emit_log(
-                    f"已松开 · 本次等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s"
+                    f"已松开 · 本次间隔 {delay_s:.2f}s · 按住 {hold_s:.2f}s"
                 )
                 self._set_session(CastSessionState.WAIT_BOBBER, "clicked")
         except Exception as exc:  # noqa: BLE001

@@ -61,10 +61,13 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.ui:
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication, QStyleFactory
         from tools.preview_app import PreviewApp
 
         app = QApplication.instance() or QApplication(sys.argv)
+        fusion = QStyleFactory.create("Fusion")
+        if fusion is not None:
+            app.setStyle(fusion)
         win = PreviewApp(roi_path=args.roi)
         win.show()
         return app.exec()

@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
-from autofish.first_click_trigger.trigger import FirstClickTrigger
-
 __all__ = ["FirstClickTrigger"]
+
+
+def __getattr__(name: str):
+    if name == "FirstClickTrigger":
+        from autofish.first_click_trigger.trigger import FirstClickTrigger
+
+        return FirstClickTrigger
+    raise AttributeError(name)

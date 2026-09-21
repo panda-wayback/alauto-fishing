@@ -6,6 +6,17 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
+from tools.shell_theme import (
+    ACCENT,
+    ACCENT_DIM,
+    BORDER,
+    PREVIEW_BG,
+    SUCCESS,
+    TEXT,
+    TEXT_FAINT,
+    TEXT_MUTED,
+)
+
 _MIN = 0.0
 _MAX = 100.0
 _DEFAULT_GAP = 1.0
@@ -143,19 +154,20 @@ class DualRangeAxis(QWidget):
     def paintEvent(self, _event) -> None:  # noqa: N802
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillRect(self.rect(), QColor(PREVIEW_BG))
         track = self._track()
         # 底轴
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor("#e8eaed"))
+        p.setBrush(QColor(BORDER))
         p.drawRoundedRect(track, 4, 4)
         # 间隔区
         gap_l = self._x_of(self._phi)
         gap_r = self._x_of(self._rlo)
         if gap_r > gap_l:
-            p.setBrush(QColor("#d0d4da"))
+            p.setBrush(QColor(TEXT_FAINT))
             p.drawRect(QRectF(gap_l, track.top(), gap_r - gap_l, track.height()))
         # 按住段
-        p.setBrush(QColor("#3d8bfd"))
+        p.setBrush(QColor(ACCENT_DIM))
         p.drawRoundedRect(
             QRectF(
                 self._x_of(self._plo),
@@ -167,7 +179,7 @@ class DualRangeAxis(QWidget):
             3,
         )
         # 松开段
-        p.setBrush(QColor("#2bb673"))
+        p.setBrush(QColor(SUCCESS))
         p.drawRoundedRect(
             QRectF(
                 self._x_of(self._rlo),
@@ -182,7 +194,7 @@ class DualRangeAxis(QWidget):
         font = QFont(self.font())
         font.setPointSize(max(9, font.pointSize() - 1))
         p.setFont(font)
-        p.setPen(QColor("#787c80"))
+        p.setPen(QColor(TEXT_MUTED))
         for tick in (0, 25, 50, 75, 100):
             x = self._x_of(tick)
             p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 6))
@@ -193,18 +205,18 @@ class DualRangeAxis(QWidget):
             )
         # 端点
         for v, color in (
-            (self._plo, "#1a5fb4"),
-            (self._phi, "#1a5fb4"),
-            (self._rlo, "#1b7a4a"),
-            (self._rhi, "#1b7a4a"),
+            (self._plo, ACCENT),
+            (self._phi, ACCENT),
+            (self._rlo, SUCCESS),
+            (self._rhi, SUCCESS),
         ):
             cx = self._x_of(v)
             cy = track.center().y()
             p.setBrush(QColor(color))
-            p.setPen(QPen(QColor("#ffffff"), 1.5))
+            p.setPen(QPen(QColor(TEXT), 1.5))
             p.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
         # 顶部数值
-        p.setPen(QColor("#3c4043"))
+        p.setPen(QColor(TEXT_MUTED))
         label = (
             f"按住 U({self._plo:.1f}～{self._phi:.1f})   "
             f"间隔≥{self.min_gap:.1f}   "
