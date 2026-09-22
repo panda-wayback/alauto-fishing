@@ -142,17 +142,26 @@ class FirstClickTriggerPanel(QWidget):
             )
 
     def current_device_name(self) -> str:
-        idx = self.cmb_device.currentData()
+        idx, is_loopback = self._selected_device()
         if idx is None:
             return ""
         for d in AudioInput.list_devices():
-            if d.index == idx:
+            if d.index == idx and d.is_loopback == bool(is_loopback):
                 return str(d.name)
         # 列表瞬时变化时用下拉显示文案去掉提示后缀
         text = self.cmb_device.currentText().strip()
         if "  ← " in text:
             text = text.split("  ← ", 1)[0]
         return text
+
+    def _selected_device(self) -> tuple[int | str | None, bool | None]:
+        """返回 (device_index, is_loopback)；未选则 (None, None)。"""
+        data = self.cmb_device.currentData()
+        if data is None:
+            return None, None
+        if isinstance(data, (tuple, list)) and len(data) == 2:
+            return data[0], bool(data[1])
+        return data, None
 
     def set_threshold_value(self, threshold: float, *, emit: bool = True) -> None:
         thr = max(0.15, min(1.0, float(threshold)))
@@ -184,11 +193,11 @@ class FirstClickTriggerPanel(QWidget):
 
     def start_listen_if_needed(self) -> FirstClickTrigger:
         """回测长录音前：未监听则按当前设备开监听。"""
-        device = self.cmb_device.currentData()
+        device, loopback = self._selected_device()
         if device is None:
             raise RuntimeError("没有可用音频设备：请先到「声音开钓配置」页选择设备")
         if self._trigger is None or not self._trigger.is_running():
-            self._start_listen(device)
+            self._start_listen(device, loopback=loopback)
         assert self._trigger is not None
         return self._trigger
 
@@ -227,11 +236,11 @@ class FirstClickTriggerPanel(QWidget):
     def set_session_enabled(self, enabled: bool) -> None:
         if enabled:
             path = resolve_template_path()
-            device = self.cmb_device.currentData()
+            device, loopback = self._selected_device()
             if device is None:
                 raise RuntimeError("没有可用音频设备")
             if self._trigger is None or not self._trigger.is_running():
-                self._start_listen(device)
+                self._start_listen(device, loopback=loopback)
             assert self._trigger is not None
             if not self._trigger.has_template:
                 if path is not None:
@@ -372,9 +381,9 @@ class FirstClickTriggerPanel(QWidget):
         fallback_i = 0
         for i, d in enumerate(devices):
             label = d.name
-            if d.is_virtual_capture:
+            if d.is_virtual_capture or d.is_loopback:
                 label = f"{d.name}  ← 录游戏声用这个"
-            self.cmb_device.addItem(label, d.index)
+            self.cmb_device.addItem(label, (d.index, d.is_loopback))
             name_l = d.name.lower()
             if preferred and name_l == preferred:
                 exact_i = i
@@ -420,7 +429,12 @@ class FirstClickTriggerPanel(QWidget):
                 "扬声器勾「漂移校正」。"
             )
         elif sys.platform == "win32":
-            self.lbl_device_hint.setText("选带 (Loopback) 的输出设备")
+            self.lbl_device_hint.setText("选带 (Loopback) /「录游戏声」的输出环回，不要选麦克风")
+            self.lbl_device_hint.setToolTip(
+                "Windows：用 WASAPI Loopback 录正在播放的系统声。\n"
+                "请选名称带 (Loopback) 且提示「录游戏声」的那一项；\n"
+                "选普通麦克风听不到游戏内开钓水声。"
+            )
         else:
             self.lbl_device_hint.setText("选择正确的输入/监听设备")
 
@@ -462,12 +476,13 @@ class FirstClickTriggerPanel(QWidget):
 
     def _ensure_trigger(self) -> FirstClickTrigger:
         if self._trigger is None:
-            device = self.cmb_device.currentData()
+            device, loopback = self._selected_device()
             threshold = self.sld_threshold.value() / 100.0
             self._trigger = FirstClickTrigger(
                 bus=self._bus,
                 device=device,
                 threshold=threshold,
+                loopback=loopback,
             )
             self._trigger.set_click_timing(
                 self._delay_lo_s,
@@ -494,16 +509,23 @@ class FirstClickTriggerPanel(QWidget):
         if self._trigger is not None and self._trigger.is_running():
             self._stop_listen()
             return
-        device = self.cmb_device.currentData()
+        # 线程已停但按钮未刷（或上次停流超时）：先对齐再开始
+        self._sync_listen_button()
+        device, loopback = self._selected_device()
         if device is None:
             self._log("没有可用音频设备")
             return
         try:
-            self._start_listen(device)
+            self._start_listen(device, loopback=loopback)
         except Exception as exc:  # noqa: BLE001
             self._log(f"监听失败：{exc}")
 
-    def _start_listen(self, device: int | str) -> None:
+    def _start_listen(
+        self,
+        device: int | str,
+        *,
+        loopback: bool | None = None,
+    ) -> None:
         wave = None
         session_on = False
         if self._trigger is not None:
@@ -517,6 +539,7 @@ class FirstClickTriggerPanel(QWidget):
             bus=self._bus,
             device=device,
             threshold=threshold,
+            loopback=loopback,
         )
         self._trigger.set_click_timing(
             self._delay_lo_s,
@@ -548,8 +571,21 @@ class FirstClickTriggerPanel(QWidget):
 
     def _stop_listen(self) -> None:
         if self._trigger is not None:
-            self._trigger.set_session_enabled(False)
-            self._trigger.stop()
+            try:
+                self._trigger.set_session_enabled(False)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"关闭会话失败：{exc}")
+            try:
+                self._trigger.stop()
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"停止监听异常：{exc}")
+            if self._trigger.is_running():
+                self._log("停止信号已发，后台线程尚未退出（将继续等待）")
+                # 按钮仍显示停止，等定时器同步；禁止误判为已停再点「开始」叠流
+                self.btn_listen.setText("停止中…")
+                self.cmb_device.setEnabled(False)
+                self.lbl_live_wave.setText("正在停止监听…")
+                return
         self.btn_listen.setText("开始监听")
         self.cmb_device.setEnabled(True)
         self.lbl_live_wave.setText("未监听 · 无波形")
@@ -569,7 +605,20 @@ class FirstClickTriggerPanel(QWidget):
         except Exception as exc:  # noqa: BLE001
             self._log(f"播放失败：{exc}")
 
+    def _sync_listen_button(self) -> None:
+        """按钮文案与真实 is_running 对齐（防 Windows 停流后 UI 脱节）。"""
+        running = self._trigger is not None and self._trigger.is_running()
+        if running:
+            if self.btn_listen.text() not in ("停止监听", "停止中…"):
+                self.btn_listen.setText("停止监听")
+            self.cmb_device.setEnabled(False)
+        else:
+            if self.btn_listen.text() != "开始监听":
+                self.btn_listen.setText("开始监听")
+            self.cmb_device.setEnabled(True)
+
     def _update_state(self) -> None:
+        self._sync_listen_button()
         if self._trigger is not None:
             for line in self._trigger.drain_logs(channel="sound"):
                 self._log(line)
@@ -580,6 +629,8 @@ class FirstClickTriggerPanel(QWidget):
             self.lbl_level.setText("音量：—")
             self.lbl_mode.setText("模式：—")
             self.lbl_score.setText("相似：—")
+            if self.lbl_live_wave.text().startswith("正在停止"):
+                self.lbl_live_wave.setText("未监听 · 无波形")
             return
         self.lbl_status.setText("监听中")
         self.lbl_status.setStyleSheet(f"font-weight:600; color:{SUCCESS};")
@@ -1005,12 +1056,21 @@ class AudioBacktestPanel(QWidget):
             from autofish.first_click_trigger.trigger import _audition_wave
 
             sd.stop()
-            sd.play(
-                _audition_wave(wave[i0:i1]),
-                samplerate=self._last_session_sr,
-                device=device,
-                blocking=False,
-            )
+            chunk = _audition_wave(wave[i0:i1])
+            try:
+                sd.play(
+                    chunk,
+                    samplerate=self._last_session_sr,
+                    device=device,
+                    blocking=False,
+                )
+            except Exception:
+                sd.play(
+                    chunk,
+                    samplerate=self._last_session_sr,
+                    device=None,
+                    blocking=False,
+                )
             self._log(f"试听选区 [{a:.2f},{b:.2f}]s")
         except Exception as exc:  # noqa: BLE001
             self._log(f"试听失败：{exc}")

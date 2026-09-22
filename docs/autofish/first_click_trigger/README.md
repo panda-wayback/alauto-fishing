@@ -81,7 +81,9 @@ WAIT ──水声命中──► FIRST_CLICK ──按住松开完成──► W
 
 ### 音频与模板（A 用）
 
-- 设备、BlackHole、标记模板、滑动对齐匹配等：能力保留；**开钓听声控件在「声音」页**；**长录音与回测在「回测」页**（壳导航见 [`docs/autofish/shell/`](../shell/)）。  
+- 设备：macOS 选 BlackHole 等虚拟输入；**Windows 须选带「(Loopback) / 录游戏声」的输出环回**（WASAPI Loopback），勿当普通麦克风开。试听走本机扬声器/耳机，跳过虚拟线。  
+- **打包种子会话（已确认）**：仓库 `data/audio_sessions/` 打进包内 `seed/audio_sessions`；首次（或用户目录缺该会话时）拷到本机 `data_root/audio_sessions`，回测列表可用。用户新建会话仍只写本机 data。  
+- **打包种子模板（已确认）**：仓库 `data/audio_template/*.npy`（含 `active.json` 时一并打入种子目录）→ 包内 `seed/audio_template`；用户库缺同名文件时拷到 `data_root/audio_template`（不覆盖）。内置只读模板仍只走 `assets/audio/`。  
 - **模板库（已确认）**：用户库 `data/audio_template/`（可增删改名）；内置库 `assets/audio/*.npy`（只读，应用内列表展示，不可删改）。选中=开钓与回测的当前模板。禁止用系统文件夹对话框选模板。原单一 `template.npy` 视为库中一项并迁移/兼容。内置首选名 `default.npy`（否则 `splash_template.npy`）。
 - 匹配（已确认）：模板为单声道 `float32` 波形 `.npy`（无内嵌采样率；与实时采集同采样率使用）。Mel 频谱图上滑动 NCC（图像式 `matchTemplate`）找短模板；**入 Mel 前按峰值归一化**（匹配与录音绝对音量无关）。模板先按能量裁到主体。触发还需分数相对近期基线**突然抬升**（默认 ≥0.08）。**仅 WAIT 且冷却已过才更新抬升基线**；**每次进入听声基线归零**；静音时基线始终衰减。默认阈值 **0.70**；静音门限默认 **-80dB**（短时峰 RMS）。
 - **开钓页实时波形（已确认）**：开始监听后展示最近约 **20s** 滚动波形（同回测波形条风格）；命中时标橙区（带宽≈模板时长）。便于对照回测观测。

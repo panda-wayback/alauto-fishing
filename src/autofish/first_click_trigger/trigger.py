@@ -78,10 +78,12 @@ class FirstClickTrigger(WorkerBase):
         use_energy_fallback: bool = False,
         energy_threshold_db: float = -30.0,
         template_path: str | Path | None = None,
+        *,
+        loopback: bool | None = None,
     ) -> None:
         super().__init__(bus, name="FirstClickTrigger")
         self._mouse = MouseActuator()
-        self._audio = AudioInput(device=device)
+        self._audio = AudioInput(device=device, loopback=loopback)
         self._ring = AudioRingBuffer(int(self._audio.samplerate * _RING_SECONDS))
         self._matcher = TemplateMatcher(
             samplerate=self._audio.samplerate,
@@ -284,28 +286,49 @@ class FirstClickTrigger(WorkerBase):
         self._running_mode = "频谱模板匹配"
 
     def play_template(self) -> None:
-        """用扬声器试听当前模板（避免仍走 BlackHole 听不见）。"""
+        """用扬声器试听当前模板（避免仍走 BlackHole / Loopback 听不见）。"""
         wave = self.template_wave
         if wave is None or wave.size == 0:
             raise RuntimeError("没有模板可播放")
         import sounddevice as sd
 
         sd.stop()
+        audio = _audition_wave(wave)
+        sr = int(self._audio.samplerate)
         device = self._playback_device()
-        sd.play(
-            _audition_wave(wave),
-            samplerate=self._audio.samplerate,
-            device=device,
-            blocking=False,
-        )
+        try:
+            sd.play(audio, samplerate=sr, device=device, blocking=False)
+        except Exception:
+            # 指定设备失败时退回系统默认输出
+            sd.play(audio, samplerate=sr, device=None, blocking=False)
 
     @staticmethod
     def _playback_device() -> int | None:
-        """优先扬声器/耳机，跳过 BlackHole 等虚拟设备。"""
+        """优先系统默认扬声器/耳机，跳过 BlackHole 等虚拟线。"""
         import sounddevice as sd
 
-        skip = ("blackhole", "loopback", "oray", "soundflower", "aggregate", "多输出")
-        prefer = ("扬声器", "speaker", "headphone", "耳机", "外置耳机")
+        skip = (
+            "blackhole",
+            "soundflower",
+            "oray",
+            "aggregate",
+            "多输出",
+            "vb-audio",
+            "cable input",
+            "cable output",
+        )
+        prefer = ("扬声器", "speaker", "headphone", "耳机", "外置耳机", "realtek", "headphones")
+        try:
+            default_out = sd.default.device[1]
+            if default_out is not None:
+                info = sd.query_devices(default_out)
+                name = str(info.get("name") or "").lower()
+                if int(info.get("max_output_channels") or 0) > 0 and not any(
+                    s in name for s in skip
+                ):
+                    return int(default_out)
+        except Exception:
+            pass
         devices = list(sd.query_devices())
         preferred: int | None = None
         fallback: int | None = None
@@ -314,6 +337,9 @@ class FirstClickTrigger(WorkerBase):
                 continue
             name = str(d.get("name") or "").lower()
             if any(s in name for s in skip):
+                continue
+            # 名称含 loopback 的虚拟设备跳过；普通扬声器名不含该词
+            if "loopback" in name and "wasapi" not in name:
                 continue
             fallback = i if fallback is None else fallback
             if any(p in name for p in prefer):
@@ -538,13 +564,31 @@ class FirstClickTrigger(WorkerBase):
         super().start()
 
     def stop(self) -> None:
+        # 先发停止信号并掐断音频流，避免 UI 卡在 join / 长 sleep 上
+        self._stop.set()
+        try:
+            self._audio.stop()
+        except Exception:  # noqa: BLE001
+            pass
         self._subscribe_pos(False)
         with self._lock:
             if self._session_enabled:
                 self._set_session(CastSessionState.WAIT, "stopped")
             else:
                 self._set_session(CastSessionState.DISABLED, "stopped")
-        super().stop()
+        super().stop(timeout=3.0)
+        try:
+            self._audio.stop()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self._mouse.force_release()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _sleep_interruptible(self, seconds: float) -> bool:
+        """可被 stop 打断的等待；返回 True 表示已要求停止。"""
+        return self._stop.wait(timeout=max(0.0, float(seconds)))
 
     def _subscribe_pos(self, on: bool) -> None:
         if self.bus is None:
@@ -625,13 +669,17 @@ class FirstClickTrigger(WorkerBase):
                 self._set_session(CastSessionState.WAIT, "lost_1s")
 
     def _run(self) -> None:
-        self._audio.start()
+        try:
+            self._audio.start()
+        except Exception as exc:  # noqa: BLE001
+            self._emit_log(f"音频启动失败 · {exc}")
+            return
         try:
             while not self._stop.is_set():
                 self._check_timeouts()
                 block = self._audio.read()
                 if block is None:
-                    time.sleep(0.005)
+                    self._sleep_interruptible(0.005)
                     continue
 
                 mono = block.mean(axis=1) if block.ndim > 1 else block
@@ -696,11 +744,17 @@ class FirstClickTrigger(WorkerBase):
                                 f"听声冷却中 · 剩余 {left:.1f}s · 相似 {score:.2f}"
                             )
 
-                if triggered and can_listen:
+                if triggered and can_listen and not self._stop.is_set():
                     self._do_first_click(score)
         finally:
-            self._audio.stop()
-            self._mouse.force_release()
+            try:
+                self._audio.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                self._mouse.force_release()
+            except Exception:  # noqa: BLE001
+                pass
 
     def drain_logs(self, channel: str | None = None) -> list[str]:
         """取出后台日志；channel 为 sound|backtest，None 表示全部。"""
@@ -749,29 +803,45 @@ class FirstClickTrigger(WorkerBase):
             )
 
         try:
-            time.sleep(delay_s)
+            if self._sleep_interruptible(delay_s):
+                with self._lock:
+                    if self._session_enabled:
+                        self._set_session(CastSessionState.WAIT, "stopped")
+                return
             with self._lock:
                 if (
                     not self._session_enabled
                     or self._session != CastSessionState.FIRST_CLICK
+                    or self._stop.is_set()
                 ):
                     return
             self._emit_log(f"开始按住 · {hold_s:.2f}s")
             self._mouse.set_holding(True)
-            time.sleep(hold_s)
+            if self._sleep_interruptible(hold_s):
+                self._mouse.force_release()
+                with self._lock:
+                    if self._session_enabled:
+                        self._set_session(CastSessionState.WAIT, "stopped")
+                return
             self._mouse.set_holding(False)
             with self._lock:
                 if (
                     not self._session_enabled
                     or self._session != CastSessionState.FIRST_CLICK
+                    or self._stop.is_set()
                 ):
                     return
             self._emit_log(f"已松开 · 停顿 {after_s:.2f}s 后再交拉漂")
-            time.sleep(after_s)
+            if self._sleep_interruptible(after_s):
+                with self._lock:
+                    if self._session_enabled:
+                        self._set_session(CastSessionState.WAIT, "stopped")
+                return
             with self._lock:
                 if (
                     not self._session_enabled
                     or self._session != CastSessionState.FIRST_CLICK
+                    or self._stop.is_set()
                 ):
                     return
                 self._last_trigger_at = time.time()

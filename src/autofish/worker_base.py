@@ -27,7 +27,9 @@ class WorkerBase:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=timeout)
-            self._thread = None
+            # 仍存活则保留引用，避免 UI 误判「已停」而音频线程还在跑
+            if not self._thread.is_alive():
+                self._thread = None
 
     def is_running(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
