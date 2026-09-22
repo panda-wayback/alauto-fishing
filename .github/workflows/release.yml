@@ -8,12 +8,8 @@ on:
       - "v*"
   workflow_dispatch:
     inputs:
-      ref:
-        description: "要打包的分支 / tag / SHA（例如 feature/xxx、main、v0.2.0）"
-        required: true
-        default: "main"
       tag:
-        description: "填写则创建/更新 GitHub Release（如 v0.1.0）；留空只上传 Artifact 不发 Release"
+        description: "可选：填写则额外发 GitHub Release（如 v0.1.0）；留空则与 main 推送相同——只构建并上传 Artifact"
         required: false
         default: ""
 
@@ -21,10 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: >-
-    release-${{ github.workflow }}-${{
-      github.event_name == 'workflow_dispatch' && inputs.ref || github.ref
-    }}
+  group: release-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,8 +27,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -48,17 +39,12 @@ jobs:
           export PYTHON="$(command -v python)"
           bash packaging/build_macos.sh
 
-      - name: Zip .app
-        run: |
-          cd dist
-          ditto -c -k --keepParent albn-autofish.app albn-autofish-macos-arm64.zip
-          ls -lh albn-autofish-macos-arm64.zip
-
+      # 上传 .app 目录本身：Actions「下载 Artifact」只会再 zip 一次，避免 zip 套 zip
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: albn-autofish-macos-arm64
-          path: dist/albn-autofish-macos-arm64.zip
+          path: dist/albn-autofish.app
           if-no-files-found: error
 
   build-windows:
@@ -67,8 +53,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -82,24 +66,18 @@ jobs:
           export PYTHON="$(command -v python)"
           bash packaging/build_windows.sh
 
-      - name: Zip folder
-        shell: pwsh
-        run: |
-          if (Test-Path dist\albn-autofish-windows-x64.zip) { Remove-Item dist\albn-autofish-windows-x64.zip }
-          Compress-Archive -Path dist\albn-autofish -DestinationPath dist\albn-autofish-windows-x64.zip -Force
-          Get-Item dist\albn-autofish-windows-x64.zip | Format-List Name, Length
-
+      # 上传 onedir 目录：下载 Artifact 解压后即是 albn-autofish/，无 zip 套 zip
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: albn-autofish-windows-x64
-          path: dist/albn-autofish-windows-x64.zip
+          path: dist/albn-autofish
           if-no-files-found: error
 
   release:
     name: Publish GitHub Release
     needs: [build-macos, build-windows]
-    # main 每次 push 只构建；发版仅 tag 或手动填了 tag
+    # main / 手动且 tag 留空：只构建；发版仅 push tag 或手动填了 tag
     if: >-
       github.ref_type == 'tag' ||
       (github.event_name == 'workflow_dispatch' && inputs.tag != '')
@@ -107,18 +85,34 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
 
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: release-assets
 
-      - name: Flatten assets
+      - name: Pack release zips
         run: |
+          set -euo pipefail
           mkdir -p out
-          find release-assets -type f -name '*.zip' -exec cp {} out/ \;
+          # macOS：artifact 根下是 .app
+          MAC_APP="$(find release-assets/albn-autofish-macos-arm64 -maxdepth 2 -name 'albn-autofish.app' -type d | head -n1)"
+          if [[ -z "$MAC_APP" ]]; then
+            echo "找不到 albn-autofish.app"; find release-assets -maxdepth 3 -print; exit 1
+          fi
+          (cd "$(dirname "$MAC_APP")" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-macos-arm64.zip" "$(basename "$MAC_APP")")
+
+          # Windows：artifact 可能是 albn-autofish/ 或扁平内容
+          WIN_ROOT="release-assets/albn-autofish-windows-x64"
+          if [[ -d "$WIN_ROOT/albn-autofish" ]]; then
+            (cd "$WIN_ROOT" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-windows-x64.zip" albn-autofish)
+          elif [[ -f "$WIN_ROOT/albn-autofish.exe" ]]; then
+            mkdir -p /tmp/winpack
+            cp -a "$WIN_ROOT" /tmp/winpack/albn-autofish
+            (cd /tmp/winpack && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-windows-x64.zip" albn-autofish)
+          else
+            echo "找不到 Windows 构建产物"; find release-assets -maxdepth 3 -print; exit 1
+          fi
           ls -lah out/
 
       - name: Resolve tag
@@ -137,8 +131,6 @@ jobs:
           name: ${{ steps.meta.outputs.tag }}
           draft: false
           generate_release_notes: true
-          # 手动发版：Release 指向本次打包的 commit（可为其它分支）
-          target_commitish: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.sha }}
           files: |
             out/albn-autofish-macos-arm64.zip
             out/albn-autofish-windows-x64.zip

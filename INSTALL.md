@@ -76,8 +76,10 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 产物：
 
-- `albn-autofish-macos-arm64.zip`（内含 `.app`）
-- `albn-autofish-windows-x64.zip`（内含 `albn-autofish/` 目录，运行其中的 `albn-autofish.exe`）
+- **Actions Artifact**（main 推送 / 手动且 tag 留空）：下载解压一次即可——macOS 得 `albn-autofish.app`，Windows 得 `albn-autofish/`（内含 `albn-autofish.exe`）。勿再预打 zip 上传，避免 zip 套 zip。  
+- **GitHub Release**（打 tag / 手动填 tag）：附件为  
+  - `albn-autofish-macos-arm64.zip`（内含 `.app`）  
+  - `albn-autofish-windows-x64.zip`（内含 `albn-autofish/`）
 
 macOS：打开预览壳顶栏 **「权限」** 授权屏幕录制与辅助功能；若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。  
 本地反复重打包后授权「被旧包占用」：先 `make reset-perms`，或用 `make build-macos-dev`（独立 Bundle ID，不跟正式包抢）。系统设置里也可手动删掉旧的 Albn Autofish 条目再重授。  
