@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import queue
 import sys
 from dataclasses import dataclass
@@ -22,9 +23,12 @@ except ImportError as exc:  # pragma: no cover
 _VIRTUAL_CAPTURE_NAMES = (
     "blackhole",
     "soundflower",
-    "loopback",
     "vb-audio",
     "cable",
+    "stereomix",
+    "stereo mix",
+    "what u hear",
+    "wave out mix",
 )
 _SKIP_CAPTURE_NAMES = (
     "多输出",
@@ -51,7 +55,9 @@ class AudioInput:
     """
     打开录音设备并持续产出单声道音频块。
 
-    - Windows：对输出设备用 WASAPI Loopback（录该设备正在播放的混音）。
+    - Windows：只用 PortAudio 已枚举的 **Loopback 输入**（max_input>0）；
+      官方 sounddevice 的 WasapiSettings **无 loopback 参数**，
+      禁止再对「纯输出设备」伪造环回。
     - macOS：从选定输入设备录音（BlackHole 等）；须用设备默认采样率/声道数。
     """
 
@@ -67,20 +73,15 @@ class AudioInput:
         self._device = self._resolve_device(device)
         info = self._device_info(self._device)
         max_in = int(info.get("max_input_channels") or 0)
-        max_out = int(info.get("max_output_channels") or 0)
+        name = str(info.get("name") or "")
+        idx = self._device if isinstance(self._device, int) else None
+        detected_lb = self._detect_loopback(idx, name, max_in)
         if loopback is None:
-            # 输出-only 设备在 Windows 上当作环回
-            self._loopback = bool(
-                sys.platform == "win32" and max_out > 0 and max_in <= 0
-            )
+            self._loopback = detected_lb
         else:
             self._loopback = bool(loopback)
         self.samplerate = int(samplerate or info.get("default_samplerate") or 48000)
-        if self._loopback:
-            ch_src = max_out
-        else:
-            ch_src = max_in
-        self.channels = int(channels or min(2, max(1, ch_src)))
+        self.channels = int(channels or min(2, max(1, max_in or 1)))
         self.blocksize = blocksize
         self._stream: sd.InputStream | None = None
         self._queue: "queue.Queue[npt.NDArray[np.float32]]" = queue.Queue(maxsize=8)
@@ -92,6 +93,8 @@ class AudioInput:
     @staticmethod
     def _name_is_virtual_capture(name: str) -> bool:
         lower = name.lower()
+        if "loopback" in lower:
+            return True
         return any(k in lower for k in _VIRTUAL_CAPTURE_NAMES)
 
     @staticmethod
@@ -110,8 +113,47 @@ class AudioInput:
         return None
 
     @staticmethod
+    def _pa_is_loopback(index: int | None) -> bool:
+        """PortAudio PaWasapi_IsLoopback（仅 Windows 库有符号）。"""
+        if index is None or sys.platform != "win32":
+            return False
+        try:
+            return bool(sd._lib.PaWasapi_IsLoopback(int(index)))
+        except Exception:
+            return False
+
+    @classmethod
+    def _detect_loopback(cls, index: int | None, name: str, max_in: int) -> bool:
+        if max_in <= 0:
+            return False
+        if "loopback" in name.lower():
+            return True
+        return cls._pa_is_loopback(index)
+
+    @staticmethod
+    def _wasapi_extra_settings(*, want_loopback: bool):
+        """
+        构造 WasapiSettings。
+
+        sounddevice≥0.4 官方签名无 loopback；若未来版本支持则自动带上。
+        auto_convert 便于环回采样率与系统混音不一致时仍能打开。
+        """
+        try:
+            params = inspect.signature(sd.WasapiSettings.__init__).parameters
+        except (TypeError, ValueError):
+            params = {}
+        kwargs: dict = {}
+        if "auto_convert" in params:
+            kwargs["auto_convert"] = True
+        if want_loopback and "loopback" in params:
+            kwargs["loopback"] = True
+        if not kwargs:
+            return None
+        return sd.WasapiSettings(**kwargs)
+
+    @staticmethod
     def list_devices() -> list[AudioDeviceInfo]:
-        """列出可用采集项；Windows 仅 WASAPI 下列输出环回。"""
+        """列出可采集输入；Windows 标出真实 Loopback 输入（非伪造输出项）。"""
         devices: list[AudioDeviceInfo] = []
         wasapi = AudioInput._wasapi_hostapi() if sys.platform == "win32" else None
         for i, d in enumerate(sd.query_devices()):
@@ -121,39 +163,24 @@ class AudioInput:
                 continue
             if AudioInput._name_is_skip_capture(name):
                 continue
-            # Windows：优先只列 WASAPI 输入，避免 MME 重复项
             if wasapi is not None and int(d.get("hostapi") or -1) != wasapi:
                 continue
+            is_lb = AudioInput._detect_loopback(i, name, max_in)
+            # 展示名：PortAudio 已含 [Loopback] 则不重复；否则补后缀便于选择
+            label = name
+            if is_lb and "loopback" not in name.lower():
+                label = f"{name} (Loopback)"
             devices.append(
                 AudioDeviceInfo(
                     index=i,
-                    name=name,
+                    name=label,
                     is_input=True,
                     channels=max_in,
                     samplerate=float(d.get("default_samplerate") or 48000.0),
-                    is_loopback=False,
+                    is_loopback=is_lb,
                     is_virtual_capture=AudioInput._name_is_virtual_capture(name),
                 )
             )
-        if sys.platform == "win32":
-            for i, d in enumerate(sd.query_devices()):
-                if wasapi is not None and int(d.get("hostapi") or -1) != wasapi:
-                    continue
-                max_out = int(d.get("max_output_channels") or 0)
-                if max_out <= 0:
-                    continue
-                name = str(d.get("name") or "")
-                devices.append(
-                    AudioDeviceInfo(
-                        index=i,
-                        name=f"{name} (Loopback)",
-                        is_input=False,
-                        channels=max_out,
-                        samplerate=float(d.get("default_samplerate") or 48000.0),
-                        is_loopback=True,
-                        is_virtual_capture=False,
-                    )
-                )
         devices.sort(
             key=lambda x: (0 if (x.is_virtual_capture or x.is_loopback) else 1, x.index)
         )
@@ -180,16 +207,13 @@ class AudioInput:
     def _resolve_device(self, device: int | str | None) -> int | str | None:
         if device is not None:
             return device
-        if sys.platform == "win32":
-            # 默认输出 → 环回录系统声
-            try:
-                return sd.default.device[1]
-            except Exception:
-                return sd.default.device[0]
         pref = self.preferred_capture_index()
         if pref is not None:
             return pref
-        return sd.default.device[0]
+        try:
+            return sd.default.device[0]
+        except Exception:
+            return None
 
     def start(self) -> None:
         if self._stream is not None:
@@ -202,19 +226,19 @@ class AudioInput:
                 "系统输出选多输出；本程序设备选 BlackHole 2ch。"
             )
         max_in = int(info.get("max_input_channels") or 0)
-        max_out = int(info.get("max_output_channels") or 0)
-        if self._loopback:
-            if max_out <= 0:
-                raise RuntimeError(
-                    f"设备「{name}」无法 Loopback（无输出声道）。"
-                    "请选带 (Loopback) 的播放设备。"
-                )
-            ch = min(2, max(1, max_out))
-        else:
-            if max_in <= 0:
-                raise RuntimeError(f"设备「{name}」无输入声道，无法录音")
-            ch = min(2, max(1, max_in))
-        self.channels = ch
+        if max_in <= 0:
+            raise RuntimeError(
+                f"设备「{name}」无输入声道，无法录音。"
+                "Windows 请选名称含 Loopback / 立体声混音 的**输入**项；"
+                "不要选纯播放设备（当前 sounddevice 无法对输出伪造环回）。"
+            )
+        # 若调用方仍把「旧版伪造输出环回」传进来，给出明确错误
+        if self._loopback and max_in <= 0:
+            raise RuntimeError(
+                f"设备「{name}」不是可采集的 Loopback 输入。"
+                "请重新打开设备列表，选带 Loopback 且能采集的那一项。"
+            )
+        self.channels = min(2, max(1, max_in))
         kwargs: dict = {
             "samplerate": self.samplerate,
             "blocksize": self.blocksize,
@@ -222,8 +246,10 @@ class AudioInput:
             "dtype": np.float32,
             "callback": self._callback,
         }
-        if self._loopback:
-            kwargs["extra_settings"] = sd.WasapiSettings(loopback=True)
+        if sys.platform == "win32":
+            extra = self._wasapi_extra_settings(want_loopback=self._loopback)
+            if extra is not None:
+                kwargs["extra_settings"] = extra
         self._stream = sd.InputStream(device=self._device, **kwargs)
         self._stream.start()
 

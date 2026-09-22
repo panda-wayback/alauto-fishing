@@ -429,12 +429,17 @@ class FirstClickTriggerPanel(QWidget):
                 "扬声器勾「漂移校正」。"
             )
         elif sys.platform == "win32":
-            self.lbl_device_hint.setText("选带 (Loopback) /「录游戏声」的输出环回，不要选麦克风")
-            self.lbl_device_hint.setToolTip(
-                "Windows：用 WASAPI Loopback 录正在播放的系统声。\n"
-                "请选名称带 (Loopback) 且提示「录游戏声」的那一项；\n"
-                "选普通麦克风听不到游戏内开钓水声。"
+            self.lbl_device_hint.setText(
+                "选 WASAPI 列表里带 Loopback / 立体声混音 的输入（录正在播放的声音）"
             )
+            self.lbl_device_hint.setToolTip(
+                "Windows：PortAudio 会把环回列成「输入」设备（名常含 Loopback）。\n"
+                "请选当前正在用的那路输出对应的 Loopback 项（如 DELL … Loopback）。\n"
+                "不要选普通麦克风；也没有「对纯播放设备伪造环回」——\n"
+                "当前 sounddevice 的 WasapiSettings 不支持 loopback= 参数。\n"
+                "若列表没有 Loopback：检查声卡驱动，或启用「立体声混音」。"
+            )
+
         else:
             self.lbl_device_hint.setText("选择正确的输入/监听设备")
 
