@@ -16,7 +16,9 @@ DEFAULT_SAMPLERATE = 48000
 TEMPLATE_DURATION_S = 2.0
 # 游戏环回常见峰值短时 RMS 约 -45dB；门限留足余量，过严会整段「太静」跳过匹配
 MIN_ENERGY_DB = -80.0
-SEARCH_PAD_S = 0.80
+# 长缓冲 pad；短/长双后缀窗取较高分（不做多起点滑扫，以免抬高环境基线）
+SEARCH_PAD_S = 2.0
+SHORT_SEARCH_PAD_S = 0.80
 N_MELS = 64
 FMIN_HZ = 80.0
 FMAX_HZ = 12000.0
@@ -24,12 +26,16 @@ FMAX_HZ = 12000.0
 DEFAULT_THRESHOLD = 0.70
 MIN_SCORE_RISE = 0.08
 SCORE_EMA_ALPHA = 0.12
+# 入 Mel 前：用短时帧峰值高分位当「有效峰值」，避免单样本/尖刺杂音抢走归一化
+NORM_PEAK_PERCENTILE = 95.0
+NORM_TARGET_PEAK = 0.9
 
 
 class TemplateMatcher:
     """
     在 Mel 频谱图上做 matchTemplate 找短模板；
     过阈值且相对近期基线突然抬升才命中。
+    实时：长缓冲 + 短/长双后缀窗取较高分。
     """
 
     def __init__(
@@ -58,6 +64,7 @@ class TemplateMatcher:
         self.last_prominence: float = 0.0
         self.last_ambient: float = 0.0
         self.last_rise: float = 0.0
+        self.last_window: str = ""
 
     @staticmethod
     def _fft_params(samplerate: int) -> tuple[int, int]:
@@ -106,6 +113,7 @@ class TemplateMatcher:
         self.last_reject = ""
         self.last_prominence = 0.0
         self.last_rise = 0.0
+        self.last_window = ""
 
     def reset_buffer(self) -> None:
         self._buffer.fill(0.0)
@@ -113,6 +121,7 @@ class TemplateMatcher:
         self.last_reject = ""
         self.last_prominence = 0.0
         self.last_rise = 0.0
+        self.last_window = ""
 
     def reset_score_baseline(self) -> None:
         """入听声态时清抬升基线（保留音频缓冲），与回测从零基线一致。"""
@@ -191,6 +200,7 @@ class TemplateMatcher:
         self.last_prominence = float(report["prominence"])
         self.last_rise = float(report["rise"])
         self.last_ambient = float(report["ambient"])
+        self.last_window = str(report.get("window") or "")
         score = float(report["score"])
         if report["would_trigger"]:
             self.last_reject = ""
@@ -214,7 +224,7 @@ class TemplateMatcher:
         update_baseline: bool = False,
     ) -> dict[str, Any]:
         _ = update_ambient, ambient_override
-        score, match_start, prom = self._match_mel(buf)
+        score, match_start, prom, which = self._match_mel_dual(buf)
         baseline = self._score_ema
         rise = score - baseline
         if update_baseline:
@@ -240,6 +250,7 @@ class TemplateMatcher:
             "threshold": self.threshold,
             "would_trigger": would,
             "reason": reason,
+            "window": which,
         }
 
     def analyze_clip(
@@ -263,6 +274,36 @@ class TemplateMatcher:
             report["reason"] = ""
         self._score_ema = saved
         return report
+
+    def _match_mel_dual(
+        self, buf: "npt.NDArray[np.float32]"
+    ) -> tuple[float, int, float, str]:
+        """
+        轻量双后缀窗：短（模板+0.8s）与长（模板+search_pad）各取窗内 max，
+        再取两者较高分。不做沿缓冲多起点滑扫。
+        """
+        if self._template_len <= 0 or buf.size < self._template_len:
+            return 0.0, 0, 0.0, ""
+
+        long_n = self._template_len + int(self.search_pad_s * self.samplerate)
+        short_n = self._template_len + int(SHORT_SEARCH_PAD_S * self.samplerate)
+        long_n = max(long_n, self._template_len + 1)
+        short_n = max(short_n, self._template_len + 1)
+
+        long_buf = buf[-long_n:] if buf.size > long_n else buf
+        short_buf = buf[-short_n:] if buf.size > short_n else buf
+
+        s_long, m_long, p_long = self._match_mel(long_buf)
+        if short_buf.size == long_buf.size and short_n >= long_n:
+            off = max(0, buf.size - long_buf.size)
+            return s_long, m_long + off, p_long, "long"
+
+        s_short, m_short, p_short = self._match_mel(short_buf)
+        if s_short >= s_long:
+            off = max(0, buf.size - short_buf.size)
+            return s_short, m_short + off, p_short, "short"
+        off = max(0, buf.size - long_buf.size)
+        return s_long, m_long + off, p_long, "long"
 
     def _match_mel(
         self, buf: "npt.NDArray[np.float32]"
@@ -359,10 +400,8 @@ class TemplateMatcher:
         wave = np.asarray(wave, dtype=np.float32)
         if wave.ndim > 1:
             wave = wave.mean(axis=1)
-        # 峰值归一化：log-Mel 对绝对音量敏感，录音变轻/变响时仍可对上模板
-        peak = float(np.max(np.abs(wave))) if wave.size else 0.0
-        if peak > 1e-8:
-            wave = wave * (0.9 / peak)
+        # 短时帧峰值高分位归一：抗单峰杂音；干净段接近旧「样本峰值归一」
+        wave = self._normalize_for_mel(wave)
         window = np.hanning(n_fft).astype(np.float32)
         if len(wave) < n_fft:
             wave = np.pad(wave, (0, n_fft - len(wave)), mode="constant")
@@ -381,3 +420,28 @@ class TemplateMatcher:
         mel = np.log1p(mel)
         mel = mel - float(np.mean(mel))
         return np.ascontiguousarray(mel, dtype=np.float32)
+
+    def _normalize_for_mel(
+        self, wave: "npt.NDArray[np.float32]"
+    ) -> "npt.NDArray[np.float32]":
+        """用各短时帧 |x| 峰值的高分位当有效峰值，再缩放到 NORM_TARGET_PEAK。"""
+        if wave.size == 0:
+            return wave
+        n_fft, hop = self._n_fft, self._hop
+        if wave.size < n_fft:
+            peak = float(np.max(np.abs(wave)))
+            if peak <= 1e-8:
+                return wave
+            return (wave * (NORM_TARGET_PEAK / peak)).astype(np.float32)
+        frame_peaks = [
+            float(np.max(np.abs(wave[i : i + n_fft])))
+            for i in range(0, wave.size - n_fft + 1, hop)
+        ]
+        peak = float(
+            np.percentile(np.asarray(frame_peaks, dtype=np.float64), NORM_PEAK_PERCENTILE)
+        )
+        if peak <= 1e-8:
+            peak = float(np.max(np.abs(wave)))
+        if peak <= 1e-8:
+            return wave
+        return (wave * (NORM_TARGET_PEAK / peak)).astype(np.float32)
