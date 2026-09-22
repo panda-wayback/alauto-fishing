@@ -27,9 +27,11 @@ hiddenimports = [
     "common.permissions",
     "common.pubsub",
     "sounddevice",
+    "soundcard",
+    "comtypes",
 ]
 
-for pkg in ("mss", "pynput", "sounddevice"):
+for pkg in ("mss", "pynput", "sounddevice", "soundcard", "comtypes"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

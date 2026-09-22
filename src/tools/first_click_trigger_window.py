@@ -8,7 +8,7 @@ from collections import deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -53,12 +54,26 @@ def _append_log(logs: deque[str], widget: QPlainTextEdit, msg: str) -> None:
     parts = str(msg).splitlines() or [""]
     block = f"{ts}  {parts[0]}"
     if len(parts) > 1:
-        pad = " " * (len(ts) + 2)
-        block = block + "\n" + "\n".join(f"{pad}{p}" for p in parts[1:])
-    logs.append(block)
+        block += "\n" + "\n".join(f"         {p}" for p in parts[1:])
+    logs.appendleft(block)
     widget.setPlainText("\n".join(logs))
-    bar = widget.verticalScrollBar()
-    bar.setValue(bar.maximum())
+
+
+class _FnWorker(QThread):
+    """在后台跑可调用对象，避免卡死 UI。"""
+
+    ok = Signal(object)
+    err = Signal(str)
+
+    def __init__(self, fn: Callable[[], object], parent: QObject | None = None) -> None:
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self) -> None:
+        try:
+            self.ok.emit(self._fn())
+        except Exception as exc:  # noqa: BLE001
+            self.err.emit(str(exc))
 
 
 class FirstClickTriggerPanel(QWidget):
@@ -142,20 +157,20 @@ class FirstClickTriggerPanel(QWidget):
             )
 
     def current_device_name(self) -> str:
-        idx, is_loopback = self._selected_device()
-        if idx is None:
+        key, is_loopback = self._selected_device()
+        if key is None:
             return ""
         for d in AudioInput.list_devices():
-            if d.index == idx and d.is_loopback == bool(is_loopback):
-                return str(d.name)
-        # 列表瞬时变化时用下拉显示文案去掉提示后缀
+            if d.key == key or d.index == key:
+                if is_loopback is None or d.is_loopback == bool(is_loopback):
+                    return str(d.name)
         text = self.cmb_device.currentText().strip()
         if "  ← " in text:
             text = text.split("  ← ", 1)[0]
         return text
 
     def _selected_device(self) -> tuple[int | str | None, bool | None]:
-        """返回 (device_index, is_loopback)；未选则 (None, None)。"""
+        """返回 (device_key_or_index, is_loopback)。"""
         data = self.cmb_device.currentData()
         if data is None:
             return None, None
@@ -383,11 +398,15 @@ class FirstClickTriggerPanel(QWidget):
             label = d.name
             if d.is_virtual_capture or d.is_loopback:
                 label = f"{d.name}  ← 录游戏声用这个"
-            self.cmb_device.addItem(label, (d.index, d.is_loopback))
+            self.cmb_device.addItem(label, (d.key, d.is_loopback))
             name_l = d.name.lower()
-            if preferred and name_l == preferred:
+            # 兼容旧存档：纯扬声器名 / 带 (Loopback) 后缀
+            bare = name_l.replace(" (loopback)", "").strip()
+            if preferred and (name_l == preferred or bare == preferred):
                 exact_i = i
             elif preferred and preferred in name_l and fuzzy_i is None:
+                fuzzy_i = i
+            elif preferred and bare and bare in preferred and fuzzy_i is None:
                 fuzzy_i = i
             if d.is_virtual_capture or d.is_loopback:
                 fallback_i = i
@@ -430,14 +449,12 @@ class FirstClickTriggerPanel(QWidget):
             )
         elif sys.platform == "win32":
             self.lbl_device_hint.setText(
-                "选 WASAPI 列表里带 Loopback / 立体声混音 的输入（录正在播放的声音）"
+                "选带 Loopback /「录游戏声」的扬声器项（如 DELL），不要选麦克风"
             )
             self.lbl_device_hint.setToolTip(
-                "Windows：PortAudio 会把环回列成「输入」设备（名常含 Loopback）。\n"
-                "请选当前正在用的那路输出对应的 Loopback 项（如 DELL … Loopback）。\n"
-                "不要选普通麦克风；也没有「对纯播放设备伪造环回」——\n"
-                "当前 sounddevice 的 WasapiSettings 不支持 loopback= 参数。\n"
-                "若列表没有 Loopback：检查声卡驱动，或启用「立体声混音」。"
+                "Windows 用 soundcard 枚举 WASAPI 环回：\n"
+                "列表里对应你正在播放的那路输出（DELL / Realtek 等）+ Loopback。\n"
+                "选麦克风只能录到话筒，录不到游戏声。"
             )
 
         else:
@@ -700,6 +717,8 @@ class AudioBacktestPanel(QWidget):
         self._last_session_wave: object | None = None
         self._last_session_sr: int = 0
         self._last_session_ranges: list[tuple[float, float]] = []
+        self._busy_worker: _FnWorker | None = None
+        self._busy_dialog: QProgressDialog | None = None
 
         self._build_ui()
         self.refresh_lists()
@@ -861,20 +880,157 @@ class AudioBacktestPanel(QWidget):
         self.btn_tmpl_rename.setEnabled(not bundled and path is not None)
         self.btn_tmpl_del.setEnabled(not bundled and path is not None)
 
+    def _run_busy(
+        self,
+        title: str,
+        fn: Callable[[], object],
+        on_ok: Callable[[object], None],
+    ) -> None:
+        """后台跑耗时任务 + 模态等待条，避免卡死整窗。"""
+        if self._busy_worker is not None and self._busy_worker.isRunning():
+            self._log("请等待当前任务完成…")
+            return
+        dlg = QProgressDialog(title, None, 0, 0, self)
+        dlg.setWindowTitle("请稍候")
+        dlg.setWindowModality(Qt.WindowModality.WindowModal)
+        dlg.setMinimumDuration(0)
+        dlg.setCancelButton(None)
+        dlg.setRange(0, 0)
+        dlg.show()
+        self._busy_dialog = dlg
+
+        worker = _FnWorker(fn, self)
+
+        def _done(result: object) -> None:
+            dlg.close()
+            self._busy_dialog = None
+            self._busy_worker = None
+            try:
+                on_ok(result)
+            except Exception as exc:  # noqa: BLE001
+                self._log(f"{title}后处理失败：{exc}")
+
+        def _fail(msg: str) -> None:
+            dlg.close()
+            self._busy_dialog = None
+            self._busy_worker = None
+            self.btn_sess_rec.setEnabled(True)
+            self._log(f"{title}失败：{msg}")
+
+        worker.ok.connect(_done)
+        worker.err.connect(_fail)
+        self._busy_worker = worker
+        worker.start()
+
     def _on_session_combo(self, _idx: int) -> None:
         root = self.cmb_session.currentData()
         if not isinstance(root, Path):
             return
         if self._last_session_root == root and self._last_session_wave is not None:
             return
-        try:
+
+        def work() -> object:
             from autofish.first_click_trigger.session_eval import load_session
 
-            wave, sr, ranges = load_session(root)
-            self._apply_loaded_session(root, wave, sr, ranges)
-            self._log(f"已加载会话 {root.name}")
+            return (root, *load_session(root))
+
+        def done(result: object) -> None:
+            r, wave, sr, ranges = result  # type: ignore[misc]
+            self._apply_loaded_session(r, wave, int(sr), list(ranges))
+            self._log(f"已加载会话 {r.name}")
+
+        self._run_busy(f"加载会话 {root.name}…", work, done)
+
+    def _on_session_rec_clicked(self) -> None:
+        try:
+            trigger = self._host.start_listen_if_needed()
         except Exception as exc:  # noqa: BLE001
-            self._log(f"加载会话失败：{exc}")
+            self._log(str(exc))
+            return
+        try:
+            if trigger.is_session_recording:
+                self.btn_sess_rec.setEnabled(False)
+
+                def work() -> object:
+                    return trigger.stop_session_recording()
+
+                def done(result: object) -> None:
+                    self.btn_sess_rec.setEnabled(True)
+                    out = result  # type: ignore[assignment]
+                    assert isinstance(out, dict)
+                    paths = out["paths"]
+                    self._apply_loaded_session(
+                        paths.root,
+                        out["wave"],
+                        int(out["samplerate"]),
+                        list(out["ranges"]),
+                    )
+                    report = out.get("report")
+                    if isinstance(report, dict) and report.get("hits"):
+                        self.wave.set_hits(list(report["hits"]))
+                        self.lbl_sess.setText(
+                            f"已保存 · 回测命中 {len(report['hits'])} 处（橙）"
+                        )
+                    text = str(out.get("report_text") or "")
+                    if text:
+                        self._log(text)
+                    elif not trigger.has_template:
+                        self._log("已保存录音；选区入库后再回测")
+                    self.btn_sess_rec.setText("开始长录音")
+                    self.refresh_lists()
+                    for i in range(self.cmb_session.count()):
+                        if self.cmb_session.itemData(i) == paths.root:
+                            self.cmb_session.setCurrentIndex(i)
+                            break
+
+                self._run_busy("保存录音并回测…", work, done)
+            else:
+                trigger.start_session_recording()
+                self.btn_sess_rec.setText("停止并保存")
+                self.wave.clear()
+                self.lbl_sess.setText("长录音中…")
+        except Exception as exc:  # noqa: BLE001
+            self.btn_sess_rec.setEnabled(True)
+            self._log(f"长录音失败：{exc}")
+
+    def _backtest_session(self) -> None:
+        if self._last_session_root is None or self._last_session_wave is None:
+            self._log("请先长录音或选择会话")
+            return
+        try:
+            if self._last_session_ranges:
+                self._persist_ranges(self._last_session_ranges)
+        except Exception:
+            pass
+        try:
+            trigger = self._host.ensure_trigger()
+            path = resolve_template_path()
+            if not trigger.has_template and path is not None:
+                trigger.load_template(path)
+            if not trigger.has_template:
+                self._log("没有模板：请从选区入库")
+                return
+            root = self._last_session_root
+
+            def work() -> object:
+                return trigger.backtest_last_or_dir(root)
+
+            def done(result: object) -> None:
+                report = result  # type: ignore[assignment]
+                assert isinstance(report, dict)
+                hits = list(report.get("hits") or [])
+                self.wave.set_hits(hits)
+                self.lbl_sess.setText(
+                    f"回测命中 {len(hits)} 处（橙）· 人工水花 "
+                    f"{len(self._last_session_ranges)} 段"
+                )
+                text = str(report.get("report_text") or "")
+                if text:
+                    self._log(text)
+
+            self._run_busy("回测查找中…", work, done)
+        except Exception as exc:  # noqa: BLE001
+            self._log(f"回测失败：{exc}")
 
     def _delete_session(self) -> None:
         root = self.cmb_session.currentData()
@@ -918,48 +1074,6 @@ class AudioBacktestPanel(QWidget):
             self.btn_tmpl_del.setEnabled(not bundled)
         except Exception as exc:  # noqa: BLE001
             self._log(f"切换模板失败：{exc}")
-
-    def _on_session_rec_clicked(self) -> None:
-        try:
-            trigger = self._host.start_listen_if_needed()
-        except Exception as exc:  # noqa: BLE001
-            self._log(str(exc))
-            return
-        try:
-            if trigger.is_session_recording:
-                out = trigger.stop_session_recording()
-                paths = out["paths"]
-                self._apply_loaded_session(
-                    paths.root,
-                    out["wave"],
-                    int(out["samplerate"]),
-                    list(out["ranges"]),
-                )
-                report = out.get("report")
-                if isinstance(report, dict) and report.get("hits"):
-                    self.wave.set_hits(list(report["hits"]))
-                    self.lbl_sess.setText(
-                        f"已保存 · 回测命中 {len(report['hits'])} 处（橙）"
-                    )
-                text = str(out.get("report_text") or "")
-                if text:
-                    self._log(text)
-                elif not trigger.has_template:
-                    self._log("已保存录音；选区入库后再回测")
-                self.btn_sess_rec.setText("开始长录音")
-                self.refresh_lists()
-                # 选中刚保存的会话
-                for i in range(self.cmb_session.count()):
-                    if self.cmb_session.itemData(i) == paths.root:
-                        self.cmb_session.setCurrentIndex(i)
-                        break
-            else:
-                trigger.start_session_recording()
-                self.btn_sess_rec.setText("停止并保存")
-                self.wave.clear()
-                self.lbl_sess.setText("长录音中…")
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"长录音失败：{exc}")
 
     def _tick(self) -> None:
         t = self._host.trigger
@@ -1150,35 +1264,6 @@ class AudioBacktestPanel(QWidget):
         self.lbl_sess.setText(
             f"{root.name} · {dur:.1f}s · 人工水花 {len(ranges)} 段"
         )
-
-    def _backtest_session(self) -> None:
-        if self._last_session_root is None or self._last_session_wave is None:
-            self._log("请先长录音或选择会话")
-            return
-        try:
-            if self._last_session_ranges:
-                self._persist_ranges(self._last_session_ranges)
-        except Exception:
-            pass
-        try:
-            trigger = self._host.ensure_trigger()
-            path = resolve_template_path()
-            if not trigger.has_template and path is not None:
-                trigger.load_template(path)
-            if not trigger.has_template:
-                self._log("没有模板：请从选区入库")
-                return
-            report = trigger.backtest_last_or_dir(self._last_session_root)
-            hits = list(report.get("hits") or [])
-            self.wave.set_hits(hits)
-            self.lbl_sess.setText(
-                f"回测命中 {len(hits)} 处（橙）· 人工水花 {len(self._last_session_ranges)} 段"
-            )
-            text = str(report.get("report_text") or "")
-            if text:
-                self._log(text)
-        except Exception as exc:  # noqa: BLE001
-            self._log(f"回测失败：{exc}")
 
     def _log(self, msg: str) -> None:
         # 只写本页日志，不转发主控

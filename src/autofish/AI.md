@@ -15,7 +15,7 @@
 - `act/` — 段5 真鼠标；A 开时仅会话 `FISHING` 控鼠（第一下/等漂松手），A 关时跟鱼漂 FSM
 - `decide/` — 段4；A 开时仅会话 `FISHING` 才发按住意图
 - `first_click_trigger/` — 声音开钓（独立 Worker + 会话态）
-  - `audio_input.py` — Windows：只用真实 Loopback**输入**（PaWasapi_IsLoopback / 名含 loopback）；WasapiSettings 仅 auto_convert（无 loopback 参数）；macOS：虚拟输入
+  - `audio_input.py` — Windows：`soundcard` WASAPI 真环回（扬声器 Loopback）；macOS：`sounddevice` + 虚拟输入
   - `ring_buffer.py` — 最近 5 秒循环缓冲；标记按能量截有效段
   - `detector.py` — 能量/频段检测（无模板兜底，默认关）
   - `template_matcher.py` — Mel 峰值归一化 + matchTemplate + 抬升门控；默认阈值 0.70 / 静音 -80dB；非听声可不抬基线
