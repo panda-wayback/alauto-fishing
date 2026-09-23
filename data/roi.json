@@ -1,11 +1,7 @@
 {
-  "left": 567,
-  "top": 368,
-  "width": 378,
-  "height": 246,
-  "source": "default",
-  "bar_left": 87.85714285714286,
-  "bar_right": 288.1714285714286,
-  "bar_top": 137.0,
-  "bar_height": 27.0
+  "left": 1440,
+  "top": 810,
+  "width": 960,
+  "height": 540,
+  "source": "default"
 }

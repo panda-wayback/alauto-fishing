@@ -748,9 +748,6 @@ class FirstClickTrigger(WorkerBase):
 
                 if triggered and can_listen and not self._stop.is_set():
                     self._do_first_click(score)
-                else:
-                    # 让出执行权，界面线程才能处理拖动
-                    time.sleep(0)
         finally:
             try:
                 self._audio.stop()

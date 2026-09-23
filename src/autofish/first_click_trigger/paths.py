@@ -5,13 +5,19 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import sys
 import time
 from pathlib import Path
 
 from common.paths import assets_dir, bundle_root, data_root
 
 _BUNDLED_DIR_REL = Path("audio")
-_BUNDLED_PREFERRED = ("default.npy", "splash_template.npy")
+# 平台默认内置；缺文件时再退回旧名
+_BUNDLED_BY_PLATFORM = {
+    "win32": ("windows.npy", "default.npy", "splash_template.npy"),
+    "darwin": ("macos.npy", "default.npy", "splash_template.npy"),
+}
+_BUNDLED_PREFERRED_FALLBACK = ("default.npy", "splash_template.npy")
 _ACTIVE_BUNDLED_PREFIX = "__bundled__:"
 _ACTIVE_NAME = "active.json"
 _SAFE_NAME = re.compile(r"^[\w.\u4e00-\u9fff\-]+$", re.UNICODE)
@@ -30,16 +36,17 @@ def list_bundled_templates() -> list[Path]:
 
 
 def bundled_template_path() -> Path:
-    """首选内置默认：优先 default.npy，否则 splash_template.npy，再否则目录内第一个。"""
+    """平台内置默认：Windows→windows.npy，macOS→macos.npy；缺则旧名再目录内第一个。"""
     d = assets_audio_dir()
-    for name in _BUNDLED_PREFERRED:
+    preferred = _BUNDLED_BY_PLATFORM.get(sys.platform, _BUNDLED_PREFERRED_FALLBACK)
+    for name in preferred:
         cand = d / name
         if cand.is_file():
             return cand
     bundled = list_bundled_templates()
     if bundled:
         return bundled[0]
-    return d / _BUNDLED_PREFERRED[0]
+    return d / preferred[0]
 
 
 def user_template_dir() -> Path:

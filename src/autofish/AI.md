@@ -20,7 +20,7 @@
   - `detector.py` — 能量/频段检测（无模板兜底，默认关）
   - `template_matcher.py` — Mel 帧峰值高分位归一 + 双后缀窗（短 0.8s / 长 2.0s pad）取高分 + 抬升门控；默认阈值 0.70 / 静音 -80dB
   - `session_eval.py` — 长录音落盘（`audio.npy` 存原始多声道；`load_session` 转单声道回测，`load_session_raw` 供原声试听）、`save_marks` 只改标注、整段查找回测、区间抽模板
-  - `paths.py` — 用户库 `audio_template/` + 内置 `assets/audio/*.npy`；长录音 `audio_sessions/`；冻结包 `seed/` 缺则拷到本机 data
+  - `paths.py` — 用户库 `audio_template/` + 内置 `assets/audio/*.npy`（默认 Windows→`windows.npy` / macOS→`macos.npy`）；长录音 `audio_sessions/`；冻结包 `seed/` 缺则拷到本机 data
   - `trigger.py` — 会话机；试听走默认扬声器（失败退回 device=None）；听声冷却；按住时长
 - `../tools/waveform_select.py` — 回测波形长条（绿人工水花 / 橙回测命中）
 - `../tools/first_click_trigger_window.py` — 声音页 + 回测页面板

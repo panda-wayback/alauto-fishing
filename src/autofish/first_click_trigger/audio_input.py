@@ -400,19 +400,9 @@ class AudioInput:
         self._sc_thread.start()
 
     def _soundcard_loop(self, mic: Any) -> None:
-        # 同 recorder._record_loop：recorder(samplerate, channels) + record(numframes)。
-        # 缓冲加大到至少 1 秒：匹配占着执行权时 Windows 不至于立刻丢数据。
-        # 丢数据警告不打到终端，否则 Git Bash 刷屏会把界面线程卡住，窗口拖不动。
-        import warnings
-
-        warnings.filterwarnings("ignore", message="data discontinuity in recording")
-        engine_block = max(int(self.blocksize), int(self.samplerate))
+        # 同 recorder._record_loop：recorder(samplerate, channels) + record(numframes)
         try:
-            with mic.recorder(
-                samplerate=self.samplerate,
-                channels=self.channels,
-                blocksize=engine_block,
-            ) as rec:
+            with mic.recorder(samplerate=self.samplerate, channels=self.channels) as rec:
                 while not self._sc_stop.is_set():
                     block = rec.record(numframes=self.blocksize)
                     if block is None or not len(block):
