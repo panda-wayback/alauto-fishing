@@ -24,6 +24,9 @@ jobs:
   build-macos:
     name: Build macOS
     runs-on: macos-14
+    outputs:
+      suffix: ${{ steps.build.outputs.suffix }}
+      app_name: ${{ steps.build.outputs.app_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -35,21 +38,28 @@ jobs:
           cache: pip
 
       - name: Build .app
+        id: build
         run: |
           export PYTHON="$(command -v python)"
+          export ALBN_BUILD_SUFFIX="${GITHUB_RUN_ID}"
           bash packaging/build_macos.sh
+          echo "suffix=${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "app_name=albn-autofish-${ALBN_BUILD_SUFFIX}.app" >> "$GITHUB_OUTPUT"
 
-      # 上传 .app 目录本身：Actions「下载 Artifact」只会再 zip 一次，避免 zip 套 zip
+      # 上传 .app：Artifact 名带 run_id，避免同名冲突
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: albn-autofish-macos-arm64
-          path: dist/albn-autofish.app
+          name: albn-autofish-macos-arm64-${{ steps.build.outputs.suffix }}
+          path: dist/${{ steps.build.outputs.app_name }}
           if-no-files-found: error
 
   build-windows:
     name: Build Windows
     runs-on: windows-latest
+    outputs:
+      suffix: ${{ steps.build.outputs.suffix }}
+      dist_name: ${{ steps.build.outputs.dist_name }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -61,17 +71,20 @@ jobs:
           cache: pip
 
       - name: Build onedir
+        id: build
         shell: bash
         run: |
           export PYTHON="$(command -v python)"
+          export ALBN_BUILD_SUFFIX="${GITHUB_RUN_ID}"
           bash packaging/build_windows.sh
+          echo "suffix=${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "dist_name=albn-autofish-${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"
 
-      # 上传 onedir 目录：下载 Artifact 解压后即是 albn-autofish/，无 zip 套 zip
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: albn-autofish-windows-x64
-          path: dist/albn-autofish
+          name: albn-autofish-windows-x64-${{ steps.build.outputs.suffix }}
+          path: dist/${{ steps.build.outputs.dist_name }}
           if-no-files-found: error
 
   release:
@@ -91,30 +104,6 @@ jobs:
         with:
           path: release-assets
 
-      - name: Pack release zips
-        run: |
-          set -euo pipefail
-          mkdir -p out
-          # macOS：artifact 根下是 .app
-          MAC_APP="$(find release-assets/albn-autofish-macos-arm64 -maxdepth 2 -name 'albn-autofish.app' -type d | head -n1)"
-          if [[ -z "$MAC_APP" ]]; then
-            echo "找不到 albn-autofish.app"; find release-assets -maxdepth 3 -print; exit 1
-          fi
-          (cd "$(dirname "$MAC_APP")" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-macos-arm64.zip" "$(basename "$MAC_APP")")
-
-          # Windows：artifact 可能是 albn-autofish/ 或扁平内容
-          WIN_ROOT="release-assets/albn-autofish-windows-x64"
-          if [[ -d "$WIN_ROOT/albn-autofish" ]]; then
-            (cd "$WIN_ROOT" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-windows-x64.zip" albn-autofish)
-          elif [[ -f "$WIN_ROOT/albn-autofish.exe" ]]; then
-            mkdir -p /tmp/winpack
-            cp -a "$WIN_ROOT" /tmp/winpack/albn-autofish
-            (cd /tmp/winpack && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-windows-x64.zip" albn-autofish)
-          else
-            echo "找不到 Windows 构建产物"; find release-assets -maxdepth 3 -print; exit 1
-          fi
-          ls -lah out/
-
       - name: Resolve tag
         id: meta
         run: |
@@ -124,6 +113,38 @@ jobs:
             echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Pack release zips
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.meta.outputs.tag }}"
+          mkdir -p out
+          # macOS：找带后缀的 .app，打进稳定名 albn-autofish.app
+          MAC_APP="$(find release-assets -maxdepth 3 -name 'albn-autofish-*.app' -type d | head -n1)"
+          if [[ -z "$MAC_APP" ]]; then
+            echo "找不到 albn-autofish-*.app"; find release-assets -maxdepth 3 -print; exit 1
+          fi
+          MAC_STAGE="$(mktemp -d)"
+          cp -a "$MAC_APP" "$MAC_STAGE/albn-autofish.app"
+          (cd "$MAC_STAGE" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-macos-arm64-${TAG}.zip" albn-autofish.app)
+
+          # Windows：找带后缀目录，打进稳定名 albn-autofish/
+          WIN_DIR="$(find release-assets -maxdepth 2 -type d -name 'albn-autofish-*' ! -name '*.app' | head -n1)"
+          if [[ -z "$WIN_DIR" ]] || [[ ! -f "$WIN_DIR/albn-autofish.exe" ]]; then
+            # artifact 根可能已是解压后的目录内容
+            WIN_CAND="$(find release-assets -maxdepth 3 -name 'albn-autofish.exe' -type f | head -n1)"
+            if [[ -n "$WIN_CAND" ]]; then
+              WIN_DIR="$(dirname "$WIN_CAND")"
+            fi
+          fi
+          if [[ -z "${WIN_DIR:-}" ]] || [[ ! -f "$WIN_DIR/albn-autofish.exe" ]]; then
+            echo "找不到 Windows 构建产物"; find release-assets -maxdepth 4 -print; exit 1
+          fi
+          WIN_STAGE="$(mktemp -d)"
+          mkdir -p "$WIN_STAGE/albn-autofish"
+          cp -a "$WIN_DIR"/. "$WIN_STAGE/albn-autofish/"
+          (cd "$WIN_STAGE" && zip -qry "$GITHUB_WORKSPACE/out/albn-autofish-windows-x64-${TAG}.zip" albn-autofish)
+          ls -lah out/
+
       - name: Create / update Release
         uses: softprops/action-gh-release@v2
         with:
@@ -132,7 +153,7 @@ jobs:
           draft: false
           generate_release_notes: true
           files: |
-            out/albn-autofish-macos-arm64.zip
-            out/albn-autofish-windows-x64.zip
+            out/albn-autofish-macos-arm64-${{ steps.meta.outputs.tag }}.zip
+            out/albn-autofish-windows-x64-${{ steps.meta.outputs.tag }}.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

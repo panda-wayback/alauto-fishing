@@ -3,7 +3,7 @@
 ## 环境
 
 - Python 3.10+
-- 依赖：见 `requirements.txt`（pygame、mss、numpy、opencv、Pillow、PySide6、pynput）
+- 依赖：见 `requirements.txt`（pygame、mss、numpy、opencv、Pillow、PySide6-Essentials、pynput）
 
 ## 安装
 
@@ -52,16 +52,18 @@ run_batch(ThresholdHoldPolicy(), episodes=100, tier=4)
 
 策略：绿区内相对 pos（左绿=0，右绿=100）&lt;50 按住，&gt;90 松开；切换至少 0.2s + 约 0.1s 随机。测策略只走模拟器，不点真鼠标。
 
-依赖列表见根目录 `requirements.txt`（含 PySide6 调试壳）。
+依赖列表见根目录 `requirements.txt`（含 PySide6-Essentials 调试壳；打包不装 Addons/WebEngine）。
 
 ## macOS / Windows 打包
 
 本地：
 
 ```bash
-make build-macos      # → dist/albn-autofish.app
-make build-windows    # 须在 Windows；→ dist/albn-autofish/
+make build-macos      # → dist/albn-autofish-<后缀>.app
+make build-windows    # 须在 Windows；→ dist/albn-autofish-<后缀>/
 ```
+
+每次打包自动带唯一后缀（本地：UTC 时间戳；CI：`GITHUB_RUN_ID`）。可手动指定：`ALBN_BUILD_SUFFIX=dev1 make build-macos`。
 
 GitHub Actions：
 
@@ -76,10 +78,10 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 产物：
 
-- **Actions Artifact**（main 推送 / 手动且 tag 留空）：下载解压一次即可——macOS 得 `albn-autofish.app`，Windows 得 `albn-autofish/`（内含 `albn-autofish.exe`）。勿再预打 zip 上传，避免 zip 套 zip。  
+- **Actions Artifact**（main 推送 / 手动且 tag 留空）：名如 `albn-autofish-macos-arm64-<run_id>` / `albn-autofish-windows-x64-<run_id>`；解压得 `albn-autofish-<run_id>.app` 或 `albn-autofish-<run_id>/`（内含 `albn-autofish.exe`）。勿再预打 zip 上传，避免 zip 套 zip。  
 - **GitHub Release**（打 tag / 手动填 tag）：附件为  
-  - `albn-autofish-macos-arm64.zip`（内含 `.app`）  
-  - `albn-autofish-windows-x64.zip`（内含 `albn-autofish/`）
+  - `albn-autofish-macos-arm64-<tag>.zip`（内含稳定名 `albn-autofish.app`）  
+  - `albn-autofish-windows-x64-<tag>.zip`（内含稳定名 `albn-autofish/`）
 
 macOS：打开预览壳顶栏 **「权限」** 授权屏幕录制与辅助功能；若被 Gatekeeper 拦截，右键打开或 `xattr -dr com.apple.quarantine albn-autofish.app`。  
 本地反复重打包后授权「被旧包占用」：先 `make reset-perms`，或用 `make build-macos-dev`（独立 Bundle ID，不跟正式包抢）。系统设置里也可手动删掉旧的 Albn Autofish 条目再重授。  

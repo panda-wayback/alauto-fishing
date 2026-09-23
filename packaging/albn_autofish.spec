@@ -3,16 +3,22 @@
 
 环境变量（本地反复测授权时用）：
   ALBN_BUNDLE_ID   默认 com.albn.autofish
-  ALBN_APP_NAME    默认 albn-autofish.app（须以 .app 结尾）
+  ALBN_APP_NAME    默认 albn-autofish.app（须以 .app 结尾；build_macos.sh 会带唯一后缀）
   ALBN_DISPLAY_NAME 默认 Albn Autofish
+  ALBN_BUILD_SUFFIX  唯一后缀（脚本默认生成）
 """
 
 import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
-ROOT = Path(SPECPATH).resolve().parent
+_PACKAGING = Path(SPECPATH).resolve()
+ROOT = _PACKAGING.parent
+sys.path.insert(0, str(_PACKAGING))
+from pyi_trim import trim_analysis  # noqa: E402
+
 BUNDLE_ID = os.environ.get("ALBN_BUNDLE_ID", "com.albn.autofish")
 APP_NAME = os.environ.get("ALBN_APP_NAME", "albn-autofish.app")
 DISPLAY_NAME = os.environ.get("ALBN_DISPLAY_NAME", "Albn Autofish")
@@ -32,10 +38,6 @@ hiddenimports = [
     "autofish.preview",
     "tools.preview_app",
     "tools.dual_range_axis",
-    "sim",
-    "sim.config",
-    "sim.game",
-    "ui.render",
     "common.paths",
     "common.permissions",
     "common.pubsub",
@@ -93,6 +95,10 @@ excludes = [
     "PySide6.scripts",
     "PySide6.QtUiTools",
     "tkinter",
+    "pygame",
+    "sim",
+    "ui",
+    "matplotlib",
 ]
 
 a = Analysis(
@@ -108,6 +114,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+trim_analysis(a)
 pyz = PYZ(a.pure)
 
 exe = EXE(

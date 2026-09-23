@@ -1,11 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Windows onedir：autofish.preview --ui → dist/albn-autofish/"""
 
+# -*- mode: python ; coding: utf-8 -*-
+"""Windows onedir：autofish.preview --ui → dist/<ALBN_DIST_NAME>/
+
+环境变量：
+  ALBN_DIST_NAME  默认 albn-autofish（build_windows.sh 会设为带唯一后缀的名字）
+"""
+
+import os
+import sys
 from pathlib import Path
 
 from PyInstaller.utils.hooks import collect_all, collect_data_files
 
-ROOT = Path(SPECPATH).resolve().parent
+_PACKAGING = Path(SPECPATH).resolve()
+ROOT = _PACKAGING.parent
+sys.path.insert(0, str(_PACKAGING))
+from pyi_trim import trim_analysis  # noqa: E402
+
+DIST_NAME = os.environ.get("ALBN_DIST_NAME", "albn-autofish")
+
 datas = [(str(ROOT / "assets"), "assets")]
 _sessions = ROOT / "data" / "audio_sessions"
 if _sessions.is_dir():
@@ -19,10 +34,6 @@ hiddenimports = [
     "autofish.preview",
     "tools.preview_app",
     "tools.dual_range_axis",
-    "sim",
-    "sim.config",
-    "sim.game",
-    "ui.render",
     "common.paths",
     "common.permissions",
     "common.pubsub",
@@ -81,6 +92,10 @@ excludes = [
     "PySide6.scripts",
     "PySide6.QtUiTools",
     "tkinter",
+    "pygame",
+    "sim",
+    "ui",
+    "matplotlib",
 ]
 
 a = Analysis(
@@ -96,6 +111,7 @@ a = Analysis(
     noarchive=False,
     optimize=0,
 )
+trim_analysis(a)
 pyz = PYZ(a.pure)
 
 exe = EXE(
@@ -123,5 +139,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="albn-autofish",
+    name=DIST_NAME,
 )

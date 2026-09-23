@@ -28,8 +28,8 @@ help:
 	@echo "  make sim             启动模拟器 (main.py)"
 	@echo "  make preview         启动真机预览壳 (--ui)"
 	@echo "  make algo            无头跑策略 (tier=4 episodes=50)"
-	@echo "  make build-macos     打正式 .app（Bundle com.albn.autofish）"
-	@echo "  make build-macos-dev 打开发 .app（独立 Bundle，不跟正式包抢授权）"
+	@echo "  make build-macos     打正式 .app（带唯一后缀）"
+	@echo "  make build-macos-dev 打开发 .app（独立 Bundle + 唯一后缀）"
 	@echo "  make reset-perms     清除 macOS 屏幕录制/辅助功能 TCC 记录"
 	@echo "  make build-windows   打 Windows 包（须在 Windows 上）"
 	@echo "  make open-app / open-app-dev"
@@ -68,10 +68,13 @@ build-windows:
 	bash $(ROOT)/packaging/build_windows.sh
 
 open-app:
-	open $(ROOT)/dist/albn-autofish.app
+	@if [ ! -f $(ROOT)/dist/.build_macos_name ]; then echo "请先 make build-macos"; exit 1; fi; \
+	open "$(ROOT)/dist/$$(cat $(ROOT)/dist/.build_macos_name)"
 
 open-app-dev:
-	open $(ROOT)/dist/albn-autofish-dev.app
+	@APP=$$(ls -td $(ROOT)/dist/albn-autofish-dev-*.app 2>/dev/null | head -n1); \
+	if [ -z "$$APP" ]; then echo "请先 make build-macos-dev"; exit 1; fi; \
+	open "$$APP"
 
 reset-perms:
 	bash $(ROOT)/packaging/reset_macos_perms.sh

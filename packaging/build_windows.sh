@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 打 Windows onedir → dist/albn-autofish/
-# 须在 Windows 上运行。可选：PYTHON=...
+# 打 Windows onedir → dist/albn-autofish-<后缀>/
+# 须在 Windows 上运行。可选：PYTHON=  ALBN_BUILD_SUFFIX=
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -15,15 +15,26 @@ else
   PY="$(command -v python || command -v python3)"
 fi
 
+if [[ -z "${ALBN_BUILD_SUFFIX:-}" ]]; then
+  if [[ -n "${GITHUB_RUN_ID:-}" ]]; then
+    ALBN_BUILD_SUFFIX="${GITHUB_RUN_ID}"
+  else
+    ALBN_BUILD_SUFFIX="$(date -u +%Y%m%d-%H%M%S)"
+  fi
+fi
+export ALBN_BUILD_SUFFIX
+export ALBN_DIST_NAME="albn-autofish-${ALBN_BUILD_SUFFIX}"
+
 echo "Using: $PY"
+echo "Dist: $ALBN_DIST_NAME  suffix=$ALBN_BUILD_SUFFIX"
 "$PY" -m pip install -q -r "$ROOT/requirements.txt" "pyinstaller>=6.0,<7"
 
-# PyInstaller 会整个删掉 dist/albn-autofish/，其中 data/ 是用户数据：打包前移走、结束后放回
-DATA_DIR="$ROOT/dist/albn-autofish/data"
-DATA_BAK="$ROOT/build/data_backup"
+# 同名重打时 PyInstaller 会删掉目标目录；若其中有用户 data/ 则先挪走再放回
+DATA_DIR="$ROOT/dist/${ALBN_DIST_NAME}/data"
+DATA_BAK="$ROOT/build/data_backup_${ALBN_BUILD_SUFFIX}"
 restore_data() {
   if [[ -d "$DATA_BAK" ]]; then
-    mkdir -p "$ROOT/dist/albn-autofish"
+    mkdir -p "$ROOT/dist/${ALBN_DIST_NAME}"
     rm -rf "$DATA_DIR"
     mv "$DATA_BAK" "$DATA_DIR"
     echo "已恢复用户数据: $DATA_DIR"
@@ -44,4 +55,11 @@ trap restore_data EXIT
   --workpath "$ROOT/build/pyinstaller" \
   "$ROOT/packaging/albn_autofish_windows.spec"
 
-echo "输出: $ROOT/dist/albn-autofish/"
+OUT="$ROOT/dist/${ALBN_DIST_NAME}"
+printf '%s\n' "$ALBN_BUILD_SUFFIX" >"$ROOT/dist/.build_suffix"
+printf '%s\n' "$ALBN_DIST_NAME" >"$ROOT/dist/.build_windows_name"
+echo "输出: $OUT/"
+if [[ -d "$OUT" ]]; then
+  du -sh "$OUT" 2>/dev/null || powershell.exe -NoProfile -Command \
+    "(Get-ChildItem -LiteralPath '$OUT' -Recurse -File | Measure-Object Length -Sum).Sum / 1MB"
+fi
