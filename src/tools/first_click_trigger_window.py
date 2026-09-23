@@ -393,7 +393,7 @@ class FirstClickTriggerPanel(QWidget):
         preferred = self._preferred_device_name.strip().lower()
         exact_i: int | None = None
         fuzzy_i: int | None = None
-        fallback_i = 0
+        fallback_i: int | None = None
         for i, d in enumerate(devices):
             label = d.name
             if d.is_virtual_capture or d.is_loopback:
@@ -408,7 +408,7 @@ class FirstClickTriggerPanel(QWidget):
                 fuzzy_i = i
             elif preferred and bare and bare in preferred and fuzzy_i is None:
                 fuzzy_i = i
-            if d.is_virtual_capture or d.is_loopback:
+            if (d.is_virtual_capture or d.is_loopback) and fallback_i is None:
                 fallback_i = i
         self.cmb_device.setEnabled(
             len(devices) > 0
@@ -420,7 +420,7 @@ class FirstClickTriggerPanel(QWidget):
             elif fuzzy_i is not None:
                 sel = fuzzy_i
             else:
-                sel = fallback_i
+                sel = fallback_i or 0
             self.cmb_device.setCurrentIndex(sel)
         self.cmb_device.blockSignals(False)
         self._update_device_hint()
@@ -1098,17 +1098,15 @@ class AudioBacktestPanel(QWidget):
     def _persist_ranges(self, ranges: list[tuple[float, float]]) -> None:
         if self._last_session_root is None or self._last_session_wave is None:
             raise RuntimeError("没有已加载的会话")
-        import numpy as np
-        from autofish.first_click_trigger.session_eval import SessionPaths, save_session
+        from autofish.first_click_trigger.session_eval import SessionPaths, save_marks
 
-        wave = np.asarray(self._last_session_wave, dtype=np.float32)
         paths = SessionPaths(
             root=self._last_session_root,
             audio=self._last_session_root / "audio.npy",
             meta=self._last_session_root / "meta.json",
             marks=self._last_session_root / "marks.json",
         )
-        save_session(wave, self._last_session_sr, ranges, paths=paths)
+        save_marks(paths, ranges)
         self._last_session_ranges = list(ranges)
         self.wave.set_marks(ranges)
 
@@ -1159,37 +1157,21 @@ class AudioBacktestPanel(QWidget):
             self._log(f"入库失败：{exc}")
 
     def _play_selection(self) -> None:
-        if self._last_session_wave is None:
+        if self._last_session_wave is None or self._last_session_root is None:
             return
         a, b = self.wave.selection
         if b - a < 0.02:
             return
         try:
-            import numpy as np
             import sounddevice as sd
+            from autofish.first_click_trigger.session_eval import load_session_raw
 
-            wave = np.asarray(self._last_session_wave, dtype=np.float32)
-            i0 = int(a * self._last_session_sr)
-            i1 = int(b * self._last_session_sr)
-            device = FirstClickTrigger._playback_device()
-            from autofish.first_click_trigger.trigger import _audition_wave
-
+            # 与 excode/recorder.py 一致：原始采集、原音量、系统默认输出
+            raw, sr = load_session_raw(self._last_session_root)
+            i0 = int(a * sr)
+            i1 = int(b * sr)
             sd.stop()
-            chunk = _audition_wave(wave[i0:i1])
-            try:
-                sd.play(
-                    chunk,
-                    samplerate=self._last_session_sr,
-                    device=device,
-                    blocking=False,
-                )
-            except Exception:
-                sd.play(
-                    chunk,
-                    samplerate=self._last_session_sr,
-                    device=None,
-                    blocking=False,
-                )
+            sd.play(raw[i0:i1].copy(), sr, blocking=False)
             self._log(f"试听选区 [{a:.2f},{b:.2f}]s")
         except Exception as exc:  # noqa: BLE001
             self._log(f"试听失败：{exc}")

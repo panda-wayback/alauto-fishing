@@ -112,10 +112,8 @@ class FirstClickTrigger(WorkerBase):
         self._pos_subscribed = False
         self._last_reject_log_at = 0.0
         self._session_recording = False
-        self._session_chunks: list = []
         self._session_ranges: list[tuple[float, float]] = []
         self._session_range_start: float | None = None
-        self._session_samples: int = 0
         self._session_started_at: float = 0.0
         # 实时波形命中：墙钟时刻 + 分数（展示时映射到最近 20s）
         self._live_hits: deque[dict[str, float]] = deque(maxlen=40)
@@ -200,8 +198,7 @@ class FirstClickTrigger(WorkerBase):
 
     @property
     def session_record_duration_s(self) -> float:
-        with self._lock:
-            return self._session_samples / float(max(self._audio.samplerate, 1))
+        return self._audio.record_frames / float(max(self._audio.samplerate, 1))
 
     @property
     def session_mark_count(self) -> int:
@@ -368,11 +365,16 @@ class FirstClickTrigger(WorkerBase):
 
     def session_recording_preview(self) -> tuple["npt.NDArray[np.float32] | None", int, list[tuple[float, float]]]:
         """长录音进行中：返回当前已录波形副本与已闭合区间（供波形条刷新）。"""
+        sr = int(self._audio.samplerate)
         with self._lock:
-            if not self._session_recording or not self._session_chunks:
-                return None, int(self._audio.samplerate), list(self._session_ranges)
-            wave = np.concatenate(self._session_chunks).astype(np.float32)
-            return wave, int(self._audio.samplerate), list(self._session_ranges)
+            ranges = list(self._session_ranges)
+            recording = self._session_recording
+        chunks = self._audio.record_snapshot() if recording else []
+        if not chunks:
+            return None, sr, ranges
+        raw = np.concatenate(chunks, axis=0)
+        wave = raw.mean(axis=1) if raw.ndim > 1 else raw
+        return wave.astype(np.float32), sr, ranges
 
     def start_session_recording(self) -> None:
         """开始长录音（需已在监听）；与开钓会话无关。"""
@@ -380,11 +382,10 @@ class FirstClickTrigger(WorkerBase):
             if self._session_recording:
                 raise RuntimeError("已在长录音中")
             self._session_recording = True
-            self._session_chunks = []
             self._session_ranges = []
             self._session_range_start = None
-            self._session_samples = 0
             self._session_started_at = time.time()
+            self._audio.begin_record()
         self._emit_log("长录音开始 · 录完后在波形条上拖选水花区间", channel="backtest")
 
     def mark_session_range_start(self) -> float:
@@ -392,7 +393,7 @@ class FirstClickTrigger(WorkerBase):
         with self._lock:
             if not self._session_recording:
                 raise RuntimeError("请先开始长录音")
-            t = self._session_samples / float(max(self._audio.samplerate, 1))
+            t = self.session_record_duration_s
             self._session_range_start = t
         self._emit_log(f"区间起点 · {t:.2f}s · 再点「区间终点」", channel="backtest")
         return t
@@ -404,7 +405,7 @@ class FirstClickTrigger(WorkerBase):
                 raise RuntimeError("请先开始长录音")
             if self._session_range_start is None:
                 raise RuntimeError("请先点「区间起点」")
-            end = self._session_samples / float(max(self._audio.samplerate, 1))
+            end = self.session_record_duration_s
             start = float(self._session_range_start)
             self._session_range_start = None
             if end < start:
@@ -428,22 +429,20 @@ class FirstClickTrigger(WorkerBase):
             if not self._session_recording:
                 raise RuntimeError("当前没有长录音")
             self._session_recording = False
-            chunks = self._session_chunks
             ranges = list(self._session_ranges)
             pending = self._session_range_start
-            self._session_chunks = []
             self._session_ranges = []
             self._session_range_start = None
-            self._session_samples = 0
+        raw = self._audio.end_record()
         if pending is not None:
             self._emit_log(
                 f"未闭合的起点 @{pending:.2f}s 已丢弃", channel="backtest"
             )
-        if not chunks:
+        if raw is None or raw.size == 0:
             raise RuntimeError("长录音为空")
-        wave = np.concatenate(chunks).astype(np.float32)
+        wave = (raw.mean(axis=1) if raw.ndim > 1 else raw).astype(np.float32)
         sr = int(self._audio.samplerate)
-        paths = save_session(wave, sr, ranges)
+        paths = save_session(raw, sr, ranges)
         self._emit_log(
             f"长录音已保存 {paths.root.name} · {len(wave)/sr:.1f}s · 区间 {len(ranges)} 段",
             channel="backtest",
@@ -692,9 +691,6 @@ class FirstClickTrigger(WorkerBase):
                 can_listen = False
                 with self._lock:
                     self._ring.extend(mono)
-                    if self._session_recording:
-                        self._session_chunks.append(mono.copy())
-                        self._session_samples += int(mono.size)
                     self._level_db = level_db
                     can_listen = (
                         self._session_enabled

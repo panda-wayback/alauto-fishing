@@ -37,6 +37,32 @@ _VIRTUAL_CAPTURE_NAMES = (
     "what u hear",
     "wave out mix",
 )
+DEFAULT_SPEAKER_TAG = "← 系统默认扬声器"
+
+# Windows 环回：采样率取设备实际混音格式（不重采样）；读不到才用此值
+SC_FALLBACK_SAMPLE_RATE = 44100
+SC_CHANNELS = 2
+
+
+def _sc_mix_samplerate(mic: Any) -> int | None:
+    """设备共享模式实际混音采样率（同 soundcard 内部 GetMixFormat，只读不改）。"""
+    try:
+        from soundcard import mediafoundation as mf  # type: ignore
+
+        pp_client = mic._audio_client()
+        pp_fmt = mf._ffi.new("WAVEFORMATEXTENSIBLE**")
+        try:
+            mf._com.check_error(
+                pp_client[0][0].lpVtbl.GetMixFormat(pp_client[0], pp_fmt)
+            )
+            rate = int(pp_fmt[0][0].Format.nSamplesPerSec)
+            mf._ole32.CoTaskMemFree(pp_fmt[0])
+        finally:
+            mf._com.release(pp_client)
+        return rate if rate > 0 else None
+    except Exception:
+        return None
+
 _SKIP_CAPTURE_NAMES = (
     "多输出",
     "multi-output",
@@ -97,10 +123,44 @@ class AudioInput:
         self._sc_thread: threading.Thread | None = None
         self._sc_stop = threading.Event()
         self._queue: "queue.Queue[npt.NDArray[np.float32]]" = queue.Queue(maxsize=8)
+        # 长录音：采集线程直接收原始块（不经可丢块的 _queue）
+        self._rec_lock = threading.Lock()
+        self._rec_chunks: "list[npt.NDArray[np.float32]] | None" = None
+        self._rec_frames = 0
 
     @property
     def loopback(self) -> bool:
         return self._loopback
+
+    def begin_record(self) -> None:
+        with self._rec_lock:
+            self._rec_chunks = []
+            self._rec_frames = 0
+
+    def end_record(self) -> "npt.NDArray[np.float32] | None":
+        """结束长录音，返回原始块拼接（多声道保持 (N, ch)）。"""
+        with self._rec_lock:
+            chunks = self._rec_chunks
+            self._rec_chunks = None
+            self._rec_frames = 0
+        if not chunks:
+            return None
+        return np.concatenate(chunks, axis=0).astype(np.float32)
+
+    @property
+    def record_frames(self) -> int:
+        with self._rec_lock:
+            return self._rec_frames
+
+    def record_snapshot(self) -> "list[npt.NDArray[np.float32]]":
+        with self._rec_lock:
+            return [] if self._rec_chunks is None else list(self._rec_chunks)
+
+    def _tap_record(self, block: "npt.NDArray[np.float32]") -> None:
+        with self._rec_lock:
+            if self._rec_chunks is not None:
+                self._rec_chunks.append(block)
+                self._rec_frames += int(block.shape[0])
 
     @staticmethod
     def _name_is_virtual_capture(name: str) -> bool:
@@ -181,6 +241,7 @@ class AudioInput:
             mics = list(_sc.all_microphones(include_loopback=True))
         except Exception:
             return AudioInput._list_sounddevice()
+        default_id = AudioInput._default_loopback_id(mics)
         for m in mics:
             name = str(getattr(m, "name", "") or "")
             if AudioInput._name_is_skip_capture(name):
@@ -189,6 +250,8 @@ class AudioInput:
             label = name
             if is_lb and "loopback" not in name.lower():
                 label = f"{name} (Loopback)"
+            if default_id is not None and str(m.id) == default_id:
+                label = f"{label}  {DEFAULT_SPEAKER_TAG}"
             channels = 2
             try:
                 channels = int(getattr(m, "channels", 2) or 2)
@@ -200,16 +263,39 @@ class AudioInput:
                     key=f"sc:{tag}:{m.id}",
                     name=label,
                     is_input=True,
-                    channels=max(1, channels),
-                    samplerate=48000.0,
+                    channels=SC_CHANNELS if is_lb else max(1, channels),
+                    samplerate=float(SC_FALLBACK_SAMPLE_RATE),
                     is_loopback=is_lb,
                     is_virtual_capture=is_lb or AudioInput._name_is_virtual_capture(name),
                 )
             )
         devices.sort(
-            key=lambda x: (0 if (x.is_virtual_capture or x.is_loopback) else 1, x.name.lower())
+            key=lambda x: (
+                0 if DEFAULT_SPEAKER_TAG in x.name else 1,
+                0 if (x.is_virtual_capture or x.is_loopback) else 1,
+                x.name.lower(),
+            )
         )
         return devices
+
+    @staticmethod
+    def _default_loopback_id(mics: list[Any]) -> str | None:
+        """系统默认扬声器的环回（同 excode/recorder.py::_find_loopback）。"""
+        assert _sc is not None
+        try:
+            speaker = _sc.default_speaker()
+        except Exception:
+            return None
+        try:
+            mic = _sc.get_microphone(id=speaker.name, include_loopback=True)
+            if getattr(mic, "isloopback", False):
+                return str(mic.id)
+        except Exception:
+            pass
+        for m in mics:
+            if getattr(m, "isloopback", False) and speaker.name in str(m.name):
+                return str(m.id)
+        return None
 
     @staticmethod
     def _list_sounddevice() -> list[AudioDeviceInfo]:
@@ -263,9 +349,11 @@ class AudioInput:
             try:
                 mic = _sc.get_microphone(mic_id, include_loopback=True)
                 ch = int(getattr(mic, "channels", 2) or 2)
-                return {"samplerate": 48000, "channels": min(2, max(1, ch))}
+                ch = SC_CHANNELS if getattr(mic, "isloopback", False) else min(2, max(1, ch))
+                rate = _sc_mix_samplerate(mic) or SC_FALLBACK_SAMPLE_RATE
+                return {"samplerate": rate, "channels": ch}
             except Exception:
-                return {"samplerate": 48000, "channels": 2}
+                return {"samplerate": SC_FALLBACK_SAMPLE_RATE, "channels": SC_CHANNELS}
         idx = 0
         if key.startswith("sd:"):
             try:
@@ -312,17 +400,15 @@ class AudioInput:
         self._sc_thread.start()
 
     def _soundcard_loop(self, mic: Any) -> None:
-        ch = min(2, max(1, int(self.channels)))
+        # 同 recorder._record_loop：recorder(samplerate, channels) + record(numframes)
         try:
-            with mic.recorder(samplerate=self.samplerate, channels=ch) as rec:
+            with mic.recorder(samplerate=self.samplerate, channels=self.channels) as rec:
                 while not self._sc_stop.is_set():
-                    try:
-                        block = rec.record(numframes=self.blocksize)
-                    except Exception:
-                        if self._sc_stop.is_set():
-                            break
+                    block = rec.record(numframes=self.blocksize)
+                    if block is None or not len(block):
                         continue
                     arr = np.asarray(block, dtype=np.float32)
+                    self._tap_record(arr)
                     if arr.ndim > 1 and arr.shape[1] > 1:
                         mono = arr.mean(axis=1).astype(np.float32)
                     else:
@@ -412,6 +498,7 @@ class AudioInput:
     ) -> None:
         if status:
             pass
+        self._tap_record(np.array(indata, dtype=np.float32, copy=True))
         if indata.ndim > 1 and indata.shape[1] > 1:
             mono = indata.mean(axis=1).astype(np.float32)
         else:
