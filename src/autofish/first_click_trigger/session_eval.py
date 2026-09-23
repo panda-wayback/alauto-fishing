@@ -67,24 +67,40 @@ def save_session(
     *,
     paths: SessionPaths | None = None,
 ) -> SessionPaths:
+    """audio.npy 存原始采集（多声道为 (N, ch)），回测读取时再转单声道。"""
     paths = paths or new_session_dir()
     paths.root.mkdir(parents=True, exist_ok=True)
-    mono = np.asarray(wave, dtype=np.float32)
-    if mono.ndim > 1:
-        mono = mono.mean(axis=1)
-    np.save(paths.audio, mono)
+    raw = np.asarray(wave, dtype=np.float32)
+    np.save(paths.audio, raw)
+    frames = int(raw.shape[0])
     meta = {
         "samplerate": int(samplerate),
-        "samples": int(mono.size),
-        "duration_s": float(mono.size / max(samplerate, 1)),
+        "samples": frames,
+        "channels": int(raw.shape[1]) if raw.ndim > 1 else 1,
+        "duration_s": float(frames / max(samplerate, 1)),
     }
     paths.meta.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    save_marks(paths, ranges)
+    return paths
+
+
+def save_marks(
+    paths: SessionPaths,
+    ranges: list[tuple[float, float]] | list[dict[str, float]],
+) -> None:
+    """只改标注，不动 audio.npy。"""
     norm = normalize_ranges(ranges)
     marks = {
         "splash_ranges": [{"start_s": a, "end_s": b} for a, b in norm],
     }
     paths.marks.write_text(json.dumps(marks, ensure_ascii=False, indent=2), encoding="utf-8")
-    return paths
+
+
+def load_session_raw(root: Path) -> tuple["npt.NDArray[np.float32]", int]:
+    """原始采集（播放原声用）。"""
+    raw = np.load(root / "audio.npy").astype(np.float32)
+    meta = json.loads((root / "meta.json").read_text(encoding="utf-8"))
+    return raw, int(meta["samplerate"])
 
 
 def load_session(

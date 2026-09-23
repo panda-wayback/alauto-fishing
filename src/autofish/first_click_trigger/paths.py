@@ -4,13 +4,20 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import sys
 import time
 from pathlib import Path
 
-from common.paths import assets_dir, data_root
+from common.paths import assets_dir, bundle_root, data_root
 
 _BUNDLED_DIR_REL = Path("audio")
-_BUNDLED_PREFERRED = ("default.npy", "splash_template.npy")
+# 平台默认内置；缺文件时再退回旧名
+_BUNDLED_BY_PLATFORM = {
+    "win32": ("windows.npy", "default.npy", "splash_template.npy"),
+    "darwin": ("macos.npy", "default.npy", "splash_template.npy"),
+}
+_BUNDLED_PREFERRED_FALLBACK = ("default.npy", "splash_template.npy")
 _ACTIVE_BUNDLED_PREFIX = "__bundled__:"
 _ACTIVE_NAME = "active.json"
 _SAFE_NAME = re.compile(r"^[\w.\u4e00-\u9fff\-]+$", re.UNICODE)
@@ -29,16 +36,17 @@ def list_bundled_templates() -> list[Path]:
 
 
 def bundled_template_path() -> Path:
-    """首选内置默认：优先 default.npy，否则 splash_template.npy，再否则目录内第一个。"""
+    """平台内置默认：Windows→windows.npy，macOS→macos.npy；缺则旧名再目录内第一个。"""
     d = assets_audio_dir()
-    for name in _BUNDLED_PREFERRED:
+    preferred = _BUNDLED_BY_PLATFORM.get(sys.platform, _BUNDLED_PREFERRED_FALLBACK)
+    for name in preferred:
         cand = d / name
         if cand.is_file():
             return cand
     bundled = list_bundled_templates()
     if bundled:
         return bundled[0]
-    return d / _BUNDLED_PREFERRED[0]
+    return d / preferred[0]
 
 
 def user_template_dir() -> Path:
@@ -58,12 +66,56 @@ def user_audio_sessions_dir() -> Path:
     return data_root() / "audio_sessions"
 
 
+def bundled_sessions_seed_dir() -> Path:
+    """打包内种子会话：`seed/audio_sessions`（由 data/audio_sessions 打进包）。"""
+    return bundle_root() / "seed" / "audio_sessions"
+
+
+def ensure_session_seed() -> None:
+    """用户目录缺某 session_* 时，从包内种子拷贝（不覆盖已有）。"""
+    seed = bundled_sessions_seed_dir()
+    if not seed.is_dir():
+        return
+    dest_root = user_audio_sessions_dir()
+    dest_root.mkdir(parents=True, exist_ok=True)
+    for src in seed.iterdir():
+        if not src.is_dir() or not src.name.startswith("session_"):
+            continue
+        if not (src / "audio.npy").is_file():
+            continue
+        dest = dest_root / src.name
+        if dest.exists():
+            continue
+        try:
+            shutil.copytree(src, dest)
+        except OSError:
+            continue
+
+
+def ensure_user_template_seed() -> None:
+    """包内 `seed/audio_template/*.npy` → 用户库（缺则拷，不覆盖）。"""
+    seed = bundle_root() / "seed" / "audio_template"
+    if not seed.is_dir():
+        return
+    dest = user_template_dir()
+    dest.mkdir(parents=True, exist_ok=True)
+    for src in seed.glob("*.npy"):
+        target = dest / src.name
+        if target.exists():
+            continue
+        try:
+            shutil.copy2(src, target)
+        except OSError:
+            continue
+
+
 def _active_meta_path() -> Path:
     return user_template_dir() / _ACTIVE_NAME
 
 
 def list_library_templates() -> list[Path]:
     """库内模板：用户目录下全部 .npy + assets/audio 下全部内置 .npy。"""
+    ensure_user_template_seed()
     out: list[Path] = []
     seen: set[str] = set()
     d = user_template_dir()
@@ -86,7 +138,8 @@ def list_library_templates() -> list[Path]:
 
 
 def list_session_dirs() -> list[Path]:
-    """固定目录下可加载的 session_*（含 audio.npy）。"""
+    """固定目录下可加载的 session_*（含 audio.npy）；先落包内种子。"""
+    ensure_session_seed()
     root = user_audio_sessions_dir()
     root.mkdir(parents=True, exist_ok=True)
     sessions: list[Path] = []

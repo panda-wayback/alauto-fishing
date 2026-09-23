@@ -7,6 +7,12 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files
 
 ROOT = Path(SPECPATH).resolve().parent
 datas = [(str(ROOT / "assets"), "assets")]
+_sessions = ROOT / "data" / "audio_sessions"
+if _sessions.is_dir():
+    datas.append((str(_sessions), "seed/audio_sessions"))
+_tmpl = ROOT / "data" / "audio_template"
+if _tmpl.is_dir():
+    datas.append((str(_tmpl), "seed/audio_template"))
 binaries = []
 hiddenimports = [
     "autofish",
@@ -20,9 +26,12 @@ hiddenimports = [
     "common.paths",
     "common.permissions",
     "common.pubsub",
+    "sounddevice",
+    "soundcard",
+    "comtypes",
 ]
 
-for pkg in ("mss", "pynput"):
+for pkg in ("mss", "pynput", "sounddevice", "soundcard", "comtypes"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

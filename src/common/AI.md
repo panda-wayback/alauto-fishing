@@ -15,7 +15,7 @@
 ## 对外契约
 
 - 经子包导出（如 `common.pubsub.EventBus`）。
-- `common.paths.bundle_root` / `data_root` / `assets_dir`（冻结：macOS Application Support / Windows LOCALAPPDATA）
+- `common.paths.bundle_root` / `data_root` / `assets_dir`（冻结：Windows exe 同级 `data\`，不可写退 LOCALAPPDATA；macOS Application Support）
 - `common.permissions.current_status` / `request_screen_access` / `request_input_access` / `reset_macos_tcc` / `restart_as_admin`
 
 ## 约束

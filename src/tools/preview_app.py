@@ -918,6 +918,35 @@ class PreviewApp(QMainWindow):
             s.window_x, s.window_y, s.window_w, s.window_h
         )
         self.setGeometry(pt.x(), pt.y(), s.window_w, s.window_h)
+        # Windows：geometry 常是客户区；y=0 时标题栏在屏外，看起来像无边框、拖不动
+        self._ensure_frame_on_screen()
+
+    def _ensure_frame_on_screen(self) -> None:
+        """保证整窗含标题栏落在某块屏的可用区内。"""
+        screens = QApplication.screens()
+        if not screens:
+            return
+        fg = self.frameGeometry()
+        host = None
+        for scr in screens:
+            ag = scr.availableGeometry()
+            if ag.intersects(fg):
+                host = ag
+                break
+        if host is None:
+            host = screens[0].availableGeometry()
+        dx = 0
+        dy = 0
+        if fg.left() < host.left():
+            dx = host.left() - fg.left()
+        elif fg.right() > host.right():
+            dx = host.right() - fg.right()
+        if fg.top() < host.top():
+            dy = host.top() - fg.top()
+        elif fg.bottom() > host.bottom():
+            dy = host.bottom() - fg.bottom()
+        if dx or dy:
+            self.move(self.x() + dx, self.y() + dy)
 
     def _restore_ab_from_settings(self) -> None:
         """启动时恢复 A/B 勾选并应用。"""

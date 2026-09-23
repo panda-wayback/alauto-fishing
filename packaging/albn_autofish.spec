@@ -20,6 +20,12 @@ if not APP_NAME.endswith(".app"):
     APP_NAME = f"{APP_NAME}.app"
 
 datas = [(str(ROOT / "assets"), "assets")]
+_sessions = ROOT / "data" / "audio_sessions"
+if _sessions.is_dir():
+    datas.append((str(_sessions), "seed/audio_sessions"))
+_tmpl = ROOT / "data" / "audio_template"
+if _tmpl.is_dir():
+    datas.append((str(_tmpl), "seed/audio_template"))
 binaries = []
 hiddenimports = [
     "autofish",
@@ -33,9 +39,11 @@ hiddenimports = [
     "common.paths",
     "common.permissions",
     "common.pubsub",
+    "sounddevice",
+    "soundcard",
 ]
 
-for pkg in ("mss", "pynput"):
+for pkg in ("mss", "pynput", "sounddevice", "soundcard"):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b

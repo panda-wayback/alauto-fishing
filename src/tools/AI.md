@@ -15,7 +15,7 @@
 - `shell_config.py` — 用户 `data/shell_settings.json` + 打包默认 `assets/shell_settings.json`；「写入打包默认」
 - `bar_mark_canvas.py` — 条界参考图 + 程序/手动竖线
 - `dual_range_axis.py` — 策略双区间数轴；`SingleRangeBar` 单段可拖（开钓等待/长按）
-- `first_click_trigger_window.py` — 开钓配置 + 回测面板
+- `first_click_trigger_window.py` — 开钓配置 + 回测面板；设备项存 `(key, is_loopback)`；保存/回测/加载会话走后台线程 + 等待条
 - `waveform_select.py` — 回测波形长条
 
 ## 对外契约
