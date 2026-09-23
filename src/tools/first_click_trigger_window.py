@@ -1166,7 +1166,7 @@ class AudioBacktestPanel(QWidget):
             import sounddevice as sd
             from autofish.first_click_trigger.session_eval import load_session_raw
 
-            # 与 excode/recorder.py 一致：原始采集、原音量、系统默认输出
+            # 原始采集、原音量、系统默认输出
             raw, sr = load_session_raw(self._last_session_root)
             i0 = int(a * sr)
             i1 = int(b * sr)

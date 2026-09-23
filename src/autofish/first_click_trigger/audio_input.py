@@ -280,7 +280,7 @@ class AudioInput:
 
     @staticmethod
     def _default_loopback_id(mics: list[Any]) -> str | None:
-        """系统默认扬声器的环回（同 excode/recorder.py::_find_loopback）。"""
+        """系统默认扬声器的环回。"""
         assert _sc is not None
         try:
             speaker = _sc.default_speaker()

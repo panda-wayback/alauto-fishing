@@ -83,7 +83,7 @@ WAIT ──水声命中──► FIRST_CLICK ──按住松开完成──► W
 
 - 设备：macOS 选 BlackHole 等虚拟输入；**Windows 用 soundcard 枚举 WASAPI 环回**，选带 Loopback /「录游戏声」的扬声器项（如正在用的 DELL），勿选麦克风。试听走本机扬声器/耳机。  
 - **打包种子会话（已确认）**：仓库 `data/audio_sessions/` 打进包内 `seed/audio_sessions`；首次（或用户目录缺该会话时）拷到本机 `data_root/audio_sessions`，回测列表可用。用户新建会话仍只写本机 data。  
-- **打包种子模板（已确认）**：仓库 `data/audio_template/*.npy`（含 `active.json` 时一并打入种子目录）→ 包内 `seed/audio_template`；用户库缺同名文件时拷到 `data_root/audio_template`（不覆盖）。内置只读模板仍只走 `assets/audio/`。  
+- **打包种子模板（已确认）**：仓库 `data/audio_template/*.npy` → 包内 `seed/audio_template`；用户库缺同名文件时只拷 `*.npy` 到 `data_root/audio_template`（不覆盖、不拷 `active.json`）。内置只读模板仍只走 `assets/audio/`。  
 - **模板库（已确认）**：用户库 `data/audio_template/`（可增删改名）；内置库 `assets/audio/*.npy`（只读，应用内列表展示，不可删改）。选中=开钓与回测的当前模板。禁止用系统文件夹对话框选模板。原单一 `template.npy` 视为库中一项并迁移/兼容。**内置默认按平台**：Windows → `windows.npy`，macOS → `macos.npy`（缺则再试 `default.npy` / `splash_template.npy`）。
 - 匹配（已确认）：模板为单声道 `float32` 波形 `.npy`（无内嵌采样率；与实时采集同采样率使用）。Mel 频谱图上滑动 NCC（图像式 `matchTemplate`）找短模板；**入 Mel 前按短时帧峰值的高分位（约 95%）归一化**（抗单峰杂音尖刺；干净水花仍接近原峰值归一；实时与回测同一套）。模板先按能量裁到主体。触发还需分数相对近期基线**突然抬升**（默认 ≥0.08）。**仅 WAIT 且冷却已过才更新抬升基线**；**每次进入听声基线归零**；静音时基线始终衰减。默认阈值 **0.70**；静音门限默认 **-80dB**（短时峰 RMS）。  
 - **搜索窗（已确认）**：实时保持长缓冲（模板长 + **2.0s**）。每次匹配用轻量双窗——短窗（模板长 + **0.8s**）与长窗（模板长 + **2.0s**，即整段缓冲）各做一次 Mel-NCC 取窗内最大；**最终分数取两窗较高者**，再过阈值与抬升门。不为沿缓冲多起点滑扫（易抬高环境基线导致漏识别）。回测仍整段滑过（独立匹配器）。
