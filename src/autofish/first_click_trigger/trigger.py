@@ -680,6 +680,12 @@ class FirstClickTrigger(WorkerBase):
                 if block is None:
                     self._sleep_interruptible(0.005)
                     continue
+                # 匹配一次比一块音频时长还久：积压块一次取完再匹配，否则采集队列丢块
+                parts = [block]
+                while (nxt := self._audio.read()) is not None:
+                    parts.append(nxt)
+                if len(parts) > 1:
+                    block = np.concatenate(parts, axis=0)
 
                 mono = block.mean(axis=1) if block.ndim > 1 else block
                 mono = np.asarray(mono, dtype=np.float32)
@@ -742,6 +748,9 @@ class FirstClickTrigger(WorkerBase):
 
                 if triggered and can_listen and not self._stop.is_set():
                     self._do_first_click(score)
+                else:
+                    # 让出执行权，界面线程才能处理拖动
+                    time.sleep(0)
         finally:
             try:
                 self._audio.stop()

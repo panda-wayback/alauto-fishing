@@ -47,7 +47,7 @@
 - color_blocks 识别器（可选）：入图过宽先等比压缩定条、坐标映回；漂在原图像素条框附近找；每帧 HSV/RGB 通道只算一次给四掩膜共用；`use_color_blocks()` 切换
 - bobber_anchor 识别器（默认）：先准确定漂 → 手动/自动锁条 → 有条后只在条内跟漂；入图**等比压入 800×800** 再识、坐标映回；模板档约 0.14～1.0、多试邻近档、**命中锁档**；**无 local**；跟漂 mid≈条长½（夹在 full-nbr 内）；**禁止同帧 mid+full**；mid 丢→隔帧 full-nbr 恢复；邻域**底贴条底、只向上扩**；锁档条内**命中即停**；**监控开关保留程序锁**（ROI 未变）；**有漂无条仍回报漂位**（pos 空）；整段 ≥20fps；`use_bobber_anchor()` / `apply_manual_bar`
 - find_bobber（独立）：入图同压 800×800；颜色结构 + 小 ROI 彩色复核；多档邻近/失败扩档；命中锁定尺度；条邻域锁档少档且命中即停；宁可 miss 不可错
-- `FirstClickTrigger`：仅 `WAIT` 且冷却已过才听声并更新抬升基线；环缓 20s；开钓页可滚动画波形+命中橙标；立刻进 `FIRST_CLICK`（等待/长按/松开后区间可配置，sleep 可被 stop 打断）→ `WAIT_BOBBER`（3s）→ 出漂 `FISHING` → 丢漂满 1s 回 `WAIT`（再冷却 3s）；失败回 `WAIT`；发布 `CAST_SESSION`；`stop` 先 abort 音频流再 join
+- `FirstClickTrigger`：仅 `WAIT` 且冷却已过才听声并更新抬升基线；环缓 20s；开钓页可滚动画波形+命中橙标；立刻进 `FIRST_CLICK`（等待/长按/松开后区间可配置，sleep 可被 stop 打断）→ `WAIT_BOBBER`（3s）→ 出漂 `FISHING` → 丢漂满 1s 回 `WAIT`（再冷却 3s）；失败回 `WAIT`；发布 `CAST_SESSION`；`stop` 先 abort 音频流再 join；`_run` 每轮取完队列积压块再匹配一次（匹配慢于实时也不丢块，与回测同源）
 - Worker：`stop` join 超时不假装线程已死（`is_running` 仍真）
 - 壳订 Frame（画面）+ Pos（读数）。
 - Decide 不点鼠标；Act 不决策。
