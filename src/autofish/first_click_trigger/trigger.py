@@ -16,7 +16,7 @@ from autofish.first_click_trigger.audio_input import AudioInput
 from autofish.first_click_trigger.detector import AudioDetector
 from autofish.first_click_trigger.ring_buffer import AudioRingBuffer
 from autofish.first_click_trigger.template_matcher import TemplateMatcher
-from autofish.topics import CastSessionEvent, CastSessionState, PosEvent, Topic
+from autofish.topics import CastSessionEvent, CastSessionState, PosEvent, SplashHit, Topic
 from autofish.worker_base import WorkerBase
 
 if TYPE_CHECKING:
@@ -549,8 +549,14 @@ class FirstClickTrigger(WorkerBase):
             self.bus.unsubscribe(Topic.POS, self._on_pos)
             self._pos_subscribed = False
 
-    def _set_session(self, state: CastSessionState, detail: str = "") -> None:
-        if state == self._session and not detail:
+    def _set_session(
+        self,
+        state: CastSessionState,
+        detail: str = "",
+        *,
+        splash: SplashHit | None = None,
+    ) -> None:
+        if state == self._session and not detail and splash is None:
             return
         prev = self._session
         self._session = state
@@ -576,7 +582,12 @@ class FirstClickTrigger(WorkerBase):
             self._listen_after = 0.0
         if self.bus is not None:
             self.bus.publish_cast_session(
-                CastSessionEvent(state=state, ts=time.time(), detail=detail)
+                CastSessionEvent(
+                    state=state,
+                    ts=time.time(),
+                    detail=detail,
+                    splash=splash,
+                )
             )
         if prev != state:
             self._emit_log(
@@ -739,14 +750,19 @@ class FirstClickTrigger(WorkerBase):
             delay_s = random.uniform(self._delay_lo_s, self._delay_hi_s)
             hold_s = random.uniform(self._hold_lo_s, self._hold_hi_s)
             after_s = random.uniform(self._after_lo_s, self._after_hi_s)
-            detail = (
-                f"splash|{float(score):.2f}|{delay_s:.2f}|{hold_s:.2f}|"
-                f"{after_s:.2f}|{thr:.2f}"
+            splash = SplashHit(
+                score=float(score),
+                delay_s=float(delay_s),
+                hold_s=float(hold_s),
+                after_s=float(after_s),
+                threshold=thr,
             )
             self._live_hits.append(
                 {"t_wall": time.time(), "score": float(score)}
             )
-            self._set_session(CastSessionState.FIRST_CLICK, detail)
+            self._set_session(
+                CastSessionState.FIRST_CLICK, "splash", splash=splash
+            )
             self._emit_log(
                 f"命中水花 · 相似 {score:.2f} / 阈值 {thr:.2f} · "
                 f"等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s · "

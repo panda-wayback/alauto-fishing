@@ -14,10 +14,13 @@
 | 2 截图 | [`docs/autofish/capture/`](../capture/) | Frame | **当前 ROI**；无则不出帧 |
 | 3 识别 | [`docs/autofish/detect/`](../detect/) | Pos | ROI + 最新 Frame；**不发布 ROI** |
 | （辅助）钓鱼状态 | 本页约定 | FishingState | ROI + Pos |
-| 4 算法 | [`docs/autofish/decide/`](../decide/) | **ActionIntent** | Pos + FishingState |
-| 5 执行 | [`docs/autofish/act/`](../act/) | （可选回执） | ActionIntent |
+| （辅助）开钓会话 | [`docs/autofish/first_click_trigger/`](../first_click_trigger/) | CastSession | （壳日志；Decide/Act 读态门控） |
+| 4 算法 | [`docs/autofish/decide/`](../decide/) | **ActionIntent** | Pos + FishingState + CastSession |
+| 5 执行 | [`docs/autofish/act/`](../act/) | （可选回执） | ActionIntent + CastSession |
 
-主题至少：`ROI`、`Frame`、`Pos`、`FishingState`、`ActionIntent`。
+主题至少：`ROI`、`Frame`、`Pos`、`FishingState`、`CastSession`、`ActionIntent`。
+
+水声命中进 `FIRST_CLICK` 时，`CastSession` 事件带结构化命中字段（相似分与三段时长、阈值）；见开钓页。
 
 ### ROI 双层
 

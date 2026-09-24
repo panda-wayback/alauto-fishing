@@ -1,6 +1,6 @@
 # src/tools/ 功能说明
 
-更新时间：2026-09-22
+更新时间：2026-09-24
 
 ## 本文件夹职责
 
@@ -8,14 +8,23 @@
 
 ## 目录清单
 
-- `preview_app.py` — 调试壳主窗（完整态 ↔ 紧凑态；`mode_stack`）
+- `preview_app.py` — 调试壳主窗（完整态 ↔ 紧凑态；导航/管线/持久化）
+- `main_page.py` — 主控页 builder
+- `calibrate_page.py` — 拉漂配置页 builder（ROI / MONITOR / BAR / 策略）
+- `more_page.py` — 更多页 builder（权限 / 开钓时间 / 打包默认）
+- `image_canvas.py` — MONITOR 画布 + 漂/条叠层
+- `sound_panel.py` — 开钓配置：设备 / 监听 / 模板 / 阈值 / 实时波形
+- `backtest_panel.py` — 回测：长录音 / 会话 / 模板库 / 波形
+- `template_combo.py` — 模板下拉填充（开钓页与回测页共用）
+- `busy_worker.py` — 后台任务线程 + 等待条
+- `shell_log.py` — 各页本地日志（最新在上）
 - `status_hud.py` — `StatusHudPanel`（紧凑态内容：阶段灯 + 主界面）
 - `macos_overlay.py` — macOS 抬窗层级 / 加入全屏 Space（紧凑态叠游戏）
 - `shell_theme.py` — 柔暗色板 + `global_qss()` / `preview_canvas_qss()`
 - `shell_config.py` — 用户 `data/shell_settings.json` + 打包默认 `assets/shell_settings.json`；「写入打包默认」
 - `bar_mark_canvas.py` — 条界参考图 + 程序/手动竖线
 - `dual_range_axis.py` — 策略双区间数轴；`SingleRangeBar` 单段可拖（开钓等待/长按）
-- `first_click_trigger_window.py` — 开钓配置 + 回测面板；设备项存 `(key, is_loopback)`；保存/回测/加载会话走后台线程 + 等待条
+- `first_click_trigger_window.py` — 兼容再导 `FirstClickTriggerPanel` / `AudioBacktestPanel`
 - `waveform_select.py` — 回测波形长条
 
 ## 对外契约

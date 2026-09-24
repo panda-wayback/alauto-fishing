@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import time
+from dataclasses import replace
 from collections import deque
 from pathlib import Path
 
@@ -13,23 +14,13 @@ _SRC = Path(__file__).resolve().parent.parent
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-from PySide6.QtCore import QObject, QPoint, QRect, QTimer, Qt, Signal
-from PySide6.QtGui import QImage, QPainter, QPen, QPixmap, QColor
+from PySide6.QtCore import QObject, QPoint, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QFrame,
-    QGroupBox,
     QHBoxLayout,
-    QLabel,
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QPlainTextEdit,
-    QScrollArea,
-    QSizePolicy,
-    QSlider,
-    QSplitter,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -74,7 +65,6 @@ from autofish.topics import (
 from common import permissions as perms
 from tools.shell_config import (
     ShellSettings,
-    is_frozen_app,
     load_shell_settings,
     save_bundled_shell_settings,
     save_shell_settings,
@@ -86,80 +76,20 @@ from tools.shell_theme import (
     TEXT_MUTED,
     WARN,
     global_qss,
-    preview_canvas_qss,
 )
 from tools.macos_overlay import elevate_over_fullscreen, restore_window_level
 from tools.status_hud import StatusHudPanel
-from tools.bar_mark_canvas import BarMarkCanvas
-from tools.dual_range_axis import DualRangeAxis, SingleRangeBar
-from tools.first_click_trigger_window import AudioBacktestPanel, FirstClickTriggerPanel
+from tools.shell_log import append_log
+from tools.image_canvas import overlay_hit
+from tools.sound_panel import FirstClickTriggerPanel
+from tools.backtest_panel import AudioBacktestPanel
+from tools.main_page import build_main_page
+from tools.calibrate_page import build_calibrate_page
+from tools.more_page import build_more_page
 
 IDLE = "idle"
 SELECT = "select"
 READY = "ready"
-
-
-def _rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
-    rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
-    h, w = rgb.shape[:2]
-    qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-    return QPixmap.fromImage(qimg)
-
-
-def _draw_rect(
-    rgb: np.ndarray,
-    x: int,
-    y: int,
-    w: int,
-    h: int,
-    color: tuple[int, int, int],
-    thickness: int = 1,
-) -> None:
-    fh, fw = rgb.shape[:2]
-    x0 = max(0, min(fw - 1, x))
-    y0 = max(0, min(fh - 1, y))
-    x1 = max(0, min(fw - 1, x + max(w, 1) - 1))
-    y1 = max(0, min(fh - 1, y + max(h, 1) - 1))
-    if x1 <= x0 or y1 <= y0:
-        return
-    t = max(1, thickness)
-    rgb[y0 : y0 + t, x0 : x1 + 1] = color
-    rgb[y1 - t + 1 : y1 + 1, x0 : x1 + 1] = color
-    rgb[y0 : y1 + 1, x0 : x0 + t] = color
-    rgb[y0 : y1 + 1, x1 - t + 1 : x1 + 1] = color
-
-
-def _overlay_hit(rgb: np.ndarray, hit: BobberHit | None) -> np.ndarray:
-    """叠层：有条画条框；有漂画命中点（可有漂无条）。"""
-    if hit is None:
-        return rgb
-    vis = rgb.copy()
-    fh, fw = vis.shape[:2]
-    if hit.bar_width > 0:
-        zx, zy = int(hit.bar_left), int(hit.bar_top)
-        zw, zh = int(hit.bar_width), int(hit.bar_height)
-        _draw_rect(vis, zx, zy, zw, zh, (0, 230, 120), thickness=2)
-        y0 = max(0, zy - max(6, zh // 2))
-        y1 = min(fh, zy + zh + 2)
-        x0, x1 = max(0, zx), min(fw, zx + zw)
-        _draw_rect(vis, x0, y0, x1 - x0, y1 - y0, (255, 200, 40), thickness=1)
-        mid_y0 = zy
-        mid_y1 = min(fh - 1, zy + max(zh, 1) - 1)
-        if 0 <= zx < fw:
-            vis[mid_y0 : mid_y1 + 1, zx] = (0, 255, 180)
-        right = min(fw - 1, zx + max(zw, 1) - 1)
-        if 0 <= right < fw:
-            vis[mid_y0 : mid_y1 + 1, right] = (0, 255, 180)
-    x, y = int(hit.x), int(hit.y)
-    if 0 <= x < fw and 0 <= y < fh:
-        vis[max(0, y - 4) : y + 5, max(0, x - 4) : x + 5] = (0, 210, 230)
-        # 有漂无条：加一圈黄点提示「找到漂、未定界」
-        if hit.bar_width <= 0:
-            for dx, dy in ((-6, 0), (6, 0), (0, -6), (0, 6)):
-                xx, yy = x + dx, y + dy
-                if 0 <= xx < fw and 0 <= yy < fh:
-                    vis[yy, xx] = (255, 220, 40)
-    return vis
 
 
 class BusBridge(QObject):
@@ -168,124 +98,6 @@ class BusBridge(QObject):
     frame = Signal(object)
     pos = Signal(object)
     intent = Signal(object)
-
-
-class ImageCanvas(QLabel):
-    """显示 RGB；框选模式下拖拽出 ROI。"""
-
-    selection_changed = Signal()
-
-    def __init__(self, title: str, parent=None) -> None:
-        super().__init__(parent)
-        self._title = title
-        self.setMinimumSize(320, 200)
-        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setStyleSheet(preview_canvas_qss())
-        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self._rgb: np.ndarray | None = None
-        self._pixmap = QPixmap()
-        self._selecting = False
-        self._drag_start: QPoint | None = None
-        self._drag_end: QPoint | None = None
-        self._scale = 1.0
-        self._offset = QPoint(0, 0)
-        self.setText(title)
-
-    def set_rgb(self, rgb: np.ndarray | None) -> None:
-        self._rgb = None if rgb is None else np.ascontiguousarray(rgb)
-        self._rebuild()
-
-    def set_selecting(self, on: bool) -> None:
-        self._selecting = on
-        if not on:
-            self._drag_start = self._drag_end = None
-        self.update()
-
-    def selection_in_image(self) -> tuple[int, int, int, int] | None:
-        """返回图像坐标 (left, top, width, height)。"""
-        if self._rgb is None or self._drag_start is None or self._drag_end is None:
-            return None
-        a = self._widget_to_image(self._drag_start)
-        b = self._widget_to_image(self._drag_end)
-        if a is None or b is None:
-            return None
-        x0, y0 = min(a[0], b[0]), min(a[1], b[1])
-        x1, y1 = max(a[0], b[0]), max(a[1], b[1])
-        if x1 - x0 < 8 or y1 - y0 < 8:
-            return None
-        return x0, y0, x1 - x0, y1 - y0
-
-    def _rebuild(self) -> None:
-        if self._rgb is None:
-            self._pixmap = QPixmap()
-            self.setText(self._title)
-            return
-        self.setText("")
-        self._pixmap = _rgb_to_pixmap(self._rgb)
-        self._layout_pixmap()
-        self.update()
-
-    def resizeEvent(self, event) -> None:  # noqa: N802
-        super().resizeEvent(event)
-        if not self._pixmap.isNull():
-            self._layout_pixmap()
-
-    def _layout_pixmap(self) -> None:
-        if self._pixmap.isNull():
-            return
-        pw, ph = self._pixmap.width(), self._pixmap.height()
-        cw, ch = max(1, self.width()), max(1, self.height())
-        self._scale = min(cw / pw, ch / ph, 1.0)
-        nw, nh = max(1, int(pw * self._scale)), max(1, int(ph * self._scale))
-        self._offset = QPoint((cw - nw) // 2, (ch - nh) // 2)
-
-    def paintEvent(self, event) -> None:  # noqa: N802
-        super().paintEvent(event)
-        if self._pixmap.isNull():
-            return
-        p = QPainter(self)
-        nw = max(1, int(self._pixmap.width() * self._scale))
-        nh = max(1, int(self._pixmap.height() * self._scale))
-        target = QRect(self._offset.x(), self._offset.y(), nw, nh)
-        p.drawPixmap(target, self._pixmap)
-        if self._selecting and self._drag_start and self._drag_end:
-            pen = QPen(QColor(70, 160, 230), 2, Qt.PenStyle.DashLine)
-            p.setPen(pen)
-            p.drawRect(QRect(self._drag_start, self._drag_end).normalized())
-        p.end()
-
-    def _widget_to_image(self, pos: QPoint) -> tuple[int, int] | None:
-        if self._rgb is None or self._scale <= 0:
-            return None
-        x = int((pos.x() - self._offset.x()) / self._scale)
-        y = int((pos.y() - self._offset.y()) / self._scale)
-        h, w = self._rgb.shape[:2]
-        if x < 0 or y < 0 or x >= w or y >= h:
-            return None
-        return x, y
-
-    def mousePressEvent(self, event) -> None:  # noqa: N802
-        if self._selecting and event.button() == Qt.MouseButton.LeftButton:
-            self._drag_start = self._drag_end = event.position().toPoint()
-            self.update()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event) -> None:  # noqa: N802
-        if self._selecting and self._drag_start is not None:
-            self._drag_end = event.position().toPoint()
-            self.update()
-            self.selection_changed.emit()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
-        if self._selecting and event.button() == Qt.MouseButton.LeftButton:
-            self._drag_end = event.position().toPoint()
-            self.update()
-            self.selection_changed.emit()
-        else:
-            super().mouseReleaseEvent(event)
 
 
 def _hold_word(on: bool | None) -> str:
@@ -404,228 +216,8 @@ class PreviewApp(QMainWindow):
         nav.addStretch(1)
         layout.addLayout(nav)
 
-        # —— 主控 ——
-        page_main = QWidget()
-        main_root = QVBoxLayout(page_main)
-        main_root.setContentsMargins(0, 0, 0, 0)
-        main_root.setSpacing(0)
-        main_split = QSplitter(Qt.Orientation.Vertical)
-        main_split.setChildrenCollapsible(False)
-
-        main_top = QWidget()
-        main_l = QVBoxLayout(main_top)
-        main_l.setContentsMargins(0, 0, 0, 0)
-        main_l.setSpacing(8)
-        switches = QGroupBox("开关")
-        sw = QVBoxLayout(switches)
-        sw.setSpacing(8)
-        self.chk_b = QCheckBox("自动拉漂")
-        self.chk_b.setObjectName("switchRow")
-        self.chk_b.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.chk_b.setToolTip("Decide + Act：有漂后按策略按住/松开")
-        self.chk_b.toggled.connect(self._on_b_toggled)
-        sw.addWidget(self.chk_b)
-        self.chk_a = QCheckBox("声音开钓")
-        self.chk_a.setObjectName("switchRow")
-        self.chk_a.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.chk_a.setToolTip("听开钓水声 → 点第一下 → 等漂后交给自动拉漂")
-        self.chk_a.toggled.connect(self._on_a_toggled)
-        sw.addWidget(self.chk_a)
-        self.btn_float = QPushButton("浮窗")
-        self.btn_float.setObjectName("btnPrimary")
-        self.btn_float.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.btn_float.setToolTip("同一窗口切到紧凑状态显示")
-        self.btn_float.clicked.connect(lambda: self._set_compact_mode(True))
-        sw.addWidget(self.btn_float)
-        main_l.addWidget(switches)
-
-        readout = QFrame()
-        readout.setObjectName("readout")
-        ro = QVBoxLayout(readout)
-        ro.setContentsMargins(12, 10, 12, 10)
-        ro.setSpacing(4)
-        row1 = QHBoxLayout()
-        row1.setSpacing(8)
-        self.lbl_pos = QLabel("POS: 无漂")
-        self.lbl_pos.setStyleSheet(
-            f"font-size:16px; font-weight:700; color:{DANGER};"
-        )
-        row1.addWidget(self.lbl_pos)
-        self.lbl_strat_detail = QLabel("")
-        self.lbl_strat_detail.setStyleSheet(
-            f"font-size:12px; color:{TEXT_MUTED};"
-        )
-        row1.addWidget(self.lbl_strat_detail, 1)
-        self.lbl_perf = QLabel("")
-        self.lbl_perf.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-        row1.addWidget(self.lbl_perf)
-        ro.addLayout(row1)
-        self.lbl_session = QLabel("会话：—")
-        self.lbl_session.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
-        ro.addWidget(self.lbl_session)
-        self.lbl_mouse = QLabel("意图 — · 程序 — · 系统 —")
-        self.lbl_mouse.setStyleSheet(f"font-size:13px; font-weight:600; color:{TEXT_MUTED};")
-        ro.addWidget(self.lbl_mouse)
-        self.lbl_hint = QLabel("有 ROI 则持续监控；框选在「自动拉漂配置」")
-        self.lbl_hint.setObjectName("hint")
-        self.lbl_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-        ro.addWidget(self.lbl_hint)
-        self.lbl_intent = QLabel("")
-        self.lbl_intent.hide()
-        self.lbl_mouse_diag = QLabel("")
-        self.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
-        self.lbl_mouse_diag.setWordWrap(True)
-        ro.addWidget(self.lbl_mouse_diag)
-        main_l.addWidget(readout)
-        main_l.addStretch(1)
-        main_split.addWidget(main_top)
-
-        log_wrap = QWidget()
-        log_l = QVBoxLayout(log_wrap)
-        log_l.setContentsMargins(0, 8, 0, 0)
-        log_l.setSpacing(4)
-        log_title = QLabel("状态日志")
-        log_title.setObjectName("sectionTitle")
-        log_l.addWidget(log_title)
-        self.log = QPlainTextEdit()
-        self.log.setObjectName("mainLog")
-        self.log.setReadOnly(True)
-        self.log.setMinimumHeight(120)
-        self.log.setPlaceholderText("最新在上 · 游戏开始/结束 · A/B · 声音触发…")
-        log_l.addWidget(self.log, 1)
-        main_split.addWidget(log_wrap)
-        main_split.setStretchFactor(0, 1)
-        main_split.setStretchFactor(1, 2)
-        main_split.setSizes([180, 320])
-        main_root.addWidget(main_split)
-        self.stack.addWidget(page_main)
-
-        # —— 自动拉漂配置（ROI / BAR / 策略 / 本页日志）——
-        page_cal = QWidget()
-        cal_root = QVBoxLayout(page_cal)
-        cal_root.setContentsMargins(0, 0, 0, 0)
-        cal_root.setSpacing(0)
-        cal_split = QSplitter(Qt.Orientation.Vertical)
-        cal_split.setChildrenCollapsible(False)
-
-        cal_scroll = QScrollArea()
-        cal_scroll.setWidgetResizable(True)
-        cal_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        cal_inner = QWidget()
-        cal_l = QVBoxLayout(cal_inner)
-        cal_l.setContentsMargins(0, 0, 4, 0)
-        vision = QGroupBox("画面 · ROI / MONITOR / BAR")
-        vis = QVBoxLayout(vision)
-        vis.setSpacing(8)
-        row_mon = QHBoxLayout()
-        self.btn_capture = QPushButton("截屏框选")
-        self.btn_rebox = QPushButton("重框")
-        self.btn_confirm = QPushButton("确认框选")
-        self.btn_confirm.setObjectName("btnPrimary")
-        self.btn_cancel = QPushButton("取消框选")
-        self.btn_cancel.setObjectName("btnGhost")
-        self.btn_roi_default = QPushButton("恢复默认框")
-        self.btn_roi_default.setObjectName("btnGhost")
-        self.btn_capture.clicked.connect(self._capture_fullscreen)
-        self.btn_rebox.clicked.connect(self._load_screen_for_select)
-        self.btn_confirm.clicked.connect(self._confirm_selection)
-        self.btn_cancel.clicked.connect(self._cancel_selection)
-        self.btn_roi_default.clicked.connect(self._restore_default_roi)
-        for b in (
-            self.btn_capture,
-            self.btn_rebox,
-            self.btn_confirm,
-            self.btn_cancel,
-            self.btn_roi_default,
-        ):
-            row_mon.addWidget(b)
-        row_mon.addStretch(1)
-        vis.addLayout(row_mon)
-        self.monitor = ImageCanvas("MONITOR · 等待截屏")
-        self.monitor.setMinimumHeight(180)
-        vis.addWidget(self.monitor)
-        bar_title = QHBoxLayout()
-        bar_lbl = QLabel("BAR · 条界标记")
-        bar_lbl.setObjectName("sectionTitle")
-        bar_title.addWidget(bar_lbl)
-        self.lbl_bar_hint = QLabel("蓝=程序 黄=手动")
-        self.lbl_bar_hint.setStyleSheet(f"color:{TEXT_MUTED};")
-        bar_title.addWidget(self.lbl_bar_hint, 1)
-        self.btn_bar_refresh = QPushButton("刷新参考图")
-        self.btn_bar_refresh.setToolTip(
-            "点击后等待下一次鱼漂识别成功，用该帧更新条界参考图"
-        )
-        self.btn_bar_refresh.clicked.connect(self._refresh_bar_ref)
-        bar_title.addWidget(self.btn_bar_refresh)
-        self.btn_bar_clear = QPushButton("清除我的标记")
-        self.btn_bar_clear.setObjectName("btnGhost")
-        self.btn_bar_clear.clicked.connect(self._clear_manual_bar)
-        bar_title.addWidget(self.btn_bar_clear)
-        vis.addLayout(bar_title)
-        self.bar_canvas = BarMarkCanvas()
-        self.bar_canvas.setMinimumHeight(140)
-        self.bar_canvas.manual_changed.connect(self._on_manual_bar_changed)
-        vis.addWidget(self.bar_canvas)
-        cal_l.addWidget(vision)
-
-        strat = QGroupBox("拉漂策略")
-        strat_l = QVBoxLayout(strat)
-        row_pol = QHBoxLayout()
-        self.btn_apply_policy = QPushButton("应用策略")
-        self.btn_apply_policy.setObjectName("btnPrimary")
-        self.btn_apply_policy.clicked.connect(self._apply_policy)
-        row_pol.addWidget(self.btn_apply_policy)
-        row_pol.addStretch(1)
-        strat_l.addLayout(row_pol)
-        strat_l.addWidget(QLabel("拖动数轴 · 两段不重叠且间隔≥1 · 精度0.1"))
-        s = self._settings
-        self.range_axis = DualRangeAxis(
-            press=(s.press_lo, s.press_hi),
-            release=(s.release_lo, s.release_hi),
-            min_gap=1.0,
-        )
-        self.range_axis.rangesChanged.connect(self._on_ranges_changed)
-        strat_l.addWidget(self.range_axis)
-        row_gap = QHBoxLayout()
-        row_gap.addWidget(QLabel("按下间隔"))
-        self.sld_press_interval = QSlider(Qt.Orientation.Horizontal)
-        self.sld_press_interval.setRange(0, 300)
-        self.sld_press_interval.setSingleStep(10)
-        self.sld_press_interval.setPageStep(50)
-        self.sld_press_interval.setValue(int(round(s.press_interval_s * 1000)))
-        self.sld_press_interval.setToolTip("两次程序按下的最短间隔；松开立刻")
-        self.sld_press_interval.valueChanged.connect(self._on_press_interval_changed)
-        self.sld_press_interval.sliderReleased.connect(self._on_press_interval_released)
-        row_gap.addWidget(self.sld_press_interval, 1)
-        self.lbl_press_interval = QLabel(f"{s.press_interval_s:.2f}s")
-        self.lbl_press_interval.setMinimumWidth(48)
-        row_gap.addWidget(self.lbl_press_interval)
-        row_gap.addWidget(QLabel("（0～0.3s）"))
-        strat_l.addLayout(row_gap)
-        cal_l.addWidget(strat)
-        cal_l.addStretch(1)
-        cal_scroll.setWidget(cal_inner)
-        cal_split.addWidget(cal_scroll)
-
-        cal_log_wrap = QWidget()
-        cal_log_l = QVBoxLayout(cal_log_wrap)
-        cal_log_l.setContentsMargins(0, 4, 0, 0)
-        cal_log_l.setSpacing(2)
-        cal_log_title = QLabel("本页日志（开始/结束拉漂 · 最新在上）")
-        cal_log_title.setObjectName("sectionTitle")
-        cal_log_l.addWidget(cal_log_title)
-        self.cal_log = QPlainTextEdit()
-        self.cal_log.setObjectName("calLog")
-        self.cal_log.setReadOnly(True)
-        self.cal_log.setMinimumHeight(100)
-        self.cal_log.setPlaceholderText("开始拉漂 / 结束拉漂 / ROI…")
-        cal_log_l.addWidget(self.cal_log, 1)
-        cal_split.addWidget(cal_log_wrap)
-        cal_split.setStretchFactor(0, 3)
-        cal_split.setStretchFactor(1, 2)
-        cal_split.setSizes([420, 180])
-        cal_root.addWidget(cal_split)
-        self.stack.addWidget(page_cal)
+        self.stack.addWidget(build_main_page(self))
+        self.stack.addWidget(build_calibrate_page(self))
 
         # —— 声音开钓配置 ——
         page_sound = QWidget()
@@ -657,113 +249,7 @@ class PreviewApp(QMainWindow):
         bt_l.addWidget(self._backtest_panel)
         self.stack.addWidget(page_backtest)
 
-        # —— 更多：权限 ——
-        page_more = QWidget()
-        more_scroll = QScrollArea()
-        more_scroll.setWidgetResizable(True)
-        more_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        more_inner = QWidget()
-        more_l = QVBoxLayout(more_inner)
-        more_l.setContentsMargins(0, 0, 4, 0)
-        more_l.setSpacing(8)
-
-        perm = QGroupBox("权限")
-        perm_l = QVBoxLayout(perm)
-        self.chk_stay_on_top = QCheckBox("置顶")
-        self.chk_stay_on_top.setChecked(bool(self._settings.stay_on_top))
-        self.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层")
-        self.chk_stay_on_top.toggled.connect(self._on_stay_on_top_toggled)
-        perm_l.addWidget(self.chk_stay_on_top)
-        self.lbl_perm_screen = QLabel("屏幕…")
-        perm_l.addWidget(self.lbl_perm_screen)
-        self.btn_perm_screen = QPushButton("授权屏幕")
-        self.btn_perm_screen.clicked.connect(self._on_perm_screen)
-        perm_l.addWidget(self.btn_perm_screen)
-        self.lbl_perm_input = QLabel("控鼠…")
-        perm_l.addWidget(self.lbl_perm_input)
-        self.btn_perm_input = QPushButton("授权控鼠")
-        self.btn_perm_input.clicked.connect(self._on_perm_input)
-        perm_l.addWidget(self.btn_perm_input)
-        row_perm = QHBoxLayout()
-        self.btn_perm_refresh = QPushButton("刷新")
-        self.btn_perm_refresh.clicked.connect(self._refresh_permissions)
-        row_perm.addWidget(self.btn_perm_refresh)
-        self.btn_perm_reset = QPushButton("清理授权")
-        self.btn_perm_reset.setToolTip(
-            "清除本应用屏幕录制/辅助功能记录并打开系统设置（仅 macOS）"
-        )
-        self.btn_perm_reset.clicked.connect(self._on_perm_reset)
-        self.btn_perm_reset.setVisible(sys.platform == "darwin")
-        row_perm.addWidget(self.btn_perm_reset)
-        row_perm.addStretch(1)
-        perm_l.addLayout(row_perm)
-        more_l.addWidget(perm)
-
-        click = QGroupBox("开钓第一下")
-        click_l = QVBoxLayout(click)
-        hint_click = QLabel(
-            "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
-        )
-        hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-        hint_click.setWordWrap(True)
-        click_l.addWidget(hint_click)
-        self.bar_delay = SingleRangeBar(
-            title="等待",
-            vmin=0.0,
-            vmax=5.0,
-            value=(float(s.click_delay_lo_s), float(s.click_delay_hi_s)),
-            unit="s",
-            min_span=0.1,
-        )
-        self.bar_delay.rangeChanged.connect(self._on_click_timing_changed)
-        click_l.addWidget(self.bar_delay)
-        self.bar_hold = SingleRangeBar(
-            title="长按",
-            vmin=0.0,
-            vmax=5.0,
-            value=(float(s.click_hold_lo_s), float(s.click_hold_hi_s)),
-            unit="s",
-            min_span=0.1,
-        )
-        self.bar_hold.rangeChanged.connect(self._on_click_timing_changed)
-        click_l.addWidget(self.bar_hold)
-        self.bar_after = SingleRangeBar(
-            title="松开后",
-            vmin=0.0,
-            vmax=5.0,
-            value=(float(s.click_after_lo_s), float(s.click_after_hi_s)),
-            unit="s",
-            min_span=0.1,
-        )
-        self.bar_after.rangeChanged.connect(self._on_click_timing_changed)
-        click_l.addWidget(self.bar_after)
-        more_l.addWidget(click)
-
-        if not is_frozen_app():
-            pack = QGroupBox("打包默认")
-            pack_l = QVBoxLayout(pack)
-            hint_pack = QLabel(
-                "把当前玩法配置写入 assets/shell_settings.json，提交后直接打包即可；"
-                "不含窗位置/设备名等本机项"
-            )
-            hint_pack.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-            hint_pack.setWordWrap(True)
-            pack_l.addWidget(hint_pack)
-            self.btn_save_bundled = QPushButton("写入打包默认")
-            self.btn_save_bundled.setObjectName("btnPrimary")
-            self.btn_save_bundled.setToolTip(
-                "仅源码运行可用；写入仓库 assets/shell_settings.json"
-            )
-            self.btn_save_bundled.clicked.connect(self._on_save_bundled_defaults)
-            pack_l.addWidget(self.btn_save_bundled)
-            more_l.addWidget(pack)
-
-        more_l.addStretch(1)
-        more_scroll.setWidget(more_inner)
-        more_page_l = QVBoxLayout(page_more)
-        more_page_l.setContentsMargins(0, 0, 0, 0)
-        more_page_l.addWidget(more_scroll)
-        self.stack.addWidget(page_more)
+        self.stack.addWidget(build_more_page(self))
 
         layout.addWidget(self.stack, 1)
         self.mode_stack.addWidget(page_full)
@@ -797,69 +283,37 @@ class PreviewApp(QMainWindow):
         prev = self._last_cast_session
         if prev is not None and cs != prev:
             if cs == CastSessionState.FIRST_CLICK:
-                self._main_log(self._format_splash_trigger(snap.cast_detail))
+                splash = snap.cast_splash
+                if splash is not None:
+                    self._main_log(
+                        f"声音触发 · 相似 {splash.score:.2f} · "
+                        f"等待 {splash.delay_s:.2f}s · 按住 {splash.hold_s:.2f}s · "
+                        f"松开后 {splash.after_s:.2f}s · 阈值 {splash.threshold:.2f}"
+                    )
+                else:
+                    self._main_log("声音触发 · 准备点第一下")
                 hud = getattr(self, "_hud", None)
                 if hud is not None:
                     hud.flash("heard")
         self._last_cast_session = cs
         self._refresh_hud_steady()
 
-    @staticmethod
-    def _format_splash_trigger(detail: str) -> str:
-        """splash|相似|等待s|按住s|松开后s|阈值 → 主控文案（兼容旧 5 段）。"""
-        parts = (detail or "").split("|")
-        if len(parts) >= 6 and parts[0] == "splash":
-            return (
-                f"声音触发 · 相似 {parts[1]} · "
-                f"等待 {parts[2]}s · 按住 {parts[3]}s · "
-                f"松开后 {parts[4]}s · 阈值 {parts[5]}"
-            )
-        if len(parts) >= 5 and parts[0] == "splash":
-            return (
-                f"声音触发 · 相似 {parts[1]} · "
-                f"等待 {parts[2]}s · 按住 {parts[3]}s · 阈值 {parts[4]}"
-            )
-        if detail:
-            return f"声音触发 · 准备点第一下 · {detail}"
-        return "声音触发 · 准备点第一下"
-
     def _main_log(self, msg: str) -> None:
         """主控状态日志（最新在上）。"""
-        ts = time.strftime("%H:%M:%S")
-        parts = str(msg).splitlines() or [""]
-        block = f"{ts}  {parts[0]}"
-        if len(parts) > 1:
-            pad = " " * (len(ts) + 2)
-            block = block + "\n" + "\n".join(f"{pad}{p}" for p in parts[1:])
-        self._logs.appendleft(block)
         if getattr(self, "log", None) is not None:
-            self.log.setPlainText("\n".join(self._logs))
-            self.log.verticalScrollBar().setValue(0)
+            append_log(self._logs, self.log, msg)
 
     def _cal_log(self, msg: str) -> None:
         """自动拉漂配置页日志（最新在上）。"""
-        ts = time.strftime("%H:%M:%S")
-        parts = str(msg).splitlines() or [""]
-        block = f"{ts}  {parts[0]}"
-        if len(parts) > 1:
-            pad = " " * (len(ts) + 2)
-            block = block + "\n" + "\n".join(f"{pad}{p}" for p in parts[1:])
-        self._cal_logs.appendleft(block)
         if getattr(self, "cal_log", None) is not None:
-            self.cal_log.setPlainText("\n".join(self._cal_logs))
-            self.cal_log.verticalScrollBar().setValue(0)
+            append_log(self._cal_logs, self.cal_log, msg)
 
     def _schedule_persist(self) -> None:
         """拖动数轴时防抖落盘，避免每像素写文件。"""
         self._persist_timer.start()
 
-    def _persist_settings(self) -> None:
-        plo, phi, rlo, rhi = self.range_axis.ranges()
-        thr = (
-            self._sound_panel.current_threshold()
-            if self._sound_panel is not None
-            else self._settings.sound_threshold
-        )
+    def _sync_geometry_into_settings(self) -> None:
+        """窗几何写入内存 settings（落盘前调用）。"""
         hx = self._settings.hud_x
         hy = self._settings.hud_y
         wx = self._settings.window_x
@@ -874,46 +328,29 @@ class PreviewApp(QMainWindow):
         else:
             g = self.geometry()
             wx, wy, ww, wh = g.x(), g.y(), g.width(), g.height()
-        device_name = (
-            self._sound_panel.current_device_name()
-            if self._sound_panel is not None
-            else self._settings.audio_device_name
-        )
-        d_lo, d_hi = self.bar_delay.range()
-        h_lo, h_hi = self.bar_hold.range()
-        a_lo, a_hi = self.bar_after.range()
-        if d_hi < d_lo:
-            d_lo, d_hi = d_hi, d_lo
-        if h_hi < h_lo:
-            h_lo, h_hi = h_hi, h_lo
-        if a_hi < a_lo:
-            a_lo, a_hi = a_hi, a_lo
-        self._settings = ShellSettings(
-            sound_threshold=thr,
-            press_lo=plo,
-            press_hi=phi,
-            release_lo=rlo,
-            release_hi=rhi,
-            press_interval_s=self.sld_press_interval.value() / 1000.0,
-            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+        self._settings = replace(
+            self._settings,
             compact_mode=bool(self._compact),
             hud_x=int(hx),
             hud_y=int(hy),
-            sound_enabled=bool(self.chk_a.isChecked()),
-            auto_bobber_enabled=bool(self.chk_b.isChecked()),
-            audio_device_name=str(device_name or ""),
             window_x=int(wx),
             window_y=int(wy),
             window_w=int(ww),
             window_h=int(wh),
-            click_delay_lo_s=d_lo,
-            click_delay_hi_s=d_hi,
-            click_hold_lo_s=h_lo,
-            click_hold_hi_s=h_hi,
-            click_after_lo_s=a_lo,
-            click_after_hi_s=a_hi,
+            sound_enabled=bool(self.chk_a.isChecked()),
+            auto_bobber_enabled=bool(self.chk_b.isChecked()),
+            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
         )
+
+    def _persist_settings(self) -> None:
+        """以内存 self._settings 为唯一源落盘；几何/A·B 从窗同步。"""
+        self._sync_geometry_into_settings()
         save_shell_settings(self._settings)
+
+    def _patch_settings(self, **kwargs) -> None:
+        """改内存 settings 并防抖落盘。"""
+        self._settings = replace(self._settings, **kwargs)
+        self._schedule_persist()
 
     def _apply_saved_window_geometry(self) -> None:
         s = self._settings
@@ -974,15 +411,25 @@ class PreviewApp(QMainWindow):
             return
         self._activate_sound_session(persist=True)
 
-    def _on_sound_threshold_persist(self, _thr: float) -> None:
-        self._schedule_persist()
+    def _on_sound_threshold_persist(self, thr: float) -> None:
+        self._patch_settings(sound_threshold=float(thr))
 
-    def _on_sound_device_persist(self, _name: str) -> None:
-        self._schedule_persist()
+    def _on_sound_device_persist(self, name: str) -> None:
+        self._patch_settings(audio_device_name=str(name or ""))
 
     def _on_click_timing_changed(self, *_args) -> None:
         self._apply_click_timing_from_ui()
-        self._schedule_persist()
+        d_lo, d_hi = self.bar_delay.range()
+        h_lo, h_hi = self.bar_hold.range()
+        a_lo, a_hi = self.bar_after.range()
+        self._patch_settings(
+            click_delay_lo_s=d_lo,
+            click_delay_hi_s=d_hi,
+            click_hold_lo_s=h_lo,
+            click_hold_hi_s=h_hi,
+            click_after_lo_s=a_lo,
+            click_after_hi_s=a_hi,
+        )
 
     def _apply_click_timing_from_ui(self) -> None:
         d_lo, d_hi = self.bar_delay.range()
@@ -993,8 +440,13 @@ class PreviewApp(QMainWindow):
                 d_lo, d_hi, h_lo, h_hi, a_lo, a_hi
             )
 
-    def _on_ranges_changed(self, *_args) -> None:
-        self._schedule_persist()
+    def _on_ranges_changed(self, plo: float, phi: float, rlo: float, rhi: float) -> None:
+        self._patch_settings(
+            press_lo=float(plo),
+            press_hi=float(phi),
+            release_lo=float(rlo),
+            release_hi=float(rhi),
+        )
 
     def _clamp_to_screens(self, x: int, y: int, w: int, h: int) -> QPoint:
         """把左上角夹到某块屏可用区内（避免跨屏幽灵坐标）。"""
@@ -1416,6 +868,10 @@ class PreviewApp(QMainWindow):
         self._publish_press_interval()
 
     def _on_press_interval_released(self) -> None:
+        self._settings = replace(
+            self._settings,
+            press_interval_s=self.sld_press_interval.value() / 1000.0,
+        )
         self._persist_settings()
         self._cal_log(f"按下间隔 {self.lbl_press_interval.text()}")
 
@@ -1592,7 +1048,7 @@ class PreviewApp(QMainWindow):
         if self.frame is None:
             self.monitor.set_rgb(None)
             return
-        self.monitor.set_rgb(_overlay_hit(self.frame, self.hit))
+        self.monitor.set_rgb(overlay_hit(self.frame, self.hit))
 
     def _sync_buttons(self) -> None:
         selecting = self.phase == SELECT

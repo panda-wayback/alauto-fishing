@@ -22,6 +22,7 @@ from autofish.topics import (
     PosEvent,
     PressIntervalEvent,
     RoiEvent,
+    SplashHit,
     Topic,
 )
 
@@ -43,6 +44,7 @@ class AutofishSnapshot:
     state_ts: float = 0.0
     cast_session: CastSessionState = CastSessionState.DISABLED
     cast_detail: str = ""
+    cast_splash: SplashHit | None = None
     cast_ts: float = 0.0
     holding: bool | None = None
     intent_reason: str = ""
@@ -137,10 +139,12 @@ class AutofishBus:
             if (
                 event.state == self._snap.cast_session
                 and event.detail == self._snap.cast_detail
+                and event.splash == self._snap.cast_splash
             ):
                 return
             self._snap.cast_session = event.state
             self._snap.cast_detail = event.detail
+            self._snap.cast_splash = event.splash
             self._snap.cast_ts = event.ts
         self._events.publish(Topic.CAST_SESSION, event)
 

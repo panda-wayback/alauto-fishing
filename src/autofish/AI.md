@@ -23,7 +23,9 @@
   - `paths.py` — 用户库 `audio_template/` + 内置 `assets/audio/*.npy`（默认 Windows→`windows.npy` / macOS→`macos.npy`）；长录音 `audio_sessions/`；冻结包 `seed/` 缺则拷到本机 data
   - `trigger.py` — 会话机；试听走默认扬声器（失败退回 device=None）；听声冷却；按住时长
 - `../tools/waveform_select.py` — 回测波形长条（绿人工水花 / 橙回测命中）
-- `../tools/first_click_trigger_window.py` — 声音页 + 回测页面板
+- `../tools/sound_panel.py` — 开钓配置页（设备 / 监听 / 模板 / 阈值）
+- `../tools/backtest_panel.py` — 回测页面板
+- `../tools/first_click_trigger_window.py` — 兼容再导（同上两面板）
 - `topics.py` / `bus.py` / `fishing_fsm.py` / `pipeline.py` / `worker_base.py`
 - `preview.py` — CLI（`--ui` → `tools.preview_app`）
 
@@ -32,7 +34,7 @@
 - `AutofishPipeline` — `start_monitor` / `start_decide` / `start_act` 及对应 stop
 - `Topic.ACTION_INTENT` / `ActionIntentEvent`
 - `Topic.PRESS_INTERVAL` / `PressIntervalEvent`
-- `Topic.CAST_SESSION` / `CastSessionEvent` / `CastSessionState`
+- `Topic.CAST_SESSION` / `CastSessionEvent` / `CastSessionState` / `SplashHit`（命中进 FIRST_CLICK 时带 score/delay/hold/after/threshold）
 - `DecideWorker` / `ActWorker` / `ThresholdPosPolicy`
 - `FirstClickTrigger` — 可挂总线发会话态、订 Pos；标记模板；播放试听
 - 总线：`roi` = 手框 = mss 范围；Detect 不发布 ROI

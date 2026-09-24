@@ -1,5 +1,5 @@
 {
-  "sound_threshold": 0.66,
+  "sound_threshold": 0.55,
   "press_lo": 70.60000000000001,
   "press_hi": 73.9,
   "release_lo": 76.60000000000001,
@@ -12,8 +12,8 @@
   "sound_enabled": true,
   "auto_bobber_enabled": true,
   "audio_device_name": "BlackHole 2ch",
-  "window_x": 198,
-  "window_y": 73,
+  "window_x": 1289,
+  "window_y": -983,
   "window_w": 535,
   "window_h": 842,
   "click_delay_lo_s": 0.6000000000000001,
