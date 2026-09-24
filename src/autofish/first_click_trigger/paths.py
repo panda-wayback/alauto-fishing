@@ -58,10 +58,6 @@ def user_template_path() -> Path:
     return user_template_dir() / "template.npy"
 
 
-def user_heard_marks_dir() -> Path:
-    return data_root() / "audio_heard_marks"
-
-
 def user_audio_sessions_dir() -> Path:
     return data_root() / "audio_sessions"
 

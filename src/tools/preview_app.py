@@ -354,6 +354,11 @@ class PreviewApp(QMainWindow):
         self._timer.timeout.connect(self._on_tick)
         self._timer.start(50)
 
+        self._persist_timer = QTimer(self)
+        self._persist_timer.setSingleShot(True)
+        self._persist_timer.setInterval(400)
+        self._persist_timer.timeout.connect(self._persist_settings)
+
         self._perm_timer = QTimer(self)
         self._perm_timer.timeout.connect(self._refresh_permissions)
         self._perm_timer.start(2000)
@@ -818,10 +823,6 @@ class PreviewApp(QMainWindow):
             return f"声音触发 · 准备点第一下 · {detail}"
         return "声音触发 · 准备点第一下"
 
-    def _log(self, msg: str) -> None:
-        """细节日志不再进主控（保留调用点，避免大面积改动）。"""
-        _ = msg
-
     def _main_log(self, msg: str) -> None:
         """主控状态日志（最新在上）。"""
         ts = time.strftime("%H:%M:%S")
@@ -847,6 +848,10 @@ class PreviewApp(QMainWindow):
         if getattr(self, "cal_log", None) is not None:
             self.cal_log.setPlainText("\n".join(self._cal_logs))
             self.cal_log.verticalScrollBar().setValue(0)
+
+    def _schedule_persist(self) -> None:
+        """拖动数轴时防抖落盘，避免每像素写文件。"""
+        self._persist_timer.start()
 
     def _persist_settings(self) -> None:
         plo, phi, rlo, rhi = self.range_axis.ranges()
@@ -970,14 +975,14 @@ class PreviewApp(QMainWindow):
         self._activate_sound_session(persist=True)
 
     def _on_sound_threshold_persist(self, _thr: float) -> None:
-        self._persist_settings()
+        self._schedule_persist()
 
     def _on_sound_device_persist(self, _name: str) -> None:
-        self._persist_settings()
+        self._schedule_persist()
 
     def _on_click_timing_changed(self, *_args) -> None:
         self._apply_click_timing_from_ui()
-        self._persist_settings()
+        self._schedule_persist()
 
     def _apply_click_timing_from_ui(self) -> None:
         d_lo, d_hi = self.bar_delay.range()
@@ -989,7 +994,7 @@ class PreviewApp(QMainWindow):
             )
 
     def _on_ranges_changed(self, *_args) -> None:
-        self._persist_settings()
+        self._schedule_persist()
 
     def _clamp_to_screens(self, x: int, y: int, w: int, h: int) -> QPoint:
         """把左上角夹到某块屏可用区内（避免跨屏幽灵坐标）。"""
@@ -1195,14 +1200,12 @@ class PreviewApp(QMainWindow):
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()
-        self._log(msg)
         self.lbl_hint.setText(msg)
         self._refresh_permissions()
 
     def _on_perm_input(self) -> None:
         was_admin = perms.current_status().is_admin
         msg = perms.request_input_access()
-        self._log(msg)
         self.lbl_hint.setText(msg)
         self._refresh_permissions()
         # Windows 提权重启成功：退出本进程，避免双开
@@ -1229,7 +1232,6 @@ class PreviewApp(QMainWindow):
         if reply != QMessageBox.StandardButton.Yes:
             return
         msg = perms.reset_macos_tcc()
-        self._log(msg)
         self.lbl_hint.setText(msg)
         self._refresh_permissions()
         QMessageBox.information(self, "清理授权", msg)
@@ -1513,7 +1515,7 @@ class PreviewApp(QMainWindow):
         fps = 1000.0 / avg if avg > 0 else 0.0
         det = get_detector()
         mode = "条内" if getattr(det, "bar_locked", False) else "全图"
-        self._log(
+        self._cal_log(
             f"识别 {det.name}[{mode}] 均 {avg:.1f}ms"
             f" 最大 {max(vals):.1f}ms 最小 {min(vals):.1f}ms"
             f" ≈{fps:.0f} FPS（近{len(vals)}帧）"
@@ -1784,7 +1786,7 @@ class PreviewApp(QMainWindow):
             self.lbl_mouse_diag.setStyleSheet(f"color:{DANGER};")
             if not self._mouse_mismatch_logged:
                 self._mouse_mismatch_logged = True
-                self._log(
+                self._cal_log(
                     "鼠标异常 "
                     + " / ".join(issues)
                     + f" · 意图={_hold_word(intent)}"
@@ -1901,6 +1903,8 @@ class PreviewApp(QMainWindow):
             self._ensure_monitor_on()
 
     def closeEvent(self, event) -> None:  # noqa: N802
+        if self._persist_timer.isActive():
+            self._persist_timer.stop()
         self._persist_settings()
         if self._backtest_panel is not None:
             self._backtest_panel.shutdown()
@@ -1933,9 +1937,6 @@ def main() -> int:
     win = PreviewApp()
     win.show()
     return app.exec()
-
-
-AutofishApp = PreviewApp
 
 
 if __name__ == "__main__":

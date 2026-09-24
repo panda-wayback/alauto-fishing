@@ -43,7 +43,7 @@
 ### 配置持久化（已确认）
 
 - **用户运行配置**：`data/shell_settings.json`（随 `data_root`）。  
-- **`data_root`（已确认）**：源码运行 = 仓库 `data/`；**Windows 冻结包 = exe 同级 `data\`**（全部可写数据：模板、长录音、听到标记、ROI、壳配置）；该目录不可写时退回 `%LOCALAPPDATA%\albn-autofish\`；macOS 冻结包 = `~/Library/Application Support/albn-autofish/`（不写进 `.app`）。不自动从旧 LOCALAPPDATA 迁移。  
+- **`data_root`（已确认）**：源码运行 = 仓库 `data/`；**Windows 冻结包 = exe 同级 `data\`**（全部可写数据：模板、长录音、ROI、壳配置）；该目录不可写时退回 `%LOCALAPPDATA%\albn-autofish\`；macOS 冻结包 = `~/Library/Application Support/albn-autofish/`（不写进 `.app`）。不自动从旧 LOCALAPPDATA 迁移。  
 - **打包默认配置**：`assets/shell_settings.json`（随包只读资源；入库、随 PyInstaller 打进包）。  
 - 启动：有用户文件则用用户文件；否则用打包默认；再否则用代码内建缺省。  
 - **写入打包默认**（「更多」页，**仅源码运行展示**；打包版整块不出现）：把当前壳配置写成 `assets/shell_settings.json`，供直接打包；**不写入**窗体位置、紧凑落点、音频设备名（机器相关），紧凑态强制关。玩法相关项（A/B、阈值、策略、间隔、置顶、开钓等待/长按/松开后等）一并写入。  

@@ -82,15 +82,12 @@ class FirstClickTriggerPanel(QWidget):
     def __init__(
         self,
         parent=None,
-        *,
-        log_fn: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._bus: AutofishBus | None = None
         self._trigger: FirstClickTrigger | None = None
         self._logs: deque[str] = deque(maxlen=200)
         self._template_path: Path | None = None
-        self._external_log = log_fn
         self._library_cbs: list[Callable[[], None]] = []
         self._threshold_cbs: list[Callable[[float], None]] = []
         self._device_cbs: list[Callable[[str], None]] = []
@@ -706,12 +703,9 @@ class AudioBacktestPanel(QWidget):
         self,
         host: FirstClickTriggerPanel,
         parent=None,
-        *,
-        log_fn: Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(parent)
         self._host = host
-        self._external_log = log_fn
         self._logs: deque[str] = deque(maxlen=200)
         self._last_session_root: Path | None = None
         self._last_session_wave: object | None = None

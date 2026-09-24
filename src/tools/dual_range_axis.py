@@ -299,7 +299,6 @@ class DualRangeAxis(QWidget):
         self._plo, self._phi, self._rlo, self._rhi = plo, phi, rlo, rhi
         self._normalize()
         self.update()
-        self.rangesChanged.emit(*self.ranges())
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:
@@ -494,7 +493,6 @@ class SingleRangeBar(QWidget):
         self._lo, self._hi = lo, hi
         self._normalize()
         self.update()
-        self.rangeChanged.emit(*self.range())
 
     def mouseReleaseEvent(self, event: QMouseEvent) -> None:  # noqa: N802
         if event.button() == Qt.MouseButton.LeftButton and self._drag is not None:

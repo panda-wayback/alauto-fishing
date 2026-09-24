@@ -62,10 +62,13 @@ class AutofishBus:
     def unsubscribe(self, topic: Topic, callback: Callable) -> None:
         self._events.unsubscribe(topic, callback)
 
-    def snapshot(self) -> AutofishSnapshot:
+    def snapshot(self, *, with_frame: bool = False) -> AutofishSnapshot:
+        """默认不拷 frame（调用方多数只读会话/意图）；需要画面时传 with_frame=True。"""
         with self._lock:
             s = self._snap
-            return replace(s, frame=None if s.frame is None else s.frame.copy())
+            if with_frame and s.frame is not None:
+                return replace(s, frame=s.frame.copy())
+            return replace(s, frame=None)
 
     def current_roi(self) -> tuple[Roi | None, int]:
         with self._lock:

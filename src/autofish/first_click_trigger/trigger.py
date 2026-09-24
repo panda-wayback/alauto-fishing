@@ -212,12 +212,7 @@ class FirstClickTrigger(WorkerBase):
 
     @property
     def template_wave(self) -> "npt.NDArray[np.float32] | None":
-        wave = self._matcher._template_wave
-        return None if wave is None else wave.copy()
-
-    def set_click_enabled(self, enabled: bool) -> None:
-        """兼容旧名：等同 set_session_enabled。"""
-        self.set_session_enabled(enabled)
+        return self._matcher.template_wave
 
     def set_session_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
@@ -513,51 +508,6 @@ class FirstClickTrigger(WorkerBase):
             self._emit_log(f"模板已更新（未入库）· {dur:.2f}s", channel="backtest")
         return seg
 
-    def mark_heard_splash(self) -> dict:
-        """
-        你听到水花时点：保存近 2 秒录音，并用当前模板立刻复盘判定。
-        不改模板；用于对照「人耳听到 vs 程序判定」。
-        """
-        from autofish.first_click_trigger.paths import user_heard_marks_dir
-
-        with self._lock:
-            if not self._matcher.has_template:
-                raise RuntimeError("还没有模板，请先标记/加载模板")
-            n = int(self._audio.samplerate * 2.0)
-            if self._ring.size < self._audio.samplerate // 4:
-                raise RuntimeError("录音还太短，请先听几秒再标记「听到」")
-            wave = self._ring.last(n)
-            # 用当前匹配缓冲复盘（与实时判定同一状态）
-            buf = self._matcher._buffer.copy()
-            report = self._matcher.analyze_buffer(buf)
-            # 同时用近 2 秒片段再分析一份（给人听的那截）
-            clip_report = self._matcher.analyze_clip(wave)
-
-        out_dir = user_heard_marks_dir()
-        out_dir.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d_%H%M%S")
-        path = out_dir / f"heard_{stamp}.npy"
-        np.save(path, wave)
-
-        ok = bool(report["would_trigger"])
-        self._emit_log(
-            f"听到标记 · 实时窗 相似 {report['score']:.2f} "
-            f"峰差 {report['prominence']:.3f} 突兀={report['abrupt']} "
-            f"→ {'会触发' if ok else '不触发'} "
-            f"{('· ' + report['reason']) if report['reason'] else ''}"
-        )
-        self._emit_log(
-            f"听到标记 · 近2秒片段 相似 {clip_report['score']:.2f} "
-            f"→ {'会触发' if clip_report['would_trigger'] else '不触发'} "
-            f"{('· ' + clip_report['reason']) if clip_report['reason'] else ''} "
-            f"· 已存 {path.name}"
-        )
-        return {
-            "path": str(path),
-            "live": report,
-            "clip": clip_report,
-        }
-
     def start(self) -> None:
         self._subscribe_pos(True)
         super().start()
@@ -732,7 +682,6 @@ class FirstClickTrigger(WorkerBase):
                         _, score = self._matcher.feed(
                             mono, update_baseline=False
                         )
-                        self._matcher.clear_streak()
                         self._last_score = score
                         if (
                             self._session == CastSessionState.WAIT

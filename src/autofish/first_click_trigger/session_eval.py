@@ -186,7 +186,7 @@ def backtest_recording(
                     "end_s": end_s,
                 }
             )
-            offline._score_ema = max(float(offline._score_ema), float(score))
+            offline.bump_score_baseline(float(score))
 
     raw_n = len(hits)
     hits = merge_nearby_hits(hits, merge_gap_s=0.5)

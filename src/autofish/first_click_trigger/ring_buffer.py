@@ -143,26 +143,3 @@ class AudioRingBuffer:
         wave = available[start:end].copy()
         rms = float(np.sqrt(np.mean(wave**2))) if wave.size else 0.0
         return wave, rms
-
-    def peak_window(
-        self,
-        window_samples: int,
-        hop_samples: int | None = None,
-    ) -> tuple["npt.NDArray[np.float32]", float]:
-        """兼容旧接口：固定窗找最响一段。"""
-        available = self.last(self._size)
-        if available.size < window_samples:
-            rms = float(np.sqrt(np.mean(available**2))) if available.size else 0.0
-            return available, rms
-
-        hop = hop_samples or max(1, window_samples // 8)
-        best_rms = -1.0
-        best_i = 0
-        for i in range(0, available.size - window_samples + 1, hop):
-            chunk = available[i : i + window_samples]
-            rms = float(np.sqrt(np.mean(chunk**2)))
-            if rms > best_rms:
-                best_rms = rms
-                best_i = i
-        wave = available[best_i : best_i + window_samples].copy()
-        return wave, best_rms
