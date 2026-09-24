@@ -1,13 +1,36 @@
 ---
 description: >-
-  方案先行、Agent 判断、清废弃、何时 Read Skill、读代码调度。
-  写/改 Skill 另遵 skill-writing.mdc。
+  通用工作流：Agent 判断、方案先行（docs）、清废弃、Skill 调度、读代码路径。
+  写/改自维护 Skill 另遵 skill-writing.mdc。可整包复制到他仓。
 alwaysApply: true
 ---
 
-# 项目工作流硬约束
+# 工作流硬约束（通用）
 
-写/改 `.cursor/skills/**` → 先遵 `skill-writing.mdc`。
+写/改**自维护** `.cursor/skills/**` → 先遵 `skill-writing.mdc`。
+
+## 通用 vs 不通用
+
+**通用 = 工作方式 + 工具（整包复制到任意新项目）**
+
+| 路径 | 职责 |
+|---|---|
+| `.cursor/rules/workflow.mdc` | 本文件：判断、方案先行、清废弃、调度 |
+| `.cursor/rules/skill-writing.mdc` | 自维护 Skill 写法 |
+| `.cursor/skills/doc-node-graph/` | `docs/` 怎么写、怎么推进 |
+| `.cursor/skills/ai-friendly-codebase/` | `AI.md` 约定与模板、上层极简 |
+| `.cursor/skills/ui-ux-pro-max/` | UI/UX 设计辅助（导入 Skill，原样拷贝） |
+
+另属通用、但不靠「拷贝旧仓正文」获得：
+
+- 目录约定：每个项目都有 `docs/`；先完善 `docs/` 再写代码
+- 新仓用 `ai-friendly-codebase/templates/` 生成空 `AI.md`，禁止拷贝他仓已填业务的 `AI.md` / `docs` 正文
+
+**不通用 = 某一产品已经写进去的内容（禁止写进通用 `.cursor` 文件）**
+
+- 本仓 `docs/**` 已写的能力页正文（目标、业务步骤、产品名词）
+- 本仓已填的 `AI.md` 树（代码索引内容）
+- 仅本仓成立的业务禁令 / 模块表 / 依赖特例（写在本仓 `docs/`；确有必要时再另建本仓 rule，勿改通用包）
 
 ## Agent 判断
 
@@ -18,12 +41,14 @@ alwaysApply: true
 
 ## 方案先行
 
+所有项目统一：先完善 `docs/`，再实现。
+
 ```text
 讨论（Agent 给判断）→ 用户裁定合理 → 写 docs/（方案完备）→ 再按 docs 写代码
 ```
 
 1. 新功能 / 改产品逻辑或架构：禁止先写代码；先按上式入 `docs/`。
-2. **架构契约**（角色分工、主题/订阅、状态机、版本与作废、谁可订谁不可订）必须先写入对应 `docs/` 能力页并裁定完备，禁止边写薄文档边写实现。
+2. **架构契约**（模块边界、接口/事件、状态机、版本与作废、允许的依赖方向）必须先写入对应 `docs/` 能力页并裁定完备，禁止边写薄文档边写实现。
 3. 实现以当前 `docs/` 为准；禁止未裁定就改已定方案。
 4. 实现中发现方案问题 → 先给判断 → 裁定后 `改 docs → 改代码`；禁止偷偷改设计。
 5. 可直接改代码：Bug / 重构 / 性能 / 测试；以及 **docs 未点名** 且无调用的私有/薄包装删除。
@@ -43,6 +68,7 @@ alwaysApply: true
 |---|---|
 | 探讨方案、写/改 `docs/**`、选下一步、docs 收敛 | `.cursor/skills/doc-node-graph/SKILL.md` |
 | 写/审 `AI.md`、按索引找代码、判上层是否过厚 | `.cursor/skills/ai-friendly-codebase/SKILL.md` |
+| UI/UX 设计、改界面观感、配色排版动效 | `.cursor/skills/ui-ux-pro-max/SKILL.md` |
 
 产品正文只写在 `docs/`，禁止写进 Skill。细则以 Skill 正文为准；本文件只调度。
 
