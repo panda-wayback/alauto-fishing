@@ -431,17 +431,6 @@ class BobberAnchorDetector:
             detect_ms=float(dt),
         )
 
-    def find_bar(self, rgb: np.ndarray) -> tuple[int, int, int, int] | None:
-        hit = self.detect(rgb)
-        if hit is None or hit.bar_width <= 0:
-            return None
-        return (
-            int(hit.bar_left),
-            int(hit.bar_top),
-            int(hit.bar_width),
-            int(hit.bar_height),
-        )
-
     def detect(self, rgb: np.ndarray) -> BobberHit | None:
         t0 = time.perf_counter()
         if rgb.ndim != 3 or rgb.shape[2] != 3:

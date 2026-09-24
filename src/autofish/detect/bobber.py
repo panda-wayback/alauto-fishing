@@ -50,11 +50,9 @@ def _gt_by(a: np.ndarray, b: np.ndarray, delta: int) -> np.ndarray:
     return cv2.compare(cv2.subtract(a, b), float(delta), cv2.CMP_GT)
 
 
-def green_zone_mask(
-    rgb: np.ndarray, prep: tuple[np.ndarray, ...] | None = None
-) -> np.ndarray:
+def green_zone_mask(rgb: np.ndarray) -> np.ndarray:
     """HSV 绿 ∪ 偏亮草绿；排除暗草地（V/G 过低）。"""
-    hsv, r, g, b = prep if prep is not None else _prep(rgb)
+    hsv, r, g, b = _prep(rgb)
     out = cv2.inRange(hsv, _GREEN_LO, _GREEN_HI)
     lime = cv2.bitwise_and(_gt_by(g, r, 12), _gt_by(g, b, 12))
     lime = cv2.bitwise_and(lime, cv2.inRange(g, 70, 200))

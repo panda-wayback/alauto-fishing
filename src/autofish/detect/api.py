@@ -8,20 +8,14 @@ import numpy as np
 
 from autofish.detect.bobber import BobberHit
 
-BarBox = tuple[int, int, int, int]  # x, y, w, h
-
 
 class BarDetector(Protocol):
-    """识别器：找条、找漂、算 pos。"""
+    """识别器：找漂、定条（若有）、算 pos。"""
 
     name: str
 
-    def find_bar(self, rgb: np.ndarray) -> BarBox | None:
-        """绿条（或整条张力条）包围盒；找不到返回 None。"""
-        ...
-
     def detect(self, rgb: np.ndarray) -> BobberHit | None:
-        """条 + 漂 + pos；无漂或无条返回 None。"""
+        """条 + 漂 + pos；无漂返回 None（有漂无条时可仅带漂坐标）。"""
         ...
 
 

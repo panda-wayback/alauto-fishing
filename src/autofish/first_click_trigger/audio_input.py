@@ -112,9 +112,6 @@ class AudioInput:
         loopback: bool | None = None,
     ) -> None:
         self._key = self._normalize_key(device, loopback=loopback)
-        self._loopback = bool(loopback) if loopback is not None else self._key_looks_loopback(
-            self._key
-        )
         info = self._probe(self._key)
         self.samplerate = int(samplerate or info["samplerate"])
         self.channels = int(channels or info["channels"])
@@ -127,10 +124,6 @@ class AudioInput:
         self._rec_lock = threading.Lock()
         self._rec_chunks: "list[npt.NDArray[np.float32]] | None" = None
         self._rec_frames = 0
-
-    @property
-    def loopback(self) -> bool:
-        return self._loopback
 
     def begin_record(self) -> None:
         with self._rec_lock:
@@ -173,12 +166,6 @@ class AudioInput:
     def _name_is_skip_capture(name: str) -> bool:
         lower = name.lower()
         return any(k in lower for k in _SKIP_CAPTURE_NAMES)
-
-    @staticmethod
-    def _key_looks_loopback(key: str | None) -> bool:
-        if not key:
-            return False
-        return ":lb:" in key or key.endswith(":lb")
 
     @classmethod
     def _normalize_key(
@@ -507,10 +494,3 @@ class AudioInput:
                 self._queue.put_nowait(mono)
             except queue.Empty:
                 pass
-
-    def __enter__(self) -> "AudioInput":
-        self.start()
-        return self
-
-    def __exit__(self, *args) -> None:
-        self.stop()

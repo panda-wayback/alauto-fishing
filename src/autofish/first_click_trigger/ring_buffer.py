@@ -21,15 +21,6 @@ class AudioRingBuffer:
         self._pos = 0
         self._size = 0  # 已写入样本数，最多 capacity
 
-    def reset(self) -> None:
-        self._buf.fill(0.0)
-        self._pos = 0
-        self._size = 0
-
-    @property
-    def size(self) -> int:
-        return self._size
-
     def extend(self, samples: "npt.NDArray[np.float32]") -> None:
         """追加单声道样本。"""
         n = len(samples)
