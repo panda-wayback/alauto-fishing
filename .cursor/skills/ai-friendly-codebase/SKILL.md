@@ -9,12 +9,11 @@ description: >-
 
 ## 必须
 
-1. 目的：少读代码、准确定位、薄层可调用。
-2. `AI.md` = 代码目录索引与对外契约摘要；产品方案在项目 `docs/`（若有），禁止写入 AI.md。
-3. 找/改代码：根 `AI.md` 全树 → 叶子 `AI.md` → 实现文件；禁止无目标全量扫代码树。
-4. 先 Read 本文件，再按需打开 [ai-md.md](ai-md.md) / [thin-upper.md](thin-upper.md) / [templates/](templates/)。
-5. 改完且检查通过 → 更新相关 AI.md；新目录补叶子并在根全树加一行。
-6. 项目专属分层与业务禁令写在该仓库 rules/docs；本 Skill 保持通用，禁止写死业务清单。
+1. `AI.md` = 代码目录索引与对外契约摘要；产品方案在项目 `docs/`（若有），禁止写入 AI.md。
+2. 找/改代码：根 `AI.md` 全树 → 叶子 `AI.md` → 实现文件；禁止无目标全量扫代码树。
+3. 先 Read 本文件，再按需打开 [ai-md.md](ai-md.md) / [thin-upper.md](thin-upper.md) / [templates/](templates/)。
+4. 改完且检查通过 → 更新相关 AI.md；新目录补叶子并在根全树加一行；父级清单只留「路径 + 一句话 + 指向叶子」，禁止重复子叶子细节。
+5. 项目专属分层与业务禁令写在该仓库 rules/docs；本 Skill 保持通用，禁止写死业务清单。
 
 ## 禁止
 
