@@ -13,7 +13,6 @@ import numpy as np
 
 from autofish.act.mouse import MouseActuator
 from autofish.first_click_trigger.audio_input import AudioInput
-from autofish.first_click_trigger.detector import AudioDetector
 from autofish.first_click_trigger.ring_buffer import AudioRingBuffer
 from autofish.first_click_trigger.template_matcher import TemplateMatcher
 from autofish.topics import CastSessionEvent, CastSessionState, PosEvent, SplashHit, Topic
@@ -37,16 +36,8 @@ _WAIT_LISTEN_COOLDOWN_S = 3.0
 _DEFAULT_THRESHOLD = 0.70
 _RING_SECONDS = 20.0
 _LIVE_WAVE_SECONDS = 20.0
-_MARK_SECONDS = 1.0
-_SILENT_DB = -55.0
 # 试听时峰值归一化目标（只影响播放，不改模板文件）
 _AUDITION_PEAK = 0.85
-
-
-def _db(rms: float) -> float:
-    if rms <= 0:
-        return -120.0
-    return 20.0 * float(np.log10(max(rms, 1e-12)))
 
 
 def _audition_wave(wave: "npt.NDArray[np.float32]") -> "npt.NDArray[np.float32]":
@@ -75,8 +66,6 @@ class FirstClickTrigger(WorkerBase):
         bus: "AutofishBus | None",
         device: int | str | None = None,
         threshold: float = _DEFAULT_THRESHOLD,
-        use_energy_fallback: bool = False,
-        energy_threshold_db: float = -30.0,
         template_path: str | Path | None = None,
         *,
         loopback: bool | None = None,
@@ -90,12 +79,6 @@ class FirstClickTrigger(WorkerBase):
             template_duration_s=2.0,
             threshold=threshold,
         )
-        self._detector = AudioDetector(
-            samplerate=self._audio.samplerate,
-            threshold_db=energy_threshold_db,
-            cooldown_ms=0.0,
-        )
-        self._use_fallback = use_energy_fallback
         self._session_enabled = False
         self._session = CastSessionState.DISABLED
         self._lock = threading.Lock()
@@ -105,16 +88,12 @@ class FirstClickTrigger(WorkerBase):
         self._trigger_count = 0
         self._last_score = 0.0
         self._level_db = -120.0
-        self._running_mode = "等待标记"
         self._wait_bobber_since: float | None = None
         self._miss_since: float | None = None
         self._listen_after: float = 0.0
         self._pos_subscribed = False
         self._last_reject_log_at = 0.0
         self._session_recording = False
-        self._session_ranges: list[tuple[float, float]] = []
-        self._session_range_start: float | None = None
-        self._session_started_at: float = 0.0
         # 实时波形命中：墙钟时刻 + 分数（展示时映射到最近 20s）
         self._live_hits: deque[dict[str, float]] = deque(maxlen=40)
         self._was_listening = False
@@ -181,10 +160,6 @@ class FirstClickTrigger(WorkerBase):
         return self._level_db
 
     @property
-    def running_mode(self) -> str:
-        return self._running_mode
-
-    @property
     def session_state(self) -> CastSessionState:
         return self._session
 
@@ -199,16 +174,6 @@ class FirstClickTrigger(WorkerBase):
     @property
     def session_record_duration_s(self) -> float:
         return self._audio.record_frames / float(max(self._audio.samplerate, 1))
-
-    @property
-    def session_mark_count(self) -> int:
-        with self._lock:
-            return len(self._session_ranges)
-
-    @property
-    def session_pending_range_start(self) -> float | None:
-        with self._lock:
-            return self._session_range_start
 
     @property
     def template_wave(self) -> "npt.NDArray[np.float32] | None":
@@ -262,28 +227,22 @@ class FirstClickTrigger(WorkerBase):
         self._after_lo_s = a0
         self._after_hi_s = a1
 
-    def set_energy_threshold(self, db: float) -> None:
-        self._detector.threshold_db = db
-        self._detector.threshold_linear = 10 ** (db / 20.0)
-
     def load_template(self, path: str | Path) -> None:
         self._matcher.load_template(path)
-        self._running_mode = "频谱模板匹配"
 
     def save_template(self, path: str | Path) -> None:
         self._matcher.save_template(path)
 
     def set_template(self, wave, *, trim_energy: bool = True) -> None:
         self._matcher.set_template(wave, trim_energy=trim_energy)
-        self._running_mode = "频谱模板匹配"
 
     def play_template(self) -> None:
         """用扬声器试听当前模板（避免仍走 BlackHole / Loopback 听不见）。"""
+        import sounddevice as sd
+
         wave = self.template_wave
         if wave is None or wave.size == 0:
             raise RuntimeError("没有模板可播放")
-        import sounddevice as sd
-
         sd.stop()
         audio = _audition_wave(wave)
         sr = int(self._audio.samplerate)
@@ -339,37 +298,17 @@ class FirstClickTrigger(WorkerBase):
                 break
         return preferred if preferred is not None else fallback
 
-    def mark_splash(self, seconds: float = _MARK_SECONDS) -> "npt.NDArray[np.float32]":
-        """在最近 5 秒里按能量截取有效段（去前空白、尾部多留一点）。"""
-        _ = seconds
-        with self._lock:
-            if self._ring.size < self._audio.samplerate // 4:
-                raise RuntimeError(
-                    f"录音还太短（仅 {self._ring.size / self._audio.samplerate:.2f}s），"
-                    "请先听几秒游戏声再标记"
-                )
-            wave, rms = self._ring.extract_active_segment(self._audio.samplerate)
-            db = _db(rms)
-            if wave.size == 0 or db < _SILENT_DB:
-                raise RuntimeError(
-                    f"最近几秒几乎没声音（峰值 {db:.0f} dB）。"
-                    "请确认选的是虚拟音频设备，且系统输出已切到该设备"
-                )
-            self.set_template(wave)
-        return wave
-
     def session_recording_preview(self) -> tuple["npt.NDArray[np.float32] | None", int, list[tuple[float, float]]]:
-        """长录音进行中：返回当前已录波形副本与已闭合区间（供波形条刷新）。"""
+        """长录音进行中：返回当前已录波形副本（标注在停录后波形上拖选）。"""
         sr = int(self._audio.samplerate)
         with self._lock:
-            ranges = list(self._session_ranges)
             recording = self._session_recording
         chunks = self._audio.record_snapshot() if recording else []
         if not chunks:
-            return None, sr, ranges
+            return None, sr, []
         raw = np.concatenate(chunks, axis=0)
         wave = raw.mean(axis=1) if raw.ndim > 1 else raw
-        return wave.astype(np.float32), sr, ranges
+        return wave.astype(np.float32), sr, []
 
     def start_session_recording(self) -> None:
         """开始长录音（需已在监听）；与开钓会话无关。"""
@@ -377,40 +316,8 @@ class FirstClickTrigger(WorkerBase):
             if self._session_recording:
                 raise RuntimeError("已在长录音中")
             self._session_recording = True
-            self._session_ranges = []
-            self._session_range_start = None
-            self._session_started_at = time.time()
             self._audio.begin_record()
         self._emit_log("长录音开始 · 录完后在波形条上拖选水花区间", channel="backtest")
-
-    def mark_session_range_start(self) -> float:
-        """长录音中：记下区间起点。"""
-        with self._lock:
-            if not self._session_recording:
-                raise RuntimeError("请先开始长录音")
-            t = self.session_record_duration_s
-            self._session_range_start = t
-        self._emit_log(f"区间起点 · {t:.2f}s · 再点「区间终点」", channel="backtest")
-        return t
-
-    def mark_session_range_end(self) -> tuple[float, float]:
-        """长录音中：用当前时刻作终点，闭合一个水花区间。"""
-        with self._lock:
-            if not self._session_recording:
-                raise RuntimeError("请先开始长录音")
-            if self._session_range_start is None:
-                raise RuntimeError("请先点「区间起点」")
-            end = self.session_record_duration_s
-            start = float(self._session_range_start)
-            self._session_range_start = None
-            if end < start:
-                start, end = end, start
-            if end - start < 0.05:
-                raise RuntimeError("区间太短，请稍后再点终点")
-            self._session_ranges.append((start, end))
-            n = len(self._session_ranges)
-        self._emit_log(f"水花区间 #{n} · [{start:.2f},{end:.2f}]s", channel="backtest")
-        return start, end
 
     def stop_session_recording(self) -> dict:
         """停止长录音并落盘；有模板则自动回测。"""
@@ -424,22 +331,15 @@ class FirstClickTrigger(WorkerBase):
             if not self._session_recording:
                 raise RuntimeError("当前没有长录音")
             self._session_recording = False
-            ranges = list(self._session_ranges)
-            pending = self._session_range_start
-            self._session_ranges = []
-            self._session_range_start = None
         raw = self._audio.end_record()
-        if pending is not None:
-            self._emit_log(
-                f"未闭合的起点 @{pending:.2f}s 已丢弃", channel="backtest"
-            )
         if raw is None or raw.size == 0:
             raise RuntimeError("长录音为空")
         wave = (raw.mean(axis=1) if raw.ndim > 1 else raw).astype(np.float32)
         sr = int(self._audio.samplerate)
+        ranges: list[tuple[float, float]] = []
         paths = save_session(raw, sr, ranges)
         self._emit_log(
-            f"长录音已保存 {paths.root.name} · {len(wave)/sr:.1f}s · 区间 {len(ranges)} 段",
+            f"长录音已保存 {paths.root.name} · {len(wave)/sr:.1f}s",
             channel="backtest",
         )
         out: dict = {
@@ -684,10 +584,6 @@ class FirstClickTrigger(WorkerBase):
                                 f"环境≈{self._matcher.last_ambient:.2f} · "
                                 f"{self._matcher.last_reject}"
                             )
-                    elif can_listen and self._use_fallback:
-                        triggered = self._detector.feed(mono)
-                        score = float(rms)
-                        self._last_score = rms
                     elif self._matcher.has_template:
                         # 非听声态：只填缓冲，不更新抬升基线（与回测独立匹配器一致）
                         _, score = self._matcher.feed(
@@ -828,8 +724,3 @@ class FirstClickTrigger(WorkerBase):
                 if self._session_enabled:
                     self._set_session(CastSessionState.WAIT, "error")
 
-    def reset_stats(self) -> None:
-        self._trigger_count = 0
-
-    def get_devices(self) -> list:
-        return AudioInput.list_devices()

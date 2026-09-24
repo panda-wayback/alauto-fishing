@@ -64,13 +64,10 @@ class AutofishBus:
     def unsubscribe(self, topic: Topic, callback: Callable) -> None:
         self._events.unsubscribe(topic, callback)
 
-    def snapshot(self, *, with_frame: bool = False) -> AutofishSnapshot:
-        """默认不拷 frame（调用方多数只读会话/意图）；需要画面时传 with_frame=True。"""
+    def snapshot(self) -> AutofishSnapshot:
+        """不拷 frame（画面走 Frame/Pos 订阅；调用方多数只读会话/意图）。"""
         with self._lock:
-            s = self._snap
-            if with_frame and s.frame is not None:
-                return replace(s, frame=s.frame.copy())
-            return replace(s, frame=None)
+            return replace(self._snap, frame=None)
 
     def current_roi(self) -> tuple[Roi | None, int]:
         with self._lock:
@@ -78,14 +75,6 @@ class AutofishBus:
 
     def publish_roi(self, event: RoiEvent) -> None:
         with self._lock:
-            # 已有手框时，禁止 green 覆盖
-            if (
-                event.roi is not None
-                and event.source == "green"
-                and self._snap.roi is not None
-                and self._snap.roi_source == "manual"
-            ):
-                return
             self._snap.roi = event.roi
             self._snap.roi_version = event.version
             self._snap.roi_score = event.score

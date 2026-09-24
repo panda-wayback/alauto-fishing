@@ -10,16 +10,10 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from common.paths import data_root
-
 if TYPE_CHECKING:
     import numpy.typing as npt
 
     from autofish.first_click_trigger.template_matcher import TemplateMatcher
-
-
-def _sessions_root() -> Path:
-    return data_root() / "audio_sessions"
 
 
 @dataclass
@@ -31,7 +25,9 @@ class SessionPaths:
 
 
 def new_session_dir() -> SessionPaths:
-    root = _sessions_root() / datetime.now().strftime("session_%Y%m%d_%H%M%S")
+    from autofish.first_click_trigger.paths import user_audio_sessions_dir
+
+    root = user_audio_sessions_dir() / datetime.now().strftime("session_%Y%m%d_%H%M%S")
     root.mkdir(parents=True, exist_ok=True)
     return SessionPaths(
         root=root,
@@ -117,14 +113,7 @@ def load_session(
     ranges: list[tuple[float, float]] = []
     if marks_p.is_file():
         data = json.loads(marks_p.read_text(encoding="utf-8"))
-        if "splash_ranges" in data:
-            ranges = normalize_ranges(data["splash_ranges"])
-        else:
-            # 兼容旧「时刻」标注 → 扩成 ±0.4s 区间
-            for t in data.get("splash_times_s", []):
-                tt = float(t)
-                ranges.append((max(0.0, tt - 0.4), tt + 0.4))
-            ranges = normalize_ranges(ranges)
+        ranges = normalize_ranges(data.get("splash_ranges", []))
     return wave, sr, ranges
 
 

@@ -85,7 +85,7 @@ class AudioDeviceInfo:
 
     @property
     def index(self) -> int | str:
-        """兼容旧代码：sounddevice 为 int；soundcard 为 key 字符串。"""
+        """sounddevice：设备序号；soundcard：完整 key。"""
         if self.key.startswith("sd:"):
             try:
                 return int(self.key[3:])
@@ -188,12 +188,9 @@ class AudioInput:
         loopback: bool | None,
     ) -> str:
         if device is None:
-            pref = cls.preferred_capture_index()
+            pref = cls.preferred_capture_key()
             if pref is not None:
-                # preferred_capture_index 现返回 key 字符串或旧 index
-                if isinstance(pref, str) and (pref.startswith("sc:") or pref.startswith("sd:")):
-                    return pref
-                return f"sd:{int(pref)}"
+                return pref
             if sys.platform == "win32" and _sc is not None:
                 mics = list(_sc.all_microphones(include_loopback=True))
                 for m in mics:
@@ -212,7 +209,6 @@ class AudioInput:
         s = str(device)
         if s.startswith("sc:") or s.startswith("sd:"):
             return s
-        # 旧 UI 可能只存了 sounddevice index 字符串
         if s.isdigit():
             return f"sd:{s}"
         # soundcard：按名称解析
@@ -336,7 +332,7 @@ class AudioInput:
         return devices
 
     @staticmethod
-    def preferred_capture_index() -> int | str | None:
+    def preferred_capture_key() -> str | None:
         """优先环回/虚拟采集；返回 device key 或 None。"""
         for d in AudioInput.list_devices():
             if d.is_virtual_capture or d.is_loopback:

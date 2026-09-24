@@ -459,8 +459,7 @@ class PreviewApp(QMainWindow):
             if ag.contains(pt):
                 return pt
         # 落点不在任何屏：夹到最近屏
-        best = screens[0].availableGeometry()
-        best_d = None
+        best_d: float | None = None
         for scr in screens:
             ag = scr.availableGeometry()
             cx = min(max(pt.x(), ag.left()), ag.right() - max(w, 1))
@@ -468,9 +467,7 @@ class PreviewApp(QMainWindow):
             d = abs(cx - pt.x()) + abs(cy - pt.y())
             if best_d is None or d < best_d:
                 best_d = d
-                best = ag
                 pt = QPoint(cx, cy)
-        _ = best
         return pt
 
     def _set_compact_mode(
@@ -842,7 +839,7 @@ class PreviewApp(QMainWindow):
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
-            pipe = AutofishPipeline(auto_locate=False, capture_fps=30.0)
+            pipe = AutofishPipeline(capture_fps=30.0)
             pipe.subscribe(Topic.FRAME, self._on_frame_bus)
             pipe.subscribe(Topic.POS, self._on_pos_bus)
             pipe.subscribe(Topic.ACTION_INTENT, self._on_intent_bus)

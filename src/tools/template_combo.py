@@ -7,7 +7,6 @@ from pathlib import Path
 from PySide6.QtWidgets import QComboBox
 
 from autofish.first_click_trigger.paths import (
-    is_bundled_template,
     list_library_templates,
     resolve_template_path,
     template_source_label,
@@ -50,10 +49,3 @@ def sync_combo_to_path(combo: QComboBox, path: Path) -> None:
                 combo.setCurrentIndex(i)
                 break
     combo.blockSignals(False)
-
-
-def current_template_is_bundled(combo: QComboBox) -> bool:
-    path = combo.currentData()
-    if not isinstance(path, Path):
-        return False
-    return is_bundled_template(path)

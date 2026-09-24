@@ -37,7 +37,3 @@ class EventBus:
                 cb(event)
             except Exception:  # noqa: BLE001
                 pass
-
-    def subscriber_count(self, topic: Hashable) -> int:
-        with self._lock:
-            return len(self._subs[topic])

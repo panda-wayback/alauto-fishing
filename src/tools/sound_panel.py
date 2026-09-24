@@ -120,7 +120,7 @@ class FirstClickTriggerPanel(QWidget):
         if key is None:
             return ""
         for d in AudioInput.list_devices():
-            if d.key == key or d.index == key:
+            if d.key == key:
                 if is_loopback is None or d.is_loopback == bool(is_loopback):
                     return str(d.name)
         text = self.cmb_device.currentText().strip()
@@ -129,7 +129,7 @@ class FirstClickTriggerPanel(QWidget):
         return text
 
     def _selected_device(self) -> tuple[int | str | None, bool | None]:
-        """返回 (device_key_or_index, is_loopback)。"""
+        """返回 (device_key, is_loopback)。"""
         data = self.cmb_device.currentData()
         if data is None:
             return None, None
@@ -284,9 +284,6 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_threshold = QLabel("0.70")
         self.lbl_threshold.setMinimumWidth(36)
         row_thr.addWidget(self.lbl_threshold)
-        self.lbl_mode = QLabel("模式：—")
-        self.lbl_mode.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-        row_thr.addWidget(self.lbl_mode)
         self.lbl_last = QLabel("触发：—")
         self.lbl_last.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_thr.addWidget(self.lbl_last)
@@ -344,7 +341,7 @@ class FirstClickTriggerPanel(QWidget):
                 label = f"{d.name}  ← 录游戏声用这个"
             self.cmb_device.addItem(label, (d.key, d.is_loopback))
             name_l = d.name.lower()
-            # 兼容旧存档：纯扬声器名 / 带 (Loopback) 后缀
+            # 存档可能是纯扬声器名，或带 (Loopback) 后缀
             bare = name_l.replace(" (loopback)", "").strip()
             if preferred and (name_l == preferred or bare == preferred):
                 exact_i = i
@@ -580,7 +577,6 @@ class FirstClickTriggerPanel(QWidget):
             self.lbl_status.setText("未监听")
             self.lbl_status.setStyleSheet(f"font-weight:600; color:{DANGER};")
             self.lbl_level.setText("音量：—")
-            self.lbl_mode.setText("模式：—")
             self.lbl_score.setText("相似：—")
             if self.lbl_live_wave.text().startswith("正在停止"):
                 self.lbl_live_wave.setText("未监听 · 无波形")
@@ -588,7 +584,6 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_status.setText("监听中")
         self.lbl_status.setStyleSheet(f"font-weight:600; color:{SUCCESS};")
         self.lbl_level.setText(f"音量：{self._trigger.level_db:.0f} dB")
-        self.lbl_mode.setText(f"模式：{self._trigger.running_mode}")
         self.lbl_score.setText(f"相似：{self._trigger.last_score:.2f}")
         if self._trigger.last_trigger_at > 0:
             ago = time.time() - self._trigger.last_trigger_at

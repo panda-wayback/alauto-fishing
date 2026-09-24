@@ -149,14 +149,7 @@ def load_shell_settings() -> ShellSettings:
     """用户文件优先；否则打包默认；再否则代码内建。"""
     user = _parse_settings_file(settings_path())
     if user is not None:
-        # 兼容旧键 hud_enabled（仅用户文件）
-        try:
-            raw = json.loads(settings_path().read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            raw = {}
-        if isinstance(raw, dict) and "compact_mode" not in raw and "hud_enabled" in raw:
-            user.compact_mode = bool(raw.get("hud_enabled"))
-        return _normalize_settings(user)
+        return user
     bundled = _parse_settings_file(bundled_settings_path())
     if bundled is not None:
         return bundled

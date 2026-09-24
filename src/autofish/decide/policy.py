@@ -58,9 +58,8 @@ class ThresholdPosPolicy:
     def holding(self) -> bool:
         return self._holding
 
-    def decide(self, pos: float, t: float) -> tuple[bool, str]:
-        """返回 (holding, reason)。t 保留兼容，不参与门控。"""
-        del t
+    def decide(self, pos: float) -> tuple[bool, str]:
+        """返回 (holding, reason)。"""
         want = self._holding
         reason = "hold"
         if pos < self.low:

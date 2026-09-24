@@ -15,7 +15,6 @@
 - `EventBus.subscribe(topic, callback)` — 订阅；同回调不重复叠加
 - `EventBus.unsubscribe(topic, callback)` — 退订
 - `EventBus.publish(topic, event)` — 发布；单订阅者异常不影响其他
-- `EventBus.subscriber_count(topic)` — 调试用订阅数
 
 ## 约束
 

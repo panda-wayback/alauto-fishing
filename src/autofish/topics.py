@@ -42,7 +42,7 @@ class RoiEvent:
     roi: Roi | None
     version: int
     ts: float
-    source: str  # "manual" | "green" | "clear"
+    source: str  # "manual" | "default" | "clear"
     score: float = 0.0
 
 
