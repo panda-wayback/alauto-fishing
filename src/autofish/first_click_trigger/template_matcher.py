@@ -83,10 +83,6 @@ class TemplateMatcher:
             return None
         return self._template_wave.copy()
 
-    @property
-    def score_baseline(self) -> float:
-        return float(self._score_ema)
-
     def bump_score_baseline(self, score: float) -> None:
         """命中后抬高 EMA 基线（回测合并近邻时用）。"""
         self._score_ema = max(self._score_ema, float(score))
@@ -99,11 +95,6 @@ class TemplateMatcher:
             data = data.mean(axis=1)
         # 用户波形选区已裁好，加载时不再能量裁切
         self.set_template(data, trim_energy=False)
-
-    def save_template(self, path: str | Path) -> None:
-        if self._template_wave is None:
-            raise RuntimeError("没有模板可保存")
-        np.save(path, self._template_wave)
 
     def set_template(
         self, wave: "npt.NDArray[np.float32]", *, trim_energy: bool = True

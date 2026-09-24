@@ -54,10 +54,6 @@ class ThresholdPosPolicy:
         self._holding = False
         self._resample()
 
-    @property
-    def holding(self) -> bool:
-        return self._holding
-
     def decide(self, pos: float) -> tuple[bool, str]:
         """返回 (holding, reason)。"""
         want = self._holding

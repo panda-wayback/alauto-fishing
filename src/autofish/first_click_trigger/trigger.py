@@ -230,9 +230,6 @@ class FirstClickTrigger(WorkerBase):
     def load_template(self, path: str | Path) -> None:
         self._matcher.load_template(path)
 
-    def save_template(self, path: str | Path) -> None:
-        self._matcher.save_template(path)
-
     def set_template(self, wave, *, trim_energy: bool = True) -> None:
         self._matcher.set_template(wave, trim_energy=trim_energy)
 
