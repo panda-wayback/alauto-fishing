@@ -10,7 +10,7 @@
 
 | 段 | 只做什么 | 产出 | 子文档 |
 |---|---|---|---|
-| **1. 圈定范围** | 手框（或可选找绿）产出**天花板 ROI**并存储；同步为 mss 初始截图范围 | 天花板 ROI / 无 ROI | [`docs/autofish/locate/`](locate/) |
+| **1. 圈定范围** | 手框产出**天花板 ROI**并存储；同步为 mss 初始截图范围 | 天花板 ROI / 无 ROI | [`docs/autofish/locate/`](locate/) |
 | **2. 截图** | mss **只**按**当前 ROI**持续截帧；无 ROI 则不截 | 最新 Frame | [`docs/autofish/capture/`](capture/) |
 | **3. 识别** | 订 ROI+Frame：在手框画面内绿+5% 找白得 0～100；**不改 mss** | Pos | [`docs/autofish/detect/`](detect/) |
 | **4. 算法** | 订 Pos，阈值策略产出按住/松开意图 | ActionIntent | [`docs/autofish/decide/`](decide/) |

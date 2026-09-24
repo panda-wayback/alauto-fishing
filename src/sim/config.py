@@ -10,7 +10,6 @@ _ASSETS = assets_dir()
 _METRICS = json.loads((_ASSETS / "metrics.json").read_text())
 
 # ---- 资源 ----
-ASSETS_DIR = _ASSETS
 TENSION_BAR = _ASSETS / "tension_bar.png"
 PROGRESS_BAR = _ASSETS / "progress_bar.png"
 BOBBER = _ASSETS / "bobber.png"

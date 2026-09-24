@@ -85,7 +85,7 @@ class AudioDeviceInfo:
 
     @property
     def index(self) -> int | str:
-        """兼容旧代码：sounddevice 为 int；soundcard 为 key 字符串。"""
+        """sounddevice：设备序号；soundcard：完整 key。"""
         if self.key.startswith("sd:"):
             try:
                 return int(self.key[3:])
@@ -112,9 +112,6 @@ class AudioInput:
         loopback: bool | None = None,
     ) -> None:
         self._key = self._normalize_key(device, loopback=loopback)
-        self._loopback = bool(loopback) if loopback is not None else self._key_looks_loopback(
-            self._key
-        )
         info = self._probe(self._key)
         self.samplerate = int(samplerate or info["samplerate"])
         self.channels = int(channels or info["channels"])
@@ -127,10 +124,6 @@ class AudioInput:
         self._rec_lock = threading.Lock()
         self._rec_chunks: "list[npt.NDArray[np.float32]] | None" = None
         self._rec_frames = 0
-
-    @property
-    def loopback(self) -> bool:
-        return self._loopback
 
     def begin_record(self) -> None:
         with self._rec_lock:
@@ -174,12 +167,6 @@ class AudioInput:
         lower = name.lower()
         return any(k in lower for k in _SKIP_CAPTURE_NAMES)
 
-    @staticmethod
-    def _key_looks_loopback(key: str | None) -> bool:
-        if not key:
-            return False
-        return ":lb:" in key or key.endswith(":lb")
-
     @classmethod
     def _normalize_key(
         cls,
@@ -188,12 +175,9 @@ class AudioInput:
         loopback: bool | None,
     ) -> str:
         if device is None:
-            pref = cls.preferred_capture_index()
+            pref = cls.preferred_capture_key()
             if pref is not None:
-                # preferred_capture_index 现返回 key 字符串或旧 index
-                if isinstance(pref, str) and (pref.startswith("sc:") or pref.startswith("sd:")):
-                    return pref
-                return f"sd:{int(pref)}"
+                return pref
             if sys.platform == "win32" and _sc is not None:
                 mics = list(_sc.all_microphones(include_loopback=True))
                 for m in mics:
@@ -212,7 +196,6 @@ class AudioInput:
         s = str(device)
         if s.startswith("sc:") or s.startswith("sd:"):
             return s
-        # 旧 UI 可能只存了 sounddevice index 字符串
         if s.isdigit():
             return f"sd:{s}"
         # soundcard：按名称解析
@@ -336,7 +319,7 @@ class AudioInput:
         return devices
 
     @staticmethod
-    def preferred_capture_index() -> int | str | None:
+    def preferred_capture_key() -> str | None:
         """优先环回/虚拟采集；返回 device key 或 None。"""
         for d in AudioInput.list_devices():
             if d.is_virtual_capture or d.is_loopback:
@@ -511,10 +494,3 @@ class AudioInput:
                 self._queue.put_nowait(mono)
             except queue.Empty:
                 pass
-
-    def __enter__(self) -> "AudioInput":
-        self.start()
-        return self
-
-    def __exit__(self, *args) -> None:
-        self.stop()

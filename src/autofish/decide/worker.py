@@ -36,7 +36,6 @@ class DecideWorker:
             release_lo=release_lo,
             release_hi=release_hi,
         )
-        self._t0 = time.perf_counter()
         self._state = FishingState.IDLE
         self._cast = CastSessionState.DISABLED
         self._last_holding: bool | None = None
@@ -58,7 +57,6 @@ class DecideWorker:
     def start(self) -> None:
         if self._active:
             return
-        self._t0 = time.perf_counter()
         self._policy.reset()
         self._last_holding = None
         self.bus.subscribe(Topic.POS, self._on_pos)
@@ -75,9 +73,6 @@ class DecideWorker:
         self.bus.unsubscribe(Topic.CAST_SESSION, self._on_cast)
         self._active = False
         self._emit(False, "decide_stop", None)
-
-    def _now(self) -> float:
-        return time.perf_counter() - self._t0
 
     def _may_pull(self) -> bool:
         """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
@@ -117,7 +112,7 @@ class DecideWorker:
         if pos is None:
             # 单帧无漂：保持上一意图，等离开可拉漂条件再松
             return
-        holding, reason = self._policy.decide(pos, self._now())
+        holding, reason = self._policy.decide(pos)
         self._emit(holding, reason, pos)
 
     def _emit(self, holding: bool, reason: str, pos: float | None) -> None:

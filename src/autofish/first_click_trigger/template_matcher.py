@@ -76,6 +76,17 @@ class TemplateMatcher:
     def has_template(self) -> bool:
         return self._template_wave is not None
 
+    @property
+    def template_wave(self) -> "npt.NDArray[np.float32] | None":
+        """当前模板波形副本；无模板返回 None。"""
+        if self._template_wave is None:
+            return None
+        return self._template_wave.copy()
+
+    def bump_score_baseline(self, score: float) -> None:
+        """命中后抬高 EMA 基线（回测合并近邻时用）。"""
+        self._score_ema = max(self._score_ema, float(score))
+
     def load_template(self, path: str | Path) -> None:
         data = np.load(path)
         if data.dtype != np.float32:
@@ -84,11 +95,6 @@ class TemplateMatcher:
             data = data.mean(axis=1)
         # 用户波形选区已裁好，加载时不再能量裁切
         self.set_template(data, trim_energy=False)
-
-    def save_template(self, path: str | Path) -> None:
-        if self._template_wave is None:
-            raise RuntimeError("没有模板可保存")
-        np.save(path, self._template_wave)
 
     def set_template(
         self, wave: "npt.NDArray[np.float32]", *, trim_energy: bool = True
@@ -143,9 +149,6 @@ class TemplateMatcher:
             raise RuntimeError("没有模板可回测")
         other.set_template(self._template_wave.copy(), trim_energy=False)
         return other
-
-    def clear_streak(self) -> None:
-        return
 
     def _buffer_loud_enough(self, buf: "npt.NDArray[np.float32]") -> bool:
         """
@@ -219,11 +222,8 @@ class TemplateMatcher:
         self,
         buf: "npt.NDArray[np.float32]",
         *,
-        update_ambient: bool = False,
-        ambient_override: float | None = None,
         update_baseline: bool = False,
     ) -> dict[str, Any]:
-        _ = update_ambient, ambient_override
         score, match_start, prom, which = self._match_mel_dual(buf)
         baseline = self._score_ema
         rise = score - baseline
@@ -256,10 +256,7 @@ class TemplateMatcher:
     def analyze_clip(
         self,
         wave: "npt.NDArray[np.float32]",
-        *,
-        ambient_override: float | None = None,
     ) -> dict[str, Any]:
-        _ = ambient_override
         wave = np.asarray(wave, dtype=np.float32)
         if wave.ndim > 1:
             wave = wave.mean(axis=1)
@@ -409,13 +406,17 @@ class TemplateMatcher:
         n_bins = n_fft // 2 + 1
         if self._mel_fb.shape[1] != n_bins:
             self._mel_fb = self._make_mel_filterbank()
-        spec = np.zeros((n_bins, n_frames), dtype=np.float32)
-        for i in range(n_frames):
-            frame = wave[i * hop : i * hop + n_fft]
-            if len(frame) < n_fft:
-                frame = np.pad(frame, (0, n_fft - len(frame)), mode="constant")
-            mag = np.abs(np.fft.rfft(frame * window)) + 1e-10
-            spec[:, i] = mag.astype(np.float32)
+        if n_frames <= 0:
+            return np.zeros((N_MELS, 1), dtype=np.float32)
+        # 批量分帧 + rfft（替代逐帧 Python 循环）
+        shape = (n_frames, n_fft)
+        strides = (hop * wave.strides[0], wave.strides[0])
+        frames = np.lib.stride_tricks.as_strided(
+            wave, shape=shape, strides=strides, writeable=False
+        )
+        windowed = frames * window
+        mag = np.abs(np.fft.rfft(windowed, axis=1)) + 1e-10
+        spec = mag.T.astype(np.float32)
         mel = self._mel_fb @ spec
         mel = np.log1p(mel)
         mel = mel - float(np.mean(mel))
@@ -433,13 +434,14 @@ class TemplateMatcher:
             if peak <= 1e-8:
                 return wave
             return (wave * (NORM_TARGET_PEAK / peak)).astype(np.float32)
-        frame_peaks = [
-            float(np.max(np.abs(wave[i : i + n_fft])))
-            for i in range(0, wave.size - n_fft + 1, hop)
-        ]
-        peak = float(
-            np.percentile(np.asarray(frame_peaks, dtype=np.float64), NORM_PEAK_PERCENTILE)
+        n_frames = 1 + (wave.size - n_fft) // hop
+        shape = (n_frames, n_fft)
+        strides = (hop * wave.strides[0], wave.strides[0])
+        frames = np.lib.stride_tricks.as_strided(
+            wave, shape=shape, strides=strides, writeable=False
         )
+        frame_peaks = np.max(np.abs(frames), axis=1)
+        peak = float(np.percentile(frame_peaks.astype(np.float64), NORM_PEAK_PERCENTILE))
         if peak <= 1e-8:
             peak = float(np.max(np.abs(wave)))
         if peak <= 1e-8:

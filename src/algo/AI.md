@@ -1,6 +1,6 @@
 # src/algo/ 功能说明
 
-更新时间：2026-09-17
+更新时间：2026-09-25
 
 ## 本文件夹职责
 
@@ -10,7 +10,7 @@
 
 - `base.py` — `PullPolicy` 协议
 - `runner.py` — `run_episode` / `run_batch`
-- `threshold_hold.py` — 绿区相对 pos&lt;50 按住 / &gt;90 松开 + 切换间隔
+- `threshold_hold.py` — 绿区相对 pos<50 按住 / >90 松开 + 切换间隔
 - `__main__.py` — CLI 批量入口
 
 ## 对外契约

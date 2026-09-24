@@ -42,7 +42,7 @@ class RoiEvent:
     roi: Roi | None
     version: int
     ts: float
-    source: str  # "manual" | "green" | "clear"
+    source: str  # "manual" | "default" | "clear"
     score: float = 0.0
 
 
@@ -77,10 +77,22 @@ class FishingStateEvent:
 
 
 @dataclass(frozen=True)
+class SplashHit:
+    """水声命中进入 FIRST_CLICK 时的结构化载荷。"""
+
+    score: float
+    delay_s: float
+    hold_s: float
+    after_s: float
+    threshold: float
+
+
+@dataclass(frozen=True)
 class CastSessionEvent:
     state: CastSessionState
     ts: float
     detail: str = ""
+    splash: SplashHit | None = None
 
 
 @dataclass(frozen=True)

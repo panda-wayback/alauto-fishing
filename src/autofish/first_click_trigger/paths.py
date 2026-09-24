@@ -12,12 +12,12 @@ from pathlib import Path
 from common.paths import assets_dir, bundle_root, data_root
 
 _BUNDLED_DIR_REL = Path("audio")
-# 平台默认内置；缺文件时再退回旧名
+# 平台默认内置
 _BUNDLED_BY_PLATFORM = {
-    "win32": ("windows.npy", "default.npy", "splash_template.npy"),
-    "darwin": ("macos.npy", "default.npy", "splash_template.npy"),
+    "win32": ("windows.npy",),
+    "darwin": ("macos.npy",),
 }
-_BUNDLED_PREFERRED_FALLBACK = ("default.npy", "splash_template.npy")
+_BUNDLED_PREFERRED_FALLBACK = ("windows.npy", "macos.npy")
 _ACTIVE_BUNDLED_PREFIX = "__bundled__:"
 _ACTIVE_NAME = "active.json"
 _SAFE_NAME = re.compile(r"^[\w.\u4e00-\u9fff\-]+$", re.UNICODE)
@@ -36,7 +36,7 @@ def list_bundled_templates() -> list[Path]:
 
 
 def bundled_template_path() -> Path:
-    """平台内置默认：Windows→windows.npy，macOS→macos.npy；缺则旧名再目录内第一个。"""
+    """平台内置默认：Windows→windows.npy，macOS→macos.npy；缺则目录内第一个。"""
     d = assets_audio_dir()
     preferred = _BUNDLED_BY_PLATFORM.get(sys.platform, _BUNDLED_PREFERRED_FALLBACK)
     for name in preferred:
@@ -51,15 +51,6 @@ def bundled_template_path() -> Path:
 
 def user_template_dir() -> Path:
     return data_root() / "audio_template"
-
-
-def user_template_path() -> Path:
-    """兼容旧路径：单一用户覆盖文件（仍可作为库中一项）。"""
-    return user_template_dir() / "template.npy"
-
-
-def user_heard_marks_dir() -> Path:
-    return data_root() / "audio_heard_marks"
 
 
 def user_audio_sessions_dir() -> Path:
@@ -151,8 +142,6 @@ def list_session_dirs() -> list[Path]:
 
 def delete_session_dir(path: Path) -> None:
     """删除固定目录下的一条长录音会话（整目录）。"""
-    import shutil
-
     path = Path(path)
     root = user_audio_sessions_dir().resolve()
     try:
@@ -205,10 +194,6 @@ def set_active_template(path: Path | None) -> None:
 def resolve_template_path() -> Path | None:
     """当前选中模板；无选中则优先库内用户文件，再内置。"""
     name = get_active_template_name()
-    if name == "__bundled__":
-        # 旧 active.json 兼容
-        bundled = bundled_template_path()
-        return bundled if bundled.is_file() else None
     if name and name.startswith(_ACTIVE_BUNDLED_PREFIX):
         fname = name[len(_ACTIVE_BUNDLED_PREFIX) :]
         cand = assets_audio_dir() / fname
@@ -220,9 +205,6 @@ def resolve_template_path() -> Path | None:
             cand = user_template_dir() / name
         if cand.is_file():
             return cand
-    legacy = user_template_path()
-    if legacy.is_file():
-        return legacy
     lib = list_library_templates()
     user_ones = [p for p in lib if _is_user_library_file(p)]
     if user_ones:
