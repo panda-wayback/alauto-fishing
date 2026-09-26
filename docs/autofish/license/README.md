@@ -43,7 +43,7 @@
 ## 解决步骤
 
 1. `common/license.py`：验签、读写 license、是否有效。
-2. `packaging/gen_license_key.py`：按天数生成密钥。
+2. `packaging/gen_license_key.py` / `gen_license_ui.py`：按天数生成；macOS 可打独立 `.app`（仅本机发密钥，不进用户 Release）。
 3. 启动：包到期检查之后加激活门禁 + 简单输入对话框。
 4. docs 索引挂上本页；expire 页注明与密钥独立。
 5. 「更多」页展示授权到期；有打包到期日则同块展示。
