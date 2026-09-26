@@ -8,7 +8,8 @@
 
 ## 目录清单
 
-- `preview_app.py` — 调试壳主窗（完整态 ↔ 紧凑态；导航/管线/持久化）
+- `preview_app.py` — 调试壳主窗；`launch_ui`（包到期+密钥门禁）
+- `license_dialog.py` — 激活密钥对话框
 - `main_page.py` — 主控页 builder
 - `calibrate_page.py` — 拉漂配置页 builder（ROI / MONITOR / BAR / 策略）
 - `more_page.py` — 更多页 builder（权限 / 开钓时间 / 打包默认）

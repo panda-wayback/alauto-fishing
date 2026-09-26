@@ -17,6 +17,8 @@
 | **5. 执行** | 订意图，系统级鼠标按下/松开（当前光标） | 键态变化 | [`docs/autofish/act/`](act/) |
 | **（可选）声音开钓 A** | 会话状态机：听声 → 点第一下 → 等漂 → 交 B | 开钓第一下 / 会话态 | [`docs/autofish/first_click_trigger/`](first_click_trigger/) |
 | **调试壳** | 主控只打勾；标定/声音/更多分页面 | — | [`docs/autofish/shell/`](shell/) |
+| **打包过期** | 构建填天数；到期打开退出并尽删安装目录 | — | [`docs/autofish/expire/`](expire/) |
+| **密钥激活** | 输入密钥；按天数授权（与打包过期独立） | — | [`docs/autofish/license/`](license/) |
 
 ### 能力组合（A / B）
 
@@ -40,4 +42,6 @@
 
 1. 五段与 pipeline / Decide / Act（已完成）。  
 2. 声音开钓能力与会话状态机（已完成）→ [`first_click_trigger/`](first_click_trigger/)。  
-3. 壳 UI（主控 A/B + 分页面）（已完成）→ [`shell/`](shell/)。
+3. 壳 UI（主控 A/B + 分页面）（已完成）→ [`shell/`](shell/)。  
+4. 打包过期自毁 → [`expire/`](expire/)。  
+5. 密钥激活（离线半套）→ [`license/`](license/)。

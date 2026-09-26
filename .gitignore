@@ -40,6 +40,8 @@ data/hsv_zone.json
 data/debug_*.png
 data/_*.png
 data/audio_template/
+assets/expire.json
+data/license.json
 
 # 测试 / 覆盖率
 .pytest_cache/

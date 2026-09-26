@@ -1374,23 +1374,34 @@ class PreviewApp(QMainWindow):
         self._timer.stop()
         super().closeEvent(event)
 
-    def run(self) -> int:
-        self.show()
-        return QApplication.instance().exec()
+
+def _enforce_access() -> bool:
+    """包到期 + 密钥门禁。须已有 QApplication。通过 True，应退出 False。"""
+    from common.expire import expire_message, is_expired, try_self_delete
+    from PySide6.QtWidgets import QMessageBox
+    from tools.license_dialog import ensure_licensed
+
+    if is_expired():
+        QMessageBox.critical(None, "已过期", expire_message())
+        try_self_delete()
+        return False
+    return ensure_licensed()
 
 
-def main() -> int:
-    app = QApplication.instance() or QApplication(sys.argv)
-    # Fusion：让 QSS 按钮字色在 macOS 上可靠生效
+def launch_ui(*, roi_path: Path | None = None) -> int:
+    """唯一 UI 启动：QApp + Fusion + 门禁 + 主窗。"""
     from PySide6.QtWidgets import QStyleFactory
 
+    app = QApplication.instance() or QApplication(sys.argv)
     fusion = QStyleFactory.create("Fusion")
     if fusion is not None:
         app.setStyle(fusion)
-    win = PreviewApp()
+    if not _enforce_access():
+        return 1
+    win = PreviewApp() if roi_path is None else PreviewApp(roi_path=Path(roi_path))
     win.show()
     return app.exec()
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(launch_ui())

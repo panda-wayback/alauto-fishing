@@ -28,6 +28,7 @@ export ALBN_DIST_NAME="albn-autofish-${ALBN_BUILD_SUFFIX}"
 echo "Using: $PY"
 echo "Dist: $ALBN_DIST_NAME  suffix=$ALBN_BUILD_SUFFIX"
 "$PY" -m pip install -q -r "$ROOT/requirements.txt" "pyinstaller>=6.0,<7"
+"$PY" "$ROOT/packaging/write_expire.py"
 
 # 同名重打时 PyInstaller 会删掉目标目录；若其中有用户 data/ 则先挪走再放回
 DATA_DIR="$ROOT/dist/${ALBN_DIST_NAME}/data"

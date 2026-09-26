@@ -41,6 +41,7 @@ export ALBN_APP_NAME
 echo "Using: $PY"
 echo "Bundle: ${ALBN_BUNDLE_ID:-com.albn.autofish}  App: $ALBN_APP_NAME  suffix=$ALBN_BUILD_SUFFIX"
 "$PY" -m pip install -q -r "$ROOT/requirements.txt" "pyinstaller>=6.0,<7"
+"$PY" "$ROOT/packaging/write_expire.py"
 "$PY" -m PyInstaller --noconfirm --clean \
   --distpath "$ROOT/dist" \
   --workpath "$ROOT/build/pyinstaller" \

@@ -15,6 +15,8 @@
 | └ 订阅串接 | [`docs/autofish/pipeline/`](autofish/pipeline/) | 五段如何经总线交接 |
 | └ 声音开钓 / 会话 | [`docs/autofish/first_click_trigger/`](autofish/first_click_trigger/) | 可选听声点第一下；与自动拉漂独立 |
 | └ 调试壳界面 | [`docs/autofish/shell/`](autofish/shell/) | 主控打勾；标定/声音/更多分页面 |
+| └ 打包过期 | [`docs/autofish/expire/`](autofish/expire/) | 构建填天数；到期打开退出并尽删 |
+| └ 密钥激活 | [`docs/autofish/license/`](autofish/license/) | 输入密钥；按天数授权（离线半套） |
 | **通用库** | [`docs/common/`](common/) | 无业务基础设施 |
 | └ 订阅总线 | [`docs/common/pubsub/`](common/pubsub/) | 进程内 Pub/Sub |
 | └ 运行权限 | [`docs/common/permissions/`](common/permissions/) | 截屏/控鼠/音频授权引导 |

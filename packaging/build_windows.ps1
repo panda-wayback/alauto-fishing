@@ -26,6 +26,7 @@ $env:ALBN_DIST_NAME = "albn-autofish-$($env:ALBN_BUILD_SUFFIX)"
 Write-Host "Using: $Py"
 Write-Host "Dist: $($env:ALBN_DIST_NAME)  suffix=$($env:ALBN_BUILD_SUFFIX)"
 & $Py -m pip install -q -r "$Root\requirements.txt" "pyinstaller>=6.0,<7"
+& $Py "$Root\packaging\write_expire.py"
 & $Py -m PyInstaller --noconfirm --clean `
   --distpath "$Root\dist" `
   --workpath "$Root\build\pyinstaller" `

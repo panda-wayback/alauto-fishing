@@ -61,16 +61,9 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.ui:
-        from PySide6.QtWidgets import QApplication, QStyleFactory
-        from tools.preview_app import PreviewApp
+        from tools.preview_app import launch_ui
 
-        app = QApplication.instance() or QApplication(sys.argv)
-        fusion = QStyleFactory.create("Fusion")
-        if fusion is not None:
-            app.setStyle(fusion)
-        win = PreviewApp(roi_path=args.roi)
-        win.show()
-        return app.exec()
+        return launch_ui(roi_path=args.roi)
 
     if args.image is not None:
         from PIL import Image
