@@ -1,10 +1,17 @@
-"""构建时按 ALBN_EXPIRE_DAYS 写入 assets/expire.json。"""
+"""Build helper: write assets/expire.json from ALBN_EXPIRE_DAYS."""
 
 from __future__ import annotations
 
 import os
 import sys
 from pathlib import Path
+
+# Windows CI often uses cp1252 stdout; force UTF-8 to avoid UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")  # type: ignore[attr-defined]
+    except Exception:
+        pass
 
 _SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_SRC) not in sys.path:
