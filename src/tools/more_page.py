@@ -20,6 +20,9 @@ from tools.dual_range_axis import SingleRangeBar
 from tools.shell_config import is_frozen_app
 from tools.shell_theme import TEXT_MUTED
 
+from common.expire import load_expire_on
+from common.license import load_license
+
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
 
@@ -67,7 +70,23 @@ def build_more_page(host: "PreviewApp") -> QWidget:
     row_perm.addStretch(1)
     perm_l.addLayout(row_perm)
     more_l.addWidget(perm)
-    
+
+    validity = QGroupBox("有效期")
+    validity_l = QVBoxLayout(validity)
+
+    lic = load_license()
+    if lic is not None:
+        lbl_lic = QLabel(f"授权有效至 {lic.expire_on.isoformat()}")
+    else:
+        lbl_lic = QLabel("授权有效至 —")
+    validity_l.addWidget(lbl_lic)
+    pkg_on = load_expire_on()
+    if pkg_on is not None:
+        lbl_pkg = QLabel(f"本安装包到期 {pkg_on.isoformat()}")
+        lbl_pkg.setStyleSheet(f"color:{TEXT_MUTED};")
+        validity_l.addWidget(lbl_pkg)
+    more_l.addWidget(validity)
+
     click = QGroupBox("开钓第一下")
     click_l = QVBoxLayout(click)
     hint_click = QLabel(

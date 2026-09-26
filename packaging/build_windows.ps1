@@ -35,4 +35,4 @@ Write-Host "Dist: $($env:ALBN_DIST_NAME)  suffix=$($env:ALBN_BUILD_SUFFIX)"
 $Out = Join-Path $Root "dist\$($env:ALBN_DIST_NAME)"
 Set-Content -Path (Join-Path $Root "dist\.build_suffix") -Value $env:ALBN_BUILD_SUFFIX -NoNewline
 Set-Content -Path (Join-Path $Root "dist\.build_windows_name") -Value $env:ALBN_DIST_NAME -NoNewline
-Write-Host "输出: $Out\"
+Write-Host "out: $Out\"

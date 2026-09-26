@@ -48,3 +48,17 @@ def data_root() -> Path:
 
 def assets_dir() -> Path:
     return bundle_root() / "assets"
+
+
+@lru_cache(maxsize=1)
+def user_state_root() -> Path:
+    """与安装目录/仓库分离的持久用户状态（授权台账等）。源码与冻结共用同一位置。"""
+    if sys.platform == "darwin":
+        root = Path.home() / "Library" / "Application Support" / "albn-autofish"
+    elif sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or str(Path.home() / "AppData" / "Local")
+        root = Path(base) / "albn-autofish"
+    else:
+        root = Path.home() / ".local" / "share" / "albn-autofish"
+    root.mkdir(parents=True, exist_ok=True)
+    return root

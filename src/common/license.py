@@ -11,12 +11,13 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from pathlib import Path
 
-from common.paths import data_root
+from common.paths import data_root, user_state_root
 
 # 半套共享密钥：生成器与客户端相同；后续服务器可改为非对称 v2
 _HMAC_SECRET = b"albn-autofish-license-hmac-v1"
 _PREFIX = "ALBN1"
 _LICENSE_NAME = "license.json"
+_LEDGER_NAME = "license_ledger.json"
 
 
 def _b64url_encode(raw: bytes) -> str:
@@ -34,7 +35,11 @@ def _sign(payload_b64: str) -> str:
 
 
 def license_path() -> Path:
-    return data_root() / _LICENSE_NAME
+    return user_state_root() / _LICENSE_NAME
+
+
+def ledger_path() -> Path:
+    return user_state_root() / _LEDGER_NAME
 
 
 @dataclass(frozen=True)
@@ -85,16 +90,7 @@ def parse_key(key: str) -> dict:
     return body
 
 
-def load_license() -> LicenseInfo | None:
-    path = license_path()
-    if not path.is_file():
-        return None
-    try:
-        raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        return None
-    if not isinstance(raw, dict):
-        return None
+def _info_from_raw(raw: dict) -> LicenseInfo | None:
     try:
         return LicenseInfo(
             days=int(raw["days"]),
@@ -106,16 +102,105 @@ def load_license() -> LicenseInfo | None:
         return None
 
 
-def save_license(info: LicenseInfo) -> Path:
-    path = license_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
+def _info_to_raw(info: LicenseInfo) -> dict:
+    return {
         "days": info.days,
         "activated_on": info.activated_on.isoformat(),
         "expire_on": info.expire_on.isoformat(),
         "key_fp": info.key_fp,
     }
-    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def _load_ledger() -> dict[str, dict]:
+    path = ledger_path()
+    if not path.is_file():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    keys = raw.get("keys")
+    if not isinstance(keys, dict):
+        return {}
+    out: dict[str, dict] = {}
+    for fp, entry in keys.items():
+        if isinstance(fp, str) and isinstance(entry, dict):
+            out[fp] = entry
+    return out
+
+
+def _save_ledger(keys: dict[str, dict]) -> None:
+    path = ledger_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"keys": keys}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _ledger_get(fp: str) -> LicenseInfo | None:
+    entry = _load_ledger().get(fp)
+    if entry is None:
+        return None
+    info = _info_from_raw({**entry, "key_fp": fp})
+    return info
+
+
+def _ledger_put(info: LicenseInfo) -> None:
+    keys = _load_ledger()
+    keys[info.key_fp] = _info_to_raw(info)
+    _save_ledger(keys)
+
+
+def _migrate_legacy_license() -> None:
+    """旧版写在 data_root/license.json 时迁到用户状态目录（仅当新位置尚无）。"""
+    new_path = license_path()
+    if new_path.is_file():
+        return
+    legacy = data_root() / _LICENSE_NAME
+    if not legacy.is_file():
+        return
+    try:
+        raw = json.loads(legacy.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return
+    if not isinstance(raw, dict):
+        return
+    info = _info_from_raw(raw)
+    if info is None:
+        return
+    save_license(info)
+    if info.key_fp and _ledger_get(info.key_fp) is None:
+        _ledger_put(info)
+    try:
+        legacy.unlink()
+    except OSError:
+        pass
+
+
+def load_license() -> LicenseInfo | None:
+    _migrate_legacy_license()
+    path = license_path()
+    if not path.is_file():
+        return None
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    return _info_from_raw(raw)
+
+
+def save_license(info: LicenseInfo) -> Path:
+    path = license_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(_info_to_raw(info), ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
     return path
 
 
@@ -125,15 +210,21 @@ def is_licensed(*, today: date | None = None) -> bool:
 
 
 def activate_key(key: str, *, today: date | None = None) -> LicenseInfo:
-    """验签并写入 license；返回新 license。"""
+    """验签；首次激活起算天数，同密钥再激活沿用首次到期。"""
     body = parse_key(key)
     days = int(body["days"])
-    activated = today or date.today()
-    info = LicenseInfo(
-        days=days,
-        activated_on=activated,
-        expire_on=activated + timedelta(days=days),
-        key_fp=key_fingerprint(key),
-    )
+    fp = key_fingerprint(key)
+    prior = _ledger_get(fp)
+    if prior is not None:
+        info = prior
+    else:
+        activated = today or date.today()
+        info = LicenseInfo(
+            days=days,
+            activated_on=activated,
+            expire_on=activated + timedelta(days=days),
+            key_fp=fp,
+        )
+        _ledger_put(info)
     save_license(info)
     return info

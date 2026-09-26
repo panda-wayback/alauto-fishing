@@ -25,10 +25,10 @@ def main() -> int:
     ap.add_argument("--count", type=int, default=1, help="生成条数")
     args = ap.parse_args()
     if args.days <= 0:
-        print("days 须为正整数", file=sys.stderr)
+        print("days must be a positive integer", file=sys.stderr)
         return 2
     if args.count <= 0:
-        print("count 须为正整数", file=sys.stderr)
+        print("count must be a positive integer", file=sys.stderr)
         return 2
     for i in range(args.count):
         key = issue_key(args.days)

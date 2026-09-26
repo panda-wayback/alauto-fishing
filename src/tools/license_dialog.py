@@ -63,6 +63,11 @@ class LicenseDialog(QDialog):
         except ValueError as exc:
             self._status.setText(str(exc))
             return
+        if not info.is_valid():
+            self._status.setText(
+                f"该密钥已于 {info.expire_on.isoformat()} 到期，请使用新密钥。"
+            )
+            return
         QMessageBox.information(
             self,
             "激活成功",

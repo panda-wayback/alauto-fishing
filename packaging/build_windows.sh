@@ -38,11 +38,11 @@ restore_data() {
     mkdir -p "$ROOT/dist/${ALBN_DIST_NAME}"
     rm -rf "$DATA_DIR"
     mv "$DATA_BAK" "$DATA_DIR"
-    echo "已恢复用户数据: $DATA_DIR"
+    echo "restored user data: $DATA_DIR"
   fi
 }
 if [[ -d "$DATA_BAK" ]]; then
-  echo "发现上次未恢复的备份 $DATA_BAK，请先手动处理后再打包" >&2
+  echo "leftover backup $DATA_BAK — resolve manually before rebuild" >&2
   exit 1
 fi
 if [[ -d "$DATA_DIR" ]]; then
@@ -59,7 +59,7 @@ trap restore_data EXIT
 OUT="$ROOT/dist/${ALBN_DIST_NAME}"
 printf '%s\n' "$ALBN_BUILD_SUFFIX" >"$ROOT/dist/.build_suffix"
 printf '%s\n' "$ALBN_DIST_NAME" >"$ROOT/dist/.build_windows_name"
-echo "输出: $OUT/"
+echo "out: $OUT/"
 if [[ -d "$OUT" ]]; then
   du -sh "$OUT" 2>/dev/null || powershell.exe -NoProfile -Command \
     "(Get-ChildItem -LiteralPath '$OUT' -Recurse -File | Measure-Object Length -Sum).Sum / 1MB"
