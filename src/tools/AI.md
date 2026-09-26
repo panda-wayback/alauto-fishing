@@ -10,9 +10,9 @@
 
 - `preview_app.py` — 调试壳主窗；`launch_ui`（包到期+密钥门禁）
 - `license_dialog.py` — 激活密钥对话框
-- `main_page.py` — 主控页 builder
+- `main_page.py` — 主控页 builder（顶栏授权倒计时 天时分秒 / A/B / 读数 / 日志）
 - `calibrate_page.py` — 拉漂配置页 builder（ROI / MONITOR / BAR / 策略）
-- `more_page.py` — 更多页 builder（权限 / 有效期 / 开钓时间 / 打包默认）
+- `more_page.py` — 更多页 builder（权限 / 可选安装包到期 / 开钓时间 / 打包默认）
 - `image_canvas.py` — MONITOR 画布 + 漂/条叠层
 - `sound_panel.py` — 开钓配置：设备 / 监听 / 模板 / 阈值 / 实时波形
 - `backtest_panel.py` — 回测：长录音 / 会话 / 模板库 / 波形

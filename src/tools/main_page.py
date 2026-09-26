@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -18,13 +18,27 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.shell_theme import DANGER, TEXT_FAINT, TEXT_MUTED
+from tools.shell_theme import ACCENT, ACCENT_DIM, DANGER, TEXT_FAINT, TEXT_MUTED
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
 
+_STYLE_OK = (
+    f"font-size:11px; font-weight:700; color:{ACCENT}; "
+    f"padding:5px 8px; border:1px solid {ACCENT_DIM}; border-radius:4px; "
+    f"background-color: rgba(61,184,160,0.12);"
+)
+_STYLE_WARN = (
+    f"font-size:11px; font-weight:700; color:{DANGER}; "
+    f"padding:5px 8px; border:1px solid {DANGER}; border-radius:4px; "
+    f"background-color: rgba(217,107,107,0.12);"
+)
+
 
 def build_main_page(host: "PreviewApp") -> QWidget:
+    from common.license import load_license
+    from datetime import datetime, time
+
     # —— 主控 ——
     page_main = QWidget()
     main_root = QVBoxLayout(page_main)
@@ -37,6 +51,41 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     main_l = QVBoxLayout(main_top)
     main_l.setContentsMargins(0, 0, 0, 0)
     main_l.setSpacing(8)
+
+    host.lbl_license = QLabel("")
+    host.lbl_license.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host.lbl_license.setStyleSheet(_STYLE_OK)
+    main_l.addWidget(host.lbl_license)
+
+    def _refresh_license_banner() -> None:
+        lic = load_license()
+        if lic is None:
+            host.lbl_license.setText("未授权")
+            host.lbl_license.setToolTip("")
+            host.lbl_license.setStyleSheet(_STYLE_WARN)
+            return
+        deadline = datetime.combine(lic.expire_on, time.min)
+        secs = int((deadline - datetime.now()).total_seconds())
+        host.lbl_license.setToolTip(f"到期：{lic.expire_on.isoformat()} 0:00")
+        if secs <= 0:
+            host.lbl_license.setText("授权已到期")
+            host.lbl_license.setStyleSheet(_STYLE_WARN)
+            return
+        days, rem = divmod(secs, 86400)
+        hours, rem = divmod(rem, 3600)
+        mins, sec = divmod(rem, 60)
+        host.lbl_license.setText(
+            f"授权剩余 {days} 天 {hours:02d}:{mins:02d}:{sec:02d}"
+        )
+        # 不足 3 天提醒
+        host.lbl_license.setStyleSheet(_STYLE_WARN if secs <= 3 * 86400 else _STYLE_OK)
+
+    host._refresh_license_banner = _refresh_license_banner
+    host._license_timer = QTimer(host)
+    host._license_timer.timeout.connect(_refresh_license_banner)
+    host._license_timer.start(1000)
+    _refresh_license_banner()
+
     switches = QGroupBox("开关")
     sw = QVBoxLayout(switches)
     sw.setSpacing(8)

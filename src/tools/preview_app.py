@@ -1372,6 +1372,9 @@ class PreviewApp(QMainWindow):
             self._pipe.stop()
             self._pipe = None
         self._timer.stop()
+        if getattr(self, "_license_timer", None) is not None:
+            self._license_timer.stop()
+        self._perm_timer.stop()
         super().closeEvent(event)
 
 
