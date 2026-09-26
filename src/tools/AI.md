@@ -20,7 +20,7 @@
 - `busy_worker.py` — 后台任务线程 + 等待条
 - `shell_log.py` — 各页本地日志（最新在上）
 - `status_hud.py` — `StatusHudPanel`（紧凑态内容：阶段灯 + 主界面）
-- `macos_overlay.py` — macOS 抬窗层级 / 加入全屏 Space（紧凑态叠游戏）
+- `macos_overlay.py` — macOS 抬窗层级 / 全屏 Space；隐藏黄钮最小化
 - `shell_theme.py` — 柔暗色板 + `global_qss()` / `preview_canvas_qss()`
 - `shell_config.py` — 用户 `data/shell_settings.json` + 打包默认 `assets/shell_settings.json`；「写入打包默认」
 - `bar_mark_canvas.py` — 条界参考图 + 程序/手动竖线

@@ -77,7 +77,11 @@ from tools.shell_theme import (
     WARN,
     global_qss,
 )
-from tools.macos_overlay import elevate_over_fullscreen, restore_window_level
+from tools.macos_overlay import (
+    elevate_over_fullscreen,
+    hide_miniaturize_button,
+    restore_window_level,
+)
 from tools.status_hud import StatusHudPanel
 from tools.shell_log import append_log
 from tools.image_canvas import overlay_hit
@@ -117,6 +121,8 @@ class PreviewApp(QMainWindow):
         self.setWindowFlag(
             Qt.WindowType.WindowStaysOnTopHint, bool(self._settings.stay_on_top)
         )
+        # 去掉最小化：置顶时系统最小化不可靠，隐藏按钮避免点了没反应
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
 
         self.roi_path = roi_path
         self.roi: Roi | None = None
@@ -175,6 +181,14 @@ class PreviewApp(QMainWindow):
         self._perm_timer.timeout.connect(self._refresh_permissions)
         self._perm_timer.start(2000)
         self._refresh_permissions()
+        QTimer.singleShot(0, self._apply_no_minimize)
+
+    def _apply_no_minimize(self) -> None:
+        """隐藏最小化：Qt 旗标 + macOS 清 Miniaturizable（延迟再刷，防标题栏重建）。"""
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
+        hide_miniaturize_button(self)
+        QTimer.singleShot(50, lambda: hide_miniaturize_button(self))
+        QTimer.singleShot(200, lambda: hide_miniaturize_button(self))
 
     def _build_ui(self) -> None:
         root = QWidget()
@@ -503,9 +517,11 @@ class PreviewApp(QMainWindow):
             self.move(anchor)
             # 紧凑态强制置顶；macOS 再抬原生层级以便压过全屏游戏
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+            self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
             self.show()
             self._refresh_hud_steady()
             QTimer.singleShot(0, self._apply_compact_overlay)
+            QTimer.singleShot(0, self._apply_no_minimize)
         else:
             if self._compact:
                 self._settings.hud_x = self.x()
@@ -525,10 +541,12 @@ class PreviewApp(QMainWindow):
                 Qt.WindowType.WindowStaysOnTopHint,
                 bool(self.chk_stay_on_top.isChecked()),
             )
+            self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
             self.show()
             self.raise_()
             self.activateWindow()
             QTimer.singleShot(0, self._restore_normal_overlay)
+            QTimer.singleShot(0, self._apply_no_minimize)
         if persist:
             self._persist_settings()
 
@@ -537,6 +555,7 @@ class PreviewApp(QMainWindow):
             return
         self.raise_()
         elevate_over_fullscreen(self)
+        hide_miniaturize_button(self)
 
     def _restore_normal_overlay(self) -> None:
         if self._compact:
@@ -544,6 +563,7 @@ class PreviewApp(QMainWindow):
         restore_window_level(
             self, floating=bool(self.chk_stay_on_top.isChecked())
         )
+        hide_miniaturize_button(self)
 
     def _refresh_hud_steady(self) -> None:
         hud = getattr(self, "_hud", None)
@@ -627,8 +647,10 @@ class PreviewApp(QMainWindow):
     def _on_stay_on_top_toggled(self, checked: bool) -> None:
         was_visible = self.isVisible()
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
         if was_visible:
             self.show()
+        QTimer.singleShot(0, self._apply_no_minimize)
         self._persist_settings()
 
     def _on_save_bundled_defaults(self) -> None:
