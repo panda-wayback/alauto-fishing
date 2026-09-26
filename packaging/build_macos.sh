@@ -41,6 +41,12 @@ export ALBN_APP_NAME
 echo "Using: $PY"
 echo "Bundle: ${ALBN_BUNDLE_ID:-com.albn.autofish}  App: $ALBN_APP_NAME  suffix=$ALBN_BUILD_SUFFIX"
 "$PY" -m pip install -q -r "$ROOT/requirements.txt" "pyinstaller>=6.0,<7"
+# 壳包不需要模拟器：打包前卸掉，避免捞进产物；结束后装回
+"$PY" -m pip uninstall -y pygame 2>/dev/null || true
+restore_pygame() {
+  "$PY" -m pip install -q 'pygame>=2.6.0,<3' 2>/dev/null || true
+}
+trap restore_pygame EXIT
 "$PY" -m PyInstaller --noconfirm --clean \
   --distpath "$ROOT/dist" \
   --workpath "$ROOT/build/pyinstaller" \
@@ -49,25 +55,12 @@ echo "Bundle: ${ALBN_BUNDLE_ID:-com.albn.autofish}  App: $ALBN_APP_NAME  suffix=
 OUT_APP="$ALBN_APP_NAME"
 APP_PATH="$ROOT/dist/$OUT_APP"
 
-# 兜底：若环境仍残留完整 PySide6，删掉未使用的重量级 Qt 组件
 if [[ -d "$APP_PATH" ]]; then
-  while IFS= read -r -d '' p; do
-    rm -rf "$p"
-  done < <(find "$APP_PATH" \( \
-      -iname '*WebEngine*' -o \
-      -iname '*Qt3D*' -o \
-      -iname '*QtQuick*' -o \
-      -iname '*QtQml*' -o \
-      -iname 'Designer.app' -o \
-      -iname 'Linguist.app' -o \
-      -iname 'Assistant.app' \
-    \) -print0 2>/dev/null || true)
-  # 供 CI 读取
+  bash "$ROOT/packaging/trim_bundle.sh" "$APP_PATH"
   printf '%s\n' "$ALBN_BUILD_SUFFIX" >"$ROOT/dist/.build_suffix"
   printf '%s\n' "$OUT_APP" >"$ROOT/dist/.build_macos_name"
   echo "输出: $APP_PATH"
-  du -sh "$APP_PATH" || true
-  echo "--- 体积 Top（Frameworks / MacOS）---"
+  echo "--- 体积 Top（Frameworks）---"
   du -sh "$APP_PATH/Contents/Frameworks"/* 2>/dev/null | sort -hr | head -n 20 || true
 else
   echo "输出缺失: $APP_PATH" >&2

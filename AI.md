@@ -24,7 +24,7 @@ Albion 拉鱼：**模拟器**测算法 + **真机自动拉鱼**。方案索引�
 | `src/common/pubsub/` | 进程内 EventBus → `src/common/pubsub/AI.md` |
 | `src/autofish/` | 真机五段实现 → `src/autofish/AI.md` |
 | `src/tools/` | 调试壳（PySide6）→ `src/tools/AI.md` |
-| `packaging/` | macOS .app / Windows onedir；产物名带唯一后缀；`PySide6-Essentials` + `pyi_trim` |
+| `packaging/` | macOS .app / Windows onedir；产物名带唯一后缀；`PySide6-Essentials` + `pyi_trim` / `trim_bundle` |
 | `.github/workflows/release.yml` | tag 触发双端构建并上传 Release |
 | `run_preview_ui.py` | 单文件入口（等价 preview --ui） |
 | `assets/` | 运行时素材与几何 metrics；含默认水花模板 `audio/*.npy`；壳打包默认 `shell_settings.json` |
