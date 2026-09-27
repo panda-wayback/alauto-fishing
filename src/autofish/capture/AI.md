@@ -14,12 +14,12 @@
 ## 对外契约
 
 - `CaptureWorker.start/stop` — 订 ROI；无 ROI 不截
-- `grab_roi(roi) -> RGB`；`warmup()` 冷启动预热
+- `grab_roi(roi) -> RGB`（物理像素）；`roi_frame_size(roi)` 帧物理宽高；`warmup()` 冷启动预热
 - `grab_primary` / `save_screen` / `load_screen` / `DEFAULT_SCREEN_PATH` — 壳手框标定用
 - `ScreenGrab` — 主屏抓取载荷
 
 ## 约束
 
 - `mss` 每线程独立实例（Windows 禁止跨线程复用同一 sct）。
-- 帧宽高 = 手框；不改 ROI、不识图、不点鼠标。
+- ROI 逻辑点；帧 = 物理像素，禁止缩回逻辑点；不改 ROI、不识图、不点鼠标。
 - 依赖 `locate.Roi`；禁止依赖 `detect` / `decide` / `act`。

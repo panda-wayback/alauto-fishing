@@ -361,7 +361,8 @@ class BobberAnchorDetector:
             ),
             key=lambda s: abs(s - s_nom),
         )
-        max_half = min(max(180.0, bh * 11.0), 400.0)
+        # 条宽≈漂身高×10.5；漂在条一端时另一端也须够得着
+        max_half = max(180.0, bh * 12.0)
         thr = self.endcap_min_score - 0.08
         # (dist, -rank, sc, rank, ax, ay, w, h, orange_frac)
         cands: list[tuple[float, float, float, float, int, int, int, int, float]] = []

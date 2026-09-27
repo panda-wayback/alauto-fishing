@@ -15,7 +15,7 @@
 - `Roi` / `load_roi` / `save_roi` / `DEFAULT_ROI_PATH`
 - `ROI_SOURCE_DEFAULT` / `ROI_SOURCE_MANUAL` / `load_roi_source`
 - `default_center_roi` / `primary_screen_size`
-- `BarMark` / `load_bar_mark` / `clear_bar_mark` / `bar_ref_path` / `clear_bar_ref`
+- `BarMark`（含 `frame_width` / `box_for_frame`）/ `load_bar_mark` / `clear_bar_mark` / `bar_ref_path` / `clear_bar_ref`
 - 无自动找绿 Worker；ROI 变更由壳 / `AutofishPipeline.set_roi_manual` 发布
 
 ## 约束
@@ -23,3 +23,4 @@
 - 手框唯一决定 mss 范围；本段不截屏、不识图、不点鼠标。
 - 存盘 `source=manual|default`；手动优先；无存盘/恢复默认 → 主屏居中 1/4×1/4。
 - 重框 / 清空 ROI 须同步清手动条界与参考图。
+- 条界存 Frame 坐标 + 标定帧宽；帧宽变化按比例换算（老存盘按 ROI 逻辑宽）。

@@ -34,6 +34,7 @@ from autofish.capture.screen import (
     ScreenGrab,
     grab_primary,
     load_screen,
+    roi_frame_size,
     save_screen,
 )
 from autofish.locate.roi import (
@@ -762,7 +763,10 @@ class PreviewApp(QMainWindow):
 
     def _apply_saved_bar_mark(self) -> None:
         mark = load_bar_mark(self.roi_path)
-        box = mark.as_box() if mark is not None else None
+        box = None
+        if mark is not None and self.roi is not None:
+            fw, _fh = roi_frame_size(self.roi)
+            box = mark.box_for_frame(fw, self.roi.width)
         apply_manual_bar(box)
         self.bar_canvas.set_manual_bar(box)
 
@@ -778,6 +782,10 @@ class PreviewApp(QMainWindow):
             if bgr is None:
                 return
             rgb = np.ascontiguousarray(bgr[:, :, ::-1])
+            if self.roi is not None:
+                fw, fh = roi_frame_size(self.roi)
+                if rgb.shape[1] != fw or rgb.shape[0] != fh:
+                    rgb = cv2.resize(rgb, (fw, fh), interpolation=cv2.INTER_LINEAR)
             self.bar_canvas.set_rgb(rgb)
             self._bar_ref_saved = True
             det = get_detector()
@@ -836,11 +844,13 @@ class PreviewApp(QMainWindow):
             apply_manual_bar(None)
             return
         left, top, bw, bh = box  # type: ignore[misc]
+        fw, _fh = roi_frame_size(self.roi)
         mark = BarMark(
             left=float(left),
             right=float(left) + float(bw),
             top=float(top),
             height=float(bh),
+            frame_width=float(fw),
         )
         save_roi(self.roi, self.roi_path, bar=mark)
         apply_manual_bar(mark.as_box())
