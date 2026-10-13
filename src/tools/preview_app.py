@@ -148,6 +148,9 @@ class PreviewApp(QMainWindow):
         self._backtest_panel: AudioBacktestPanel | None = None
         self._bar_ref_saved = False
         self._bar_ref_wait_bobber = False
+        # 框选期间暂停 Act：停监控后 FSM 可能卡在 FISHING，Windows 上
+        # pynput 合成左键按住会导致「确认框选」点不动。
+        self._act_paused_for_select = False
         self._bridge = BusBridge()
         self._bridge.frame.connect(self._on_frame_ui)
         self._bridge.pos.connect(self._on_pos_ui)
@@ -758,6 +761,7 @@ class PreviewApp(QMainWindow):
         self._sync_buttons()
         self._refresh_monitor()
         self._ensure_monitor_on()
+        self._resume_input_after_select()
         self.lbl_hint.setText("已恢复默认框 · 监控中")
         self._cal_log("已恢复默认居中框并开监控")
 
@@ -1304,7 +1308,29 @@ class PreviewApp(QMainWindow):
             self.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
             self._mouse_mismatch_logged = False
 
+    def _pause_input_for_select(self) -> None:
+        """框选期间停 Act 并松键（Windows 合成左键按住会吞掉确认点击）。"""
+        pipe = self._pipe
+        if pipe is not None and pipe.act_on:
+            pipe.stop_act()
+            self._act_paused_for_select = True
+            self._cal_log("框选中 · 已暂停控鼠")
+        # 已暂停则保持标志，避免重入把恢复机会清掉
+
+    def _resume_input_after_select(self) -> None:
+        """框选结束：若进入前开着自动拉漂，则恢复 Act。"""
+        if not self._act_paused_for_select:
+            return
+        self._act_paused_for_select = False
+        if not self.chk_b.isChecked():
+            return
+        pipe = self._ensure_pipe()
+        if not pipe.act_on:
+            pipe.start_act()
+            self._cal_log("框选结束 · 已恢复控鼠")
+
     def _capture_fullscreen(self) -> None:
+        self._pause_input_for_select()
         if self._pipe and self._pipe.monitor_on:
             self._pipe.stop_monitor()
             self._cal_log("暂停截图 · 准备框选")
@@ -1320,11 +1346,13 @@ class PreviewApp(QMainWindow):
             self.lbl_hint.setText("拖拽框选张力条 → 确认框选")
             self._cal_log("已截全屏 · 请手框 ROI")
         except Exception as exc:  # noqa: BLE001
+            self._resume_input_after_select()
             self.lbl_hint.setText(f"截图失败：{exc}")
             QMessageBox.warning(self, "截屏失败", str(exc))
         self._sync_buttons()
 
     def _load_screen_for_select(self) -> None:
+        self._pause_input_for_select()
         if self._pipe and self._pipe.monitor_on:
             self._pipe.stop_monitor()
             self.frame = None
@@ -1338,23 +1366,29 @@ class PreviewApp(QMainWindow):
             self.monitor.set_selecting(True)
             self.lbl_hint.setText("拖拽框选 → 确认框选")
         except Exception as exc:  # noqa: BLE001
+            self._resume_input_after_select()
             self.lbl_hint.setText(f"读截图失败：{exc}")
         self._sync_buttons()
 
     def _confirm_selection(self) -> None:
         sel = self.monitor.selection_in_image()
         if sel is None or self.screen_grab is None:
-            self.lbl_hint.setText("框太小")
+            self.lbl_hint.setText("框太小或未拖出有效选区")
             return
         left, top, w, h = sel
         g = self.screen_grab
-        roi = Roi(
-            left=g.origin_left + left,
-            top=g.origin_top + top,
-            width=w,
-            height=h,
-        )
-        save_roi(roi, self.roi_path, source=ROI_SOURCE_MANUAL)
+        try:
+            roi = Roi(
+                left=g.origin_left + left,
+                top=g.origin_top + top,
+                width=w,
+                height=h,
+            )
+            save_roi(roi, self.roi_path, source=ROI_SOURCE_MANUAL)
+        except Exception as exc:  # noqa: BLE001
+            self.lbl_hint.setText(f"确认失败：{exc}")
+            QMessageBox.warning(self, "确认框选", str(exc))
+            return
         self._clear_bar_on_rebox()
         self.roi = roi
         self.phase = READY
@@ -1365,6 +1399,7 @@ class PreviewApp(QMainWindow):
         self._sync_buttons()
         self._refresh_monitor()
         self._ensure_monitor_on()
+        self._resume_input_after_select()
 
     def _ensure_monitor_on(self) -> None:
         """有 ROI 则常开 Capture+Detect。"""
@@ -1386,6 +1421,7 @@ class PreviewApp(QMainWindow):
         self._refresh_monitor()
         if self.roi is not None:
             self._ensure_monitor_on()
+        self._resume_input_after_select()
 
     def closeEvent(self, event) -> None:  # noqa: N802
         if self._persist_timer.isActive():

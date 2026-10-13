@@ -26,8 +26,7 @@ class Roi:
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
             raise ValueError("ROI width/height must be positive")
-        if self.left < 0 or self.top < 0:
-            raise ValueError("ROI left/top must be >= 0")
+        # left/top 可为负：多屏虚拟桌面原点左侧/上方的显示器
 
     def as_mss(self) -> dict[str, int]:
         return {

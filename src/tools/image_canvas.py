@@ -163,9 +163,10 @@ class ImageCanvas(QLabel):
         x = int((pos.x() - self._offset.x()) / self._scale)
         y = int((pos.y() - self._offset.y()) / self._scale)
         h, w = self._rgb.shape[:2]
-        if x < 0 or y < 0 or x >= w or y >= h:
+        # 落在 letterbox / 边缘外时钳到图内，避免确认时整框被判无效
+        if w <= 0 or h <= 0:
             return None
-        return x, y
+        return max(0, min(w - 1, x)), max(0, min(h - 1, y))
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
         if self._selecting and event.button() == Qt.MouseButton.LeftButton:
