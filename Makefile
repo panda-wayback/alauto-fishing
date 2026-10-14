@@ -22,7 +22,7 @@ VERSION ?=
 DAYS ?= 30
 COUNT ?= 1
 
-.PHONY: help install sim preview algo \
+.PHONY: help install install-dev test sim preview algo \
 	license-ui gen-license \
 	build-macos build-macos-dev build-license-macos build-windows \
 	open-app open-app-dev open-license-app \
@@ -33,6 +33,8 @@ help:
 	@echo ""
 	@echo "运行"
 	@echo "  make install         安装 requirements.txt"
+	@echo "  make install-dev     安装 requirements-dev.txt（含 pytest）"
+	@echo "  make test            运行全部 Module 测试（M=src/sim 只跑一个 Module）"
 	@echo "  make sim             启动模拟器 (main.py)"
 	@echo "  make preview         启动真机预览壳 (--ui)"
 	@echo "  make algo            无头跑策略 (tier=4 episodes=50)"
@@ -63,11 +65,19 @@ help:
 install:
 	$(PY) -m pip install -r $(ROOT)/requirements.txt
 
+install-dev:
+	$(PY) -m pip install -r $(ROOT)/requirements-dev.txt
+
+# M=src/autofish/decide 只跑该 Module（含其子目录）
+M ?=
+test:
+	cd $(ROOT) && $(PY) -m pytest $(M)
+
 sim:
 	$(PY) $(ROOT)/main.py
 
 preview:
-	$(PY) -m autofish.preview --ui
+	$(PY) -m tools.preview_app
 
 algo:
 	$(PY) -m algo --tier 4 --episodes 50

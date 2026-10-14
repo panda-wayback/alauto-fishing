@@ -1,0 +1,225 @@
+name: common
+function: 无业务通用库：路径、运行权限、包到期、密钥授权
+modules:
+  - path: pubsub
+    function: 进程内线程安全的发布/订阅总线，不含业务主题
+input:
+  # ---- 路径 ----
+  - name: common.paths.bundle_root()
+    type: 无参
+    desc: 取只读资源根目录
+  - name: common.paths.assets_dir()
+    type: 无参
+    desc: 取只读资源目录 assets/
+  - name: common.paths.data_root()
+    type: 无参
+    desc: 取可写数据目录 data/
+  - name: common.paths.user_state_root()
+    type: 无参
+    desc: 取与安装目录 / 仓库分离的持久用户状态目录
+  # ---- 运行权限 ----
+  - name: common.permissions.current_status()
+    type: 无参
+    desc: 查询当前平台截屏 / 控鼠权限快照（只读，不弹窗）
+  - name: common.permissions.request_screen_access()
+    type: 无参
+    desc: 引导截屏授权（macOS 请求屏幕录制并打开系统设置；Windows 做一次测试截屏）
+  - name: common.permissions.request_input_access()
+    type: 无参
+    desc: 引导控鼠授权（macOS 弹辅助功能授权并打开系统设置；Windows 非管理员时请求提权重启）
+  - name: common.permissions.reset_macos_tcc(bundle_ids=None)
+    type: "bundle_ids: tuple[str, ...] | None；None 用 (\"com.albn.autofish\", \"com.albn.autofish.dev\")"
+    desc: macOS 对各 bundle id 执行 tccutil reset Accessibility / ScreenCapture，并打开屏幕录制与辅助功能设置页
+  - name: common.permissions.restart_as_admin()
+    type: 无参
+    desc: Windows 以管理员（UAC runas）重新启动当前进程，沿用 sys.argv[1:]
+  # ---- 打包到期 ----
+  - name: common.expire.write_expire_from_days(days, built_on=None)
+    type: "days: int（>0）; built_on: datetime.date | None（默认今天）"
+    desc: 构建用，把 built_on + days 天的到期日写入 assets/expire.json
+  - name: common.expire.clear_expire_file()
+    type: 无参
+    desc: 删除 assets/expire.json；不存在时静默
+  - name: common.expire.load_expire_on()
+    type: 无参
+    desc: 读取本包到期日
+  - name: common.expire.is_expired(today=None)
+    type: "today: datetime.date | None（默认本机本地今天）"
+    desc: 判断本包是否已到期
+  - name: common.expire.expire_message()
+    type: 无参
+    desc: 取给用户看的过期提示句
+  - name: common.expire.install_root()
+    type: 无参
+    desc: 取冻结包安装根目录（try_self_delete 删除的目标）
+  - name: common.expire.try_self_delete()
+    type: 无参
+    desc: 尽力删除冻结包安装根目录
+  # ---- 密钥授权 ----
+  - name: common.license.issue_key(days)
+    type: "days: int（>0）"
+    desc: 生成器侧按天数签发离线密钥
+  - name: common.license.parse_key(key)
+    type: "key: str"
+    desc: 验签并解析密钥（不写盘）
+  - name: common.license.key_fingerprint(key)
+    type: "key: str"
+    desc: 计算密钥指纹（台账键）
+  - name: common.license.activate_key(key, today=None)
+    type: "key: str; today: datetime.date | None（默认今天）"
+    desc: 验签并激活密钥，写入当前授权与首次激活台账
+  - name: common.license.is_licensed(today=None)
+    type: "today: datetime.date | None（默认今天）"
+    desc: 当前授权是否有效
+  - name: common.license.load_license()
+    type: 无参
+    desc: 读取当前授权（供界面展示到期日）
+  - name: LicenseInfo.is_valid(today=None)
+    type: "today: datetime.date | None（默认今天）"
+    desc: 该授权在 today 是否有效
+output:
+  - name: common.paths.bundle_root()
+    type: pathlib.Path
+    desc: 冻结（sys.frozen 且有 sys._MEIPASS）时为 sys._MEIPASS；否则为仓库根（含 src/ 的目录）
+  - name: common.paths.assets_dir()
+    type: pathlib.Path
+    desc: bundle_root() / "assets"
+  - name: common.paths.data_root()
+    type: pathlib.Path
+    desc: 源码运行为 bundle_root() / "data"；冻结时见 contract
+  - name: common.paths.user_state_root()
+    type: pathlib.Path
+    desc: "macOS ~/Library/Application Support/albn-autofish；Windows %LOCALAPPDATA%\\albn-autofish（未设则 ~/AppData/Local/albn-autofish）；其它 ~/.local/share/albn-autofish"
+  - name: common.permissions.current_status()
+    type: "PermissionStatus(platform: str, screen_ok: bool | None, screen_label: str, input_ok: bool | None, input_label: str, is_admin: bool | None)"
+    desc: 不可变快照；None 表示未知 / 不适用；label 为给用户看的中文短句
+  - name: common.permissions.request_screen_access() / request_input_access() / reset_macos_tcc(...)
+    type: str
+    desc: 给用户看的中文结果短句
+  - name: common.permissions.restart_as_admin()
+    type: bool
+    desc: True=已是管理员或已成功拉起提权新进程（调用方应退出旧进程）；False=非 Windows 或拉起失败
+  - name: common.expire.write_expire_from_days(days, built_on=None)
+    type: pathlib.Path
+    desc: "写入的 assets/expire.json 路径；内容 JSON {\"expire_on\": \"YYYY-MM-DD\", \"days\": int, \"built_on\": \"YYYY-MM-DD\"}"
+  - name: common.expire.load_expire_on()
+    type: datetime.date | None
+    desc: 有合法 expire_on 返回该日；无文件 / 坏文件 / 缺字段为 None
+  - name: common.expire.is_expired(today=None)
+    type: bool
+    desc: 有到期日且 today >= 到期日为 True；无到期日恒 False
+  - name: common.expire.expire_message()
+    type: str
+    desc: 有到期日时含 YYYY-MM-DD；否则为通用过期句
+  - name: common.expire.install_root()
+    type: pathlib.Path | None
+    desc: 源码运行 None；冻结 macOS 为 sys.executable 所在的 .app（找不到 .app 为 None）；冻结其它平台为 sys.executable 所在目录
+  - name: common.expire.try_self_delete()
+    type: None
+    desc: 源码运行为空操作
+  - name: common.license.issue_key(days)
+    type: str
+    desc: 形如 "ALBN1.<payload>.<sig>"；载荷含 days 与随机串，不含到期日；同天数每次签发不同
+  - name: common.license.parse_key(key)
+    type: dict
+    desc: 载荷，至少含 "days"（正整数）
+  - name: common.license.key_fingerprint(key)
+    type: str
+    desc: 12 位小写十六进制；密钥中任意位置的空白字符不影响结果
+  - name: common.license.activate_key(key, today=None)
+    type: "LicenseInfo(days: int, activated_on: date, expire_on: date, key_fp: str)"
+    desc: 本次生效的授权（首次激活或台账中的首次记录）
+  - name: common.license.is_licensed(today=None)
+    type: bool
+    desc: 有当前授权且 today < expire_on
+  - name: common.license.load_license()
+    type: LicenseInfo | None
+    desc: 无授权或文件损坏为 None
+  - name: LicenseInfo.is_valid(today=None)
+    type: bool
+    desc: today < expire_on
+contract:
+  - 各子能力通过子模块导入：common.paths / common.permissions / common.expire / common.license / common.pubsub；包 common 本身不导出符号
+  - "冻结 data_root：macOS 为 ~/Library/Application Support/albn-autofish；Windows 为 sys.executable 同级 data/（不可写时退回 %LOCALAPPDATA%\\albn-autofish，未设则 ~/AppData/Local/albn-autofish）；其它平台 ~/.local/share/albn-autofish"
+  - 冻结时 data_root() 返回前确保目录存在；源码运行时 data_root() 不创建目录
+  - user_state_root() 源码与冻结返回同一位置，返回前确保目录存在
+  - data_root() / user_state_root() 首次调用后在进程内缓存结果，环境变化后需调用其 cache_clear() 才重算
+  - Path.home() 取自环境变量（POSIX 为 HOME，Windows 为 USERPROFILE）
+  - current_status() 只查询不弹窗、不打开设置页、不改系统状态
+  - "current_status()：macOS screen_ok / input_ok 为屏幕录制 / 辅助功能授权结果，is_admin=None；Windows screen_ok 为一次小区域截屏探测结果，input_ok 恒 True，is_admin 为是否管理员；其它平台三者均为 None"
+  - 系统查询失败（依赖库缺失、API 异常）时 current_status() 不抛，按未授权 / 不可用处理
+  - request_* / reset_macos_tcc / restart_as_admin 不向调用方抛异常
+  - reset_macos_tcc 非 macOS 时不执行任何系统命令，仅返回提示句
+  - restart_as_admin 非 Windows 恒 False 且无副作用；Windows 已是管理员时直接 True 不再拉起
+  - write_expire_from_days 会创建缺失的 assets/ 目录并覆盖已有 expire.json
+  - expire.json 的到期日按本机本地日期比较，不联网校时
+  - try_self_delete 只删除 install_root()；删除失败静默忽略
+  - 包到期与密钥授权互相独立，互不读写对方文件
+  - 授权文件 license.json 与首次激活台账 license_ledger.json 均位于 user_state_root()
+  - 密钥校验失败时 activate_key 不写任何文件
+  - parse_key / activate_key / key_fingerprint 忽略密钥任意位置的空白字符（空格、制表、换行）
+  - 同一密钥（按 key_fingerprint）首次激活起算 expire_on = today + days；再次激活沿用台账中首次的 activated_on / expire_on，不重新起算，即使 license.json 已删除或密钥中插入了空白
+  - 激活另一把密钥会覆盖当前授权 license.json；台账保留所有密钥的首次记录
+  - 授权过期（today >= expire_on）只表现为 is_licensed() 为 False，不删除文件
+  - user_state_root() 下尚无 license.json 而 data_root() 下有旧版合法 license.json 时，load_license() / is_licensed() 将其迁入 user_state_root()、补登台账并删除旧文件
+depends: []
+errors:
+  - code: ValueError("days must be positive")
+    desc: write_expire_from_days / issue_key 的 days <= 0
+  - code: ValueError("密钥格式无效")
+    desc: parse_key / activate_key 的密钥不是 ALBN1.<payload>.<sig> 三段
+  - code: ValueError("密钥校验失败")
+    desc: parse_key / activate_key 签名不匹配（密钥被篡改或伪造）
+  - code: ValueError("密钥内容无效" / "密钥天数无效")
+    desc: parse_key / activate_key 载荷无法解析或 days <= 0
+  - code: OSError
+    desc: user_state_root() 或冻结 data_root() 无法创建目录
+tests:
+  # paths
+  - 源码运行：bundle_root 为仓库根，assets_dir / data_root 为其下 assets / data
+  - 冻结：bundle_root 为 sys._MEIPASS，assets_dir 随之变化
+  - 冻结 macOS：data_root 为 ~/Library/Application Support/albn-autofish 且已创建
+  - 冻结 Windows：data_root 为 exe 同级 data 且已创建
+  - 冻结 Windows：exe 同级 data 不可写时退回 LOCALAPPDATA/albn-autofish
+  - 冻结其它平台：data_root 为 ~/.local/share/albn-autofish
+  - user_state_root 按平台落位并已创建，源码与冻结一致
+  - Windows 未设 LOCALAPPDATA 时 user_state_root 退回 ~/AppData/Local/albn-autofish
+  - data_root / user_state_root 结果被缓存，cache_clear 后重算
+  # permissions
+  - 其它平台 current_status 三项均为 None
+  - macOS current_status 反映屏幕录制 / 辅助功能授权结果，is_admin 为 None
+  - macOS 授权查询库不可用时 current_status 不抛并视为未授权
+  - Windows current_status 反映截屏探测与管理员状态，input_ok 为 True
+  - PermissionStatus 不可修改
+  - macOS request_screen_access 请求授权并打开屏幕录制设置页
+  - Windows request_screen_access 按截屏探测返回成功 / 失败句
+  - macOS request_input_access 带提示请求辅助功能并打开辅助功能设置页
+  - Windows request_input_access：已是管理员 / 提权成功 / 提权失败 三种提示
+  - reset_macos_tcc 非 macOS 不执行系统命令
+  - reset_macos_tcc 对每个 bundle id 重置两项服务并统计成功 / 失败，命令异常不外抛
+  - restart_as_admin 非 Windows 返回 False 且不调用系统接口
+  - restart_as_admin Windows 已是管理员直接 True，不拉起新进程
+  - restart_as_admin Windows 以 runas 拉起，返回码决定 True / False，异常返回 False
+  # expire
+  - 无 expire.json：load_expire_on 为 None，is_expired 为 False
+  - write_expire_from_days 写出到期日，is_expired 在到期日前 False、当日及之后 True
+  - write_expire_from_days 的 days <= 0 抛 ValueError
+  - 坏 expire.json 视为不过期
+  - clear_expire_file 删除文件，重复调用不报错
+  - expire_message 有到期日时含日期，无时为通用句
+  - install_root：源码为 None；冻结 macOS 为 .app；冻结 Windows 为 exe 目录
+  - try_self_delete 源码运行不删除任何东西
+  - try_self_delete 冻结时只删除 install_root，删除失败不外抛
+  # license
+  - issue_key 格式为 ALBN1 三段且 parse_key 取回 days；同天数两次签发不同
+  - issue_key 的 days <= 0 抛 ValueError
+  - key_fingerprint 为 12 位十六进制且忽略任意位置空白
+  - 激活往返：未激活 is_licensed 为 False；激活后 expire_on = today + days，到期前有效、到期日起无效
+  - 篡改载荷 / 签名 / 前缀的密钥被拒，且不写任何文件
+  - 同一密钥再次激活（含删除 license.json 后、插入空白后）沿用首次到期日
+  - 激活另一把密钥覆盖当前授权，原密钥再激活仍沿用其首次到期日
+  - 损坏的 license.json 视为未授权
+  - data_root 下旧版 license.json 被迁入 user_state_root 并删除
+  - LicenseInfo.is_valid 在 expire_on 当日为 False
+  # integration
+  - 子 Module common.pubsub 可经 common 包导入并工作

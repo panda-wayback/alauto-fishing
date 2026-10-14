@@ -53,8 +53,12 @@ class LicenseInfo:
         return (today or date.today()) < self.expire_on
 
 
+def _normalize_key(key: str) -> str:
+    return "".join(key.split())
+
+
 def key_fingerprint(key: str) -> str:
-    return hashlib.sha256(key.strip().encode("utf-8")).hexdigest()[:12]
+    return hashlib.sha256(_normalize_key(key).encode("utf-8")).hexdigest()[:12]
 
 
 def issue_key(days: int) -> str:
@@ -71,7 +75,7 @@ def issue_key(days: int) -> str:
 
 def parse_key(key: str) -> dict:
     """验签并返回载荷 dict；失败抛 ValueError。"""
-    text = key.strip().replace(" ", "")
+    text = _normalize_key(key)
     parts = text.split(".")
     if len(parts) != 3 or parts[0] != _PREFIX:
         raise ValueError("密钥格式无效")

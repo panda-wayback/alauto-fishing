@@ -1,54 +1,26 @@
-# 真机流水线串接（订阅式）
+# 流水线串接
 
 ## 目标
+把圈定、截图、识别、算法、执行五段经统一总线串起来，每段只发布自己的产出、只订阅上游产出。
 
-把五段（圈定 → 截图 → 识别 → 算法 → 执行）用统一总线串起来：每段只发布/订阅自己的主题，不互相调用内部实现。总线契约见 [`docs/common/pubsub/`](../../common/pubsub/)。
+## 需求
+- 交接顺序：[圈定](../locate/README.md)发布当前 ROI；[截图](../capture/README.md)按当前 ROI 发布帧；[识别](../detect/README.md)读帧发布鱼漂读数；[算法](../decide/README.md)读读数发布按住 / 松开意图；[执行](../act/README.md)读意图控鼠。
+- 段与段之间只经总线交接，禁止跨段直接调用业务逻辑；各段可单独启停。
+- 截图范围只由手框决定：手框存盘后「天花板 ROI」与「当前 ROI」相同，识别段不得发布或改写 ROI；清空手框则两者皆空，截图与识别停止出数。
+- ROI 每次变更都使旧帧和旧读数作废，下游丢弃与当前 ROI 不一致的帧与读数。
+- 高频帧只保留最新一帧（latest-wins）；调用方既可订阅推送，也可随时读取各主题最新快照。
+- 鱼漂状态（空闲 / 拉鱼中 / 丢漂）由 ROI 与读数推出，供算法与执行做安全判断。
+- 开启[声音开钓](../first_click_trigger/README.md)时，另有开钓会话状态参与门控：只有会话进入拉鱼态，算法才可发按住意图、执行才可落键；其余时刻鼠标留给开钓第一下。
+- 声音开钓命中时，会话事件携带相似分、各段时长与阈值，供调试壳写日志。
+- 调试壳只经总线订阅画面、读数与状态做展示，不代替任何一段落键。
 
-## 要实现的
+## 方案
+- 落点：`src/autofish`，按段启停编排五段并维护鱼漂状态机，接口见 [接口](../../../src/autofish/interface.yaml)。
+- 落点：`src/autofish/events`，定义 autofish 主题、事件载荷、域总线快照与 Worker 基类，接口见 [接口](../../../src/autofish/events/interface.yaml)。
+- 复用：`src/common/pubsub` 的进程内发布 / 订阅总线，见 [订阅总线](../../common/pubsub/README.md)。
+- 取舍：选订阅式总线而不是段间直调，使每段只依赖主题而不依赖上下游实现。
+- 取舍：ROI 分天花板与当前两层但都只随手框变化，避免识别结果反过来缩小截图范围造成漂移。
 
-### 段与主题
-
-| 段 | 文档 | 发布 | 订阅 / 读取 |
-|---|---|---|---|
-| 1 圈定范围 | [`docs/autofish/locate/`](../locate/) | 天花板 ROI（兼初始当前）；存盘 | （可选）钓鱼状态 |
-| 2 截图 | [`docs/autofish/capture/`](../capture/) | Frame | **当前 ROI**；无则不出帧 |
-| 3 识别 | [`docs/autofish/detect/`](../detect/) | Pos | ROI + 最新 Frame；**不发布 ROI** |
-| （辅助）钓鱼状态 | 本页约定 | FishingState | ROI + Pos |
-| （辅助）开钓会话 | [`docs/autofish/first_click_trigger/`](../first_click_trigger/) | CastSession | （壳日志；Decide/Act 读态门控） |
-| 4 算法 | [`docs/autofish/decide/`](../decide/) | **ActionIntent** | Pos + FishingState + CastSession |
-| 5 执行 | [`docs/autofish/act/`](../act/) | （可选回执） | ActionIntent + CastSession |
-
-主题至少：`ROI`、`Frame`、`Pos`、`FishingState`、`CastSession`、`ActionIntent`。
-
-水声命中进 `FIRST_CLICK` 时，`CastSession` 事件带结构化命中字段（相似分与三段时长、阈值）；见开钓页。
-
-### ROI 双层
-
-- **天花板 / 当前**：手框存盘后两者相同；Detect **不得**改写当前 ROI。
-- 清空手框则两者皆空。
-
-### 版本与作废
-
-- 当前 ROI 变更递增版本；旧 Frame 作废。
-- Frame / Pos 带 `roi_version`；与当前不一致则丢弃。
-
-### 钓鱼状态
-
-- 五段侧：`IDLE` / `FISHING` / `LOST`；供算法与执行做安全判断（能力块 **B**）。
-- 声音开钓侧：另有开钓会话态（`WAIT` / `FIRST_CLICK` / `WAIT_BOBBER` / `FISHING`）；仅等待态听声。见 [`docs/autofish/first_click_trigger/`](../first_click_trigger/)。
-
-### 约束
-
-- 禁止跨段直调业务逻辑。
-- 允许：Locate 用主屏一帧；共用 `Roi`。
-- 推送 + 快照均可；高频 Frame latest-wins。
-- **调试壳**：主控两勾选（自动拉漂 B / 声音开钓 A）+ 精简状态 + 日志；有 ROI 则 Capture/Detect 常开；标定/声音/更多分页面。见 [`docs/autofish/shell/`](../shell/)。
-
-## 解决步骤
-
-1. 五段映射与主题表写入本页（已完成）。
-2. 通用总线 → [`docs/common/pubsub/`](../../common/pubsub/)（已完成）。
-3. Decide / Act 与 `ActionIntent`（已完成）。
-4. 壳：三独立开关 + 断模拟器耦合（已完成）。
-5. mss 仅随手框；Detect 不改 ROI（已完成）。
-6. 调试壳 PySide6 重做（已完成）。
+## 不做
+- 跨进程或网络总线。
+- 识别段自动找绿或回写截图范围。

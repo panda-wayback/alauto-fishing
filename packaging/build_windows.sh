@@ -11,6 +11,8 @@ elif [[ -x "${ROOT}/.venv/Scripts/python.exe" ]]; then
   PY="${ROOT}/.venv/Scripts/python.exe"
 elif [[ -x "${ROOT}/.venv/bin/python" ]]; then
   PY="${ROOT}/.venv/bin/python"
+elif [[ -x "${ROOT}/.conda/python.exe" ]]; then
+  PY="${ROOT}/.conda/python.exe"
 else
   PY="$(command -v python || command -v python3)"
 fi

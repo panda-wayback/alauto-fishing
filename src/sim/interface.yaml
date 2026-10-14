@@ -1,0 +1,72 @@
+name: sim
+function: 拉鱼模拟纯逻辑：状态机、物理、难度与观测 API
+modules: []
+input:
+  - name: sim.FishingGame()
+    type: 无参构造
+    desc: 新建一局模拟器；初始状态 READY、等级 T4
+  - name: FishingGame.set_tier(tier)
+    type: "tier: int"
+    desc: 选鱼等级 T1–T8（越高越难）；超界夹紧到 1～8
+  - name: FishingGame.start()
+    type: 无参
+    desc: 从 READY / SUCCESS / FAILED 开局（套用当前等级），进入 PLAYING
+  - name: FishingGame.reset()
+    type: 无参
+    desc: 回到 READY 并复位鱼漂、进度、计时；保留等级
+  - name: FishingGame.set_holding(holding)
+    type: "holding: bool"
+    desc: 设置是否按住（True=按住收线，False=松开）
+  - name: FishingGame.update(dt)
+    type: "dt: float（秒）"
+    desc: 推进物理 dt 秒并判定胜负
+  - name: sim.observe(game)
+    type: "game: FishingGame"
+    desc: 取当前观测快照
+  - name: sim.step(game, holding, dt)
+    type: "game: FishingGame; holding: bool; dt: float（秒）"
+    desc: 等价于 set_holding(holding) 后 update(dt)，再返回观测
+output:
+  - name: sim.State
+    type: "Enum：READY / PLAYING / SUCCESS / FAILED（value 为 'ready' / 'playing' / 'success' / 'failed'）"
+    desc: 对局状态
+  - name: FishingGame 只读属性
+    type: "state: State; tier: int; bobber_x: float（张力条内像素，0=条左端）; bobber_v: float（像素/秒，正=向右）; progress: float（0～1）; holding: bool; hold_time: float（本次按住已持续秒数，未按住为 0）; time: float（本局已推进秒数）"
+    desc: 供画面与调用方读取；调用方不得直接写入
+  - name: sim.observe(game) / sim.step(game, holding, dt)
+    type: "sim.Observation（frozen dataclass）：state, tier, bobber_x, bobber_v, progress, holding, hold_time, time, safe_left: float, safe_right: float, tension_w: float"
+    desc: 观测快照；前 8 个字段与 game 同名属性相同，safe_left / safe_right 为绿区左右边界像素，tension_w 为张力条宽
+  - name: sim.config
+    type: "模块常量：TENSION_W, TENSION_H, SAFE_LEFT, SAFE_RIGHT, PROGRESS_W, PROGRESS_H（int 像素）; PAD_X, PAD_Y, GAP, WINDOW_WIDTH, WINDOW_HEIGHT（int 像素）; FPS（int）; TITLE（str）; BG_COLOR（RGB 三元组）; TENSION_BAR, PROGRESS_BAR, BOBBER, FISH_MARKER（Path，assets 内 png）"
+    desc: 张力条/进度条几何、窗口布局与素材路径，供画面与无头跑局使用
+contract:
+  - 不依赖 pygame，可无头运行；结果只由调用序列决定（无随机）
+  - 新建或 reset 后为 READY；鱼漂位于张力条正中（TENSION_W * 0.5），速度 0，进度 0，time 0，未按住
+  - start 仅在 READY / SUCCESS / FAILED 生效，复位鱼漂/进度/计时后进入 PLAYING；PLAYING 中调用为空操作
+  - 默认等级 4；set_tier 夹紧到 1～8；PLAYING 中 set_tier 被忽略
+  - 非 PLAYING 时 set_holding 与 update 均为空操作；dt <= 0 的 update 为空操作
+  - update 每次使 time 增加 dt；按住时 hold_time 累加，松开或重新按下时归零
+  - 按住时向右拉力随按住时长增长，持续按住必然撞右红（bobber_x > SAFE_RIGHT）失败
+  - 松开时只剩鱼向左拽，向右动量被快速刹停后鱼漂左移；持续松开必然撞左红（bobber_x < SAFE_LEFT）失败
+  - 只有按住时进度增长（鱼漂越靠右越快）；鱼漂向左移动时进度倒退；进度始终在 [0, 1]
+  - 鱼漂离开 [SAFE_LEFT, SAFE_RIGHT] 即进入 FAILED；进度达到 1 即进入 SUCCESS；进入终局时 holding=False、hold_time=0
+  - 等级越高越难：同样持续松开时，等级越高撞左红所需时间越短；绿区不随等级变化
+  - observe 返回的 Observation 不可修改，且是调用时刻的快照，不随之后的 update 变化
+depends:
+  - src/common
+errors:
+  - code: dataclasses.FrozenInstanceError
+    desc: 试图给 Observation 字段赋值
+tests:
+  - 新建游戏为 READY、T4、鱼漂居中、进度 0
+  - set_tier 夹紧到 1～8，PLAYING 中改档被忽略
+  - start 进入 PLAYING；PLAYING 中再次 start 不复位
+  - 非 PLAYING 时 set_holding / update 无效；dt<=0 无效
+  - 按住短时间鱼漂右移、进度上涨、hold_time 累加
+  - 各等级持续按住最终撞右红失败
+  - 各等级持续松开最终撞左红失败，且进度从不增长
+  - 按住后松开鱼漂很快转为左移，松开期间进度不增长
+  - 简单阈值点按在 T1 与 T4 能把进度推到 1 并成功
+  - 终局后 holding 清零，reset 回 READY 并保留等级
+  - 等级越高持续松开撞左红越快
+  - step 等价于 set_holding + update 并返回观测；Observation 冻结且为快照，safe_left / safe_right / tension_w 与 config 一致

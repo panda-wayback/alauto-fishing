@@ -470,7 +470,7 @@ class BobberAnchorDetector:
             pos=hit.pos,
             x=hit.x * inv,
             y=hit.y * inv,
-            pixel_count=hit.pixel_count,
+            pixel_count=int(round(hit.pixel_count * inv * inv)),
             bar_left=hit.bar_left * inv,
             bar_top=hit.bar_top * inv,
             bar_width=hit.bar_width * inv,

@@ -54,7 +54,7 @@ from autofish.locate.roi import (
     save_roi,
 )
 from autofish.pipeline import AutofishPipeline
-from autofish.topics import (
+from autofish.events.topics import (
     ActionIntentEvent,
     CastSessionState,
     FishingState,
@@ -118,6 +118,8 @@ class PreviewApp(QMainWindow):
         self.resize(460, 800)
         self.setStyleSheet(global_qss())
         self._settings = load_shell_settings()
+        # 启动期间恢复 A/B 会落盘并以当前（完整）态覆盖 compact_mode，须先记下
+        start_compact = bool(self._settings.compact_mode)
         # 默认置顶：点到游戏窗口时调试壳不被盖住（可被持久化覆盖）
         self.setWindowFlag(
             Qt.WindowType.WindowStaysOnTopHint, bool(self._settings.stay_on_top)
@@ -169,8 +171,8 @@ class PreviewApp(QMainWindow):
             self.lbl_hint.setText("ROI 就绪 · 监控中")
             self._cal_log("启动 · Capture/Detect 常开")
         self._refresh_hud_steady()
-        if self._settings.compact_mode:
-            self._set_compact_mode(True, persist=False, from_startup=True)
+        if start_compact:
+            self._set_compact_mode(True, from_startup=True)
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._on_tick)

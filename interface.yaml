@@ -1,0 +1,55 @@
+name: albn-fishing
+function: Albion 拉鱼：模拟器测算法 + 真机自动拉鱼桌面工具
+modules:
+  - path: src/sim
+    function: 拉鱼模拟纯逻辑：状态机、物理、难度与观测 API
+  - path: src/ui
+    function: 用 pygame 绘制模拟器画面
+  - path: src/algo
+    function: 拉鱼策略接口与在模拟器上无头批量跑局
+  - path: src/common
+    function: 无业务通用库：路径、运行权限、包到期、密钥授权
+  - path: src/autofish
+    function: 真机自动拉鱼：编排五段流水线与鱼漂状态机
+  - path: src/tools
+    function: PySide6 真机调试壳界面
+  - path: packaging
+    function: macOS / Windows 打包、包到期写入与密钥生成工具
+input:
+  - name: python main.py（make sim）
+    type: CLI，无参数；运行中键盘/鼠标操作
+    desc: 打开模拟器窗口；空格或鼠标左键按住拉、松开放；R 重开；1～8 切难度；Esc 退出
+  - name: python run_preview_ui.py（make preview）
+    type: CLI，无参数
+    desc: 打开真机调试壳（到期与密钥门禁后进入主窗）
+  - name: make algo / make test / make build-macos / make build-windows / make release
+    type: Make 目标，参数见 make help
+    desc: 无头跑策略、运行全部测试、打包、发版
+output:
+  - name: python main.py（make sim）
+    type: 进程退出码 0
+    desc: 关闭窗口或按 Esc 后退出
+  - name: python run_preview_ui.py（make preview）
+    type: 进程退出码（int）
+    desc: 透传调试壳的退出码；门禁未通过时为 1
+  - name: make test
+    type: pytest 结果
+    desc: 运行 tests/、src/、packaging/ 下全部 Module 测试
+contract:
+  - 拉鱼规则对齐游戏官方：按住时鱼漂右移且进度上涨，松开时左移；鱼漂进入红区失败，进度到头成功
+  - 模拟器与真机互不依赖：src/sim、src/ui、src/algo 不调用 src/autofish、src/tools；src/autofish 不调用 src/sim、src/ui、src/algo、src/tools
+  - 界面素材来自 assets/（由 fish_icon.png 提取）；运行时可写数据位于 data/ 或用户状态目录
+depends:
+  - src/sim
+  - src/ui
+  - src/algo
+  - src/tools
+  - packaging
+errors: []
+tests:
+  - main.py 在无窗口环境下启动、收到退出事件后正常返回（Integration：sim + ui）
+  - run_preview_ui.py 以 __main__ 运行时调用 tools.preview_app.launch_ui 并以其返回值退出
+  - 阈值策略在模拟器 T1 上单局成功、共用一个策略跑一小批局全胜（Integration：sim + algo）
+  - src/sim、src/ui、src/algo 与 src/autofish 之间不存在互相 import
+  - 所有 interface.yaml 均已逐级登记、必填字段齐全、上级 modules 的 function 与子 Module 一致
+  - 所有 depends 指向已登记的 Module，且不存在循环依赖

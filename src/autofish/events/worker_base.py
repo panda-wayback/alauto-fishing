@@ -6,7 +6,7 @@ import threading
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from autofish.bus import AutofishBus
+    from autofish.events.bus import AutofishBus
 
 
 class WorkerBase:

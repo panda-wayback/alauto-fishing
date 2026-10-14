@@ -1,0 +1,34 @@
+name: ui
+function: 用 pygame 绘制模拟器画面
+modules: []
+input:
+  - name: ui.render.Renderer(screen)
+    type: "screen: pygame.Surface（建议尺寸 sim.config.WINDOW_WIDTH × WINDOW_HEIGHT）"
+    desc: 绑定目标画布并加载张力条、进度条、鱼漂、鱼标素材与字体
+  - name: Renderer.draw(game)
+    type: "game: sim.FishingGame"
+    desc: 按 game 当前状态在 screen 上画一帧
+output:
+  - name: Renderer.draw(game)
+    type: None
+    desc: 直接写入构造时传入的 screen；不调用 pygame.display.flip，由调用方负责上屏
+contract:
+  - 构造前调用方须已 pygame.display.init()、pygame.font.init() 且已 set_mode（素材需转换像素格式）；screen 可以是任意 Surface，不必是窗口本身
+  - draw 每帧先用 sim.config.BG_COLOR 铺满整个 screen，再绘制；不残留上一帧内容
+  - 张力条水平居中、顶部在 PAD_Y；进度条在其下方 GAP 处水平居中；画面四角为背景色
+  - 鱼漂中心横坐标 = 张力条左缘 + game.bobber_x，纵向居中于张力条；鱼标沿进度条按 game.progress（0～1）从左向右移动
+  - 底部居中显示一行提示，随 READY / PLAYING / SUCCESS / FAILED 与等级变化
+  - draw 只读 game，不改变其任何状态；可对四种状态绘制
+  - 不创建窗口、不处理输入、不推进模拟
+depends:
+  - src/sim
+errors:
+  - code: pygame.error
+    desc: 构造 Renderer 前未 set_mode（No video mode has been set）
+tests:
+  - 未 set_mode 时构造 Renderer 抛 pygame.error
+  - 四种状态都能绘制，且 draw 不改变 game
+  - draw 用背景色覆盖旧内容，画面四角为背景色
+  - 鱼漂位置随 bobber_x 改变画面
+  - 鱼标位置随 progress 改变画面
+  - 提示文字随状态改变画面底部

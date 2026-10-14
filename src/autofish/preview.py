@@ -53,17 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("data/debug_bobber.png"),
         help="调试输出图",
     )
-    parser.add_argument(
-        "--ui",
-        action="store_true",
-        help="打开分区预览窗（推荐）",
-    )
     args = parser.parse_args(argv)
-
-    if args.ui:
-        from tools.preview_app import launch_ui
-
-        return launch_ui(roi_path=args.roi)
 
     if args.image is not None:
         from PIL import Image

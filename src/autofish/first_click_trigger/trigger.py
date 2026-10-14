@@ -15,13 +15,13 @@ from autofish.act.mouse import MouseActuator
 from autofish.first_click_trigger.audio_input import AudioInput
 from autofish.first_click_trigger.ring_buffer import AudioRingBuffer
 from autofish.first_click_trigger.template_matcher import TemplateMatcher
-from autofish.topics import CastSessionEvent, CastSessionState, PosEvent, SplashHit, Topic
-from autofish.worker_base import WorkerBase
+from autofish.events.topics import CastSessionEvent, CastSessionState, PosEvent, SplashHit, Topic
+from autofish.events.worker_base import WorkerBase
 
 if TYPE_CHECKING:
     import numpy.typing as npt
 
-    from autofish.bus import AutofishBus
+    from autofish.events.bus import AutofishBus
 
 
 _MIN_HOLD_S = 0.7

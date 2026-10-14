@@ -35,7 +35,7 @@ from tools.template_combo import fill_template_combo, sync_combo_to_path
 from tools.waveform_select import WaveformSelectWidget
 
 if TYPE_CHECKING:
-    from autofish.bus import AutofishBus
+    from autofish.events.bus import AutofishBus
 
 
 class FirstClickTriggerPanel(QWidget):
@@ -480,7 +480,7 @@ class FirstClickTriggerPanel(QWidget):
         session_on = False
         if self._trigger is not None:
             wave = self._trigger.template_wave
-            from autofish.topics import CastSessionState
+            from autofish.events.topics import CastSessionState
 
             session_on = self._trigger.session_state != CastSessionState.DISABLED
             self._trigger.stop()

@@ -1,0 +1,87 @@
+name: capture
+function: 按手框 ROI 截屏并发布帧
+modules: []
+input:
+  - name: autofish.capture.CaptureWorker(bus, *, fps=30.0)
+    type: "bus: autofish.events.bus.AutofishBus; fps: float（<1 按 1 处理）"
+    desc: 新建截帧工人，按 fps 节奏截当前 ROI
+  - name: CaptureWorker.start() / CaptureWorker.stop(timeout=2.0)
+    type: "无参 / timeout: float 秒"
+    desc: 启动后台线程（已在跑则忽略，帧序 seq 从 1 重新计）；stop 通知退出并等待线程结束
+  - name: CaptureWorker.is_running()
+    type: 无参
+    desc: 查询后台线程是否存活
+  - name: 读取 AutofishBus.current_roi()（由 Topic.ROI 发布者更新）
+    type: "(Roi | None, version: int)"
+    desc: 工人每轮读取的当前 ROI 与版本；ROI 为逻辑点
+  - name: autofish.capture.grab_roi(roi)
+    type: "roi: autofish.locate.roi.Roi（逻辑点，left/top 可为负）"
+    desc: 截一次 ROI
+  - name: autofish.capture.roi_frame_size(roi)
+    type: "roi: Roi"
+    desc: 查询该 ROI 对应帧的物理像素尺寸
+  - name: autofish.capture.grab_primary()
+    type: 无参
+    desc: 截一次主屏（供手框标定显示）
+  - name: autofish.capture.warmup()
+    type: 无参
+    desc: 预热截屏，避免冷启动首帧慢
+  - name: autofish.capture.save_screen(grab, path=None)
+    type: "grab: ScreenGrab; path: pathlib.Path | None（None 用 DEFAULT_SCREEN_PATH）"
+    desc: 把主屏截图存为 PNG，并在同目录写同名 .meta.json（origin_left/origin_top/scale/width/height）
+  - name: autofish.capture.load_screen(path=None)
+    type: "path: pathlib.Path | None（None 用 DEFAULT_SCREEN_PATH）"
+    desc: 读回 save_screen 存的截图
+output:
+  - name: 发布 Topic.FRAME（经 AutofishBus.publish_frame）
+    type: "autofish.events.topics.FrameEvent(frame: np.ndarray uint8 (H, W, 3) RGB, roi_version: int, ts: float perf_counter 秒, seq: int)"
+    desc: 当前 ROI 的一帧；frame 为物理像素，seq 自 start 起从 1 递增
+  - name: CaptureWorker.is_running()
+    type: bool
+    desc: 后台线程是否存活
+  - name: grab_roi(roi)
+    type: "np.ndarray uint8 (H, W, 3) RGB，C 连续"
+    desc: ROI 物理像素帧；(W, H) = roi_frame_size(roi)
+  - name: roi_frame_size(roi)
+    type: "(width: int, height: int)"
+    desc: "max(1, round(roi.width × scale)), max(1, round(roi.height × scale))；scale 为主屏物理/逻辑倍率"
+  - name: grab_primary()
+    type: "autofish.capture.ScreenGrab(rgb: np.ndarray uint8 (H, W, 3), origin_left: int, origin_top: int, scale: float)"
+    desc: 主屏截图缩到逻辑点尺寸；origin 为主屏左上角逻辑坐标；scale 为物理/逻辑倍率
+  - name: save_screen(grab, path=None)
+    type: pathlib.Path
+    desc: 实际写入的 PNG 路径；父目录不存在时自动创建
+  - name: load_screen(path=None)
+    type: ScreenGrab
+    desc: 读回 RGB 与 meta 中的 origin/scale；无 .meta.json 时 origin=(0, 0)、scale=1.0
+  - name: autofish.capture.DEFAULT_SCREEN_PATH
+    type: pathlib.Path
+    desc: 默认主屏截图路径（data 根目录下 screen.png）
+contract:
+  - 只有当前 ROI 非空且版本 > 0 时才截屏；无 ROI 时不截屏也不发帧
+  - ROI 变化（新版本或清空）后下一轮即按新 ROI 截或停截；帧携带截取时的 roi_version，旧版本帧由总线丢弃
+  - 帧保留物理像素，不缩回逻辑点；帧尺寸 = roi_frame_size(roi)
+  - 主屏缩放倍率在进程内首次计算后固定
+  - 单次截屏失败不终止工人，也不发布帧；下一轮继续重试
+  - 截屏可在任意线程调用；每个线程使用独立截屏会话
+  - 不修改 ROI、不识图、不操作鼠标
+depends:
+  - src/autofish/events
+  - src/autofish/locate
+  - src/common
+errors:
+  - code: ImportError
+    desc: 未安装 mss 时导入 autofish.capture 抛出
+  - code: FileNotFoundError
+    desc: load_screen 路径不存在
+tests:
+  - grab_roi 返回 uint8 RGB、C 连续、尺寸为 ROI×倍率，并按 ROI 区域截取
+  - grab_primary 返回逻辑点尺寸的 ScreenGrab，origin 为主屏原点
+  - roi_frame_size 等于 ROI 宽高 × 主屏倍率
+  - warmup 截一个小区域且不报错
+  - save_screen 后 load_screen 读回相同像素、origin 与 scale
+  - 无 meta 文件时 load_screen 用 origin=(0, 0)、scale=1.0
+  - CaptureWorker 有 ROI 时持续发布 FrameEvent，版本正确、尺寸为物理像素、seq 从 1 递增
+  - CaptureWorker 无 ROI 时不截屏、不发帧
+  - CaptureWorker 跟随 ROI 版本变化出新尺寸帧，清空 ROI 后停止发帧
+  - 截屏失败时工人不退出、不发帧，恢复后继续发帧

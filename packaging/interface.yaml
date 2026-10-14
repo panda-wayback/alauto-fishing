@@ -1,0 +1,121 @@
+name: packaging
+function: macOS / Windows 打包、包到期写入与密钥生成工具
+modules: []
+input:
+  - name: bash packaging/build_macos.sh（make build-macos / make build-macos-dev）
+    type: >-
+      CLI 无参数；环境变量：PYTHON（可执行解释器路径，缺省依次用 .conda/bin/python、.venv/bin/python、python3）、
+      ALBN_BUILD_SUFFIX（缺省 GITHUB_RUN_ID，再缺省本地 UTC 时间 yyyymmdd-HHMMSS）、
+      ALBN_APP_NAME（缺省 albn-autofish.app）、ALBN_BUNDLE_ID（缺省 com.albn.autofish）、
+      ALBN_DISPLAY_NAME（缺省 Albn Autofish）、ALBN_EXPIRE_DAYS（同 write_expire.py）
+    desc: 仅 macOS；安装 requirements.txt + PyInstaller 6.x，写包到期文件后打调试壳 .app（入口 run_preview_ui.py）
+  - name: bash packaging/build_windows.sh / packaging/build_windows.ps1（make build-windows）
+    type: >-
+      CLI 无参数；环境变量：PYTHON、ALBN_BUILD_SUFFIX（缺省规则同 macOS）、ALBN_EXPIRE_DAYS；
+      ALBN_DIST_NAME 由脚本强制设为 albn-autofish-<后缀>，外部传入无效
+    desc: 仅 Windows；安装依赖后写包到期文件并打调试壳 onedir（入口 run_preview_ui.py）
+  - name: bash packaging/build_license_macos.sh（make build-license-macos）
+    type: >-
+      CLI 无参数；环境变量：PYTHON、ALBN_BUILD_SUFFIX、ALBN_KEYGEN_APP_NAME（缺省 albn-license-keygen.app）、
+      ALBN_KEYGEN_BUNDLE_ID（缺省 com.albn.license-keygen）、ALBN_KEYGEN_DISPLAY_NAME（缺省 Albn License Keygen）
+    desc: 仅 macOS；把密钥生成小窗打成独立 .app，仅供本机发密钥
+  - name: python packaging/write_expire.py
+    type: "CLI 无参数；环境变量 ALBN_EXPIRE_DAYS: 正整数天数字符串 | 空 / 未设 / <=0"
+    desc: 构建前写入或清除包内到期文件
+  - name: python packaging/gen_license_key.py DAYS [--count N]（make gen-license DAYS=30 COUNT=1）
+    type: "DAYS: 正整数可用天数；N: 正整数条数，默认 1"
+    desc: 命令行签发激活密钥
+  - name: python packaging/gen_license_ui.py（make license-ui）
+    type: CLI 无参数；窗口内选 7 天 / 30 天（默认 30）、数量 1～200，按钮「生成」「复制全部」「清空」
+    desc: 打开密钥生成小窗
+  - name: pyi_trim.trim_analysis(a)
+    type: "a: PyInstaller Analysis 对象（含 binaries / datas 列表与可为 None 的 pure，元素为 TOC 元组 (name, path, typecode)）"
+    desc: 供 spec 调用，就地剔除未用的重量级 Qt / OpenCV 文件
+  - name: pyinstaller packaging/albn_autofish.spec | albn_autofish_windows.spec | albn_license_keygen.spec
+    type: >-
+      PyInstaller spec；读环境变量 ALBN_BUNDLE_ID / ALBN_APP_NAME / ALBN_DISPLAY_NAME（macOS 壳）、
+      ALBN_DIST_NAME（Windows 壳，缺省 albn-autofish）、ALBN_KEYGEN_BUNDLE_ID / ALBN_KEYGEN_APP_NAME / ALBN_KEYGEN_DISPLAY_NAME（密钥生成器）
+    desc: 由上面构建脚本调用；一般不直接使用
+  - name: bash packaging/reset_macos_perms.sh（make reset-perms）
+    type: CLI 无参数；可选环境变量 ALBN_BUNDLE_ID
+    desc: 清除本应用在 macOS 的屏幕录制与辅助功能授权记录，便于重打包后重新授权
+  - name: .github/workflows/release.yml
+    type: "push main / push tag v*；workflow_dispatch 输入 tag（可空）、expire_days（可空，作为 ALBN_EXPIRE_DAYS）"
+    desc: CI 以 ALBN_BUILD_SUFFIX=GITHUB_RUN_ID 调用 build_macos.sh 与 build_windows.sh，并按需发 GitHub Release
+output:
+  - name: bash packaging/build_macos.sh
+    type: 目录 dist/<名字>.app；文本文件 dist/.build_suffix（后缀）、dist/.build_macos_name（.app 文件名）；退出码
+    desc: >-
+      未设 ALBN_APP_NAME 时名字为 albn-autofish-<后缀>.app；已设时在 .app 前插入 -<后缀>（已以 -<后缀> 结尾则不重复），
+      缺 .app 扩展名自动补；成功退出码 0，产物缺失退出码 1
+  - name: bash packaging/build_windows.sh / packaging/build_windows.ps1
+    type: 目录 dist/albn-autofish-<后缀>/（含 albn-autofish.exe）；文本文件 dist/.build_suffix、dist/.build_windows_name（目录名）
+    desc: Windows 调试壳 onedir
+  - name: bash packaging/build_license_macos.sh
+    type: 目录 dist/<名字>.app；文本文件 dist/.build_keygen_macos_name
+    desc: 名字缺省 albn-license-keygen-<后缀>.app，自定义名的后缀规则同 build_macos.sh；产物缺失退出码 1
+  - name: python packaging/write_expire.py
+    type: >-
+      文件 <包资源根>/assets/expire.json（源码运行即仓库 assets/expire.json），
+      UTF-8 JSON {"expire_on": "YYYY-MM-DD", "days": int, "built_on": "YYYY-MM-DD"}；stdout 一行说明；退出码
+    desc: >-
+      正整数天数 → 写文件，built_on 为本机今天，expire_on = built_on + days，退出码 0；
+      空 / 未设 / <=0 → 删除已有文件，退出码 0；非整数 → stderr 报 "ALBN_EXPIRE_DAYS invalid"，退出码 2
+  - name: python packaging/gen_license_key.py DAYS [--count N]
+    type: stdout 每行一条密钥字符串（ALBN1.<载荷>.<签名>）；stderr 每条附注释 "# days=<DAYS> n=<随机串>"；退出码
+    desc: 成功退出码 0；DAYS 或 N 非正整数退出码 2 且 stdout 无输出
+  - name: python packaging/gen_license_ui.py
+    type: 窗口；文本框一行一条密钥；进程退出码为 Qt 事件循环返回值
+    desc: 「生成」按所选天数生成所选数量并追加到列表末尾；「复制全部」把整个列表放入剪贴板；「清空」清空列表
+  - name: pyi_trim.trim_analysis(a)
+    type: None
+    desc: a.binaries / a.datas / a.pure 中名字或路径含 WebEngine、Qt3D、QtQuick、QtQml、QtPdf、QtSql、QtMultimedia、haarcascade 等子串的条目被移除，其余保持原顺序
+  - name: bash packaging/reset_macos_perms.sh
+    type: stdout 每个 Bundle ID × 服务的 OK / SKIP 行；退出码 0
+    desc: 对 ALBN_BUNDLE_ID（若设）、com.albn.autofish、com.albn.autofish.dev 去重后各执行 Accessibility 与 ScreenCapture 重置
+  - name: .github/workflows/release.yml
+    type: Artifact albn-autofish-macos-arm64-<run_id> / albn-autofish-windows-x64-<run_id>；Release 附件 albn-autofish-macos-arm64-<tag>.zip / albn-autofish-windows-x64-<tag>.zip
+    desc: 仅 push tag 或手动填 tag 时发 Release；zip 内为稳定名 albn-autofish.app / albn-autofish/
+contract:
+  - gen_license_key.py 与 gen_license_ui.py 生成的密钥都能被 common.license.parse_key 验签且 days 与所选天数一致；可直接用于 common.license.activate_key
+  - 每次生成的密钥互不相同（含随机 n）
+  - write_expire.py 写出的 expire.json 正是 common.expire 在运行时读取的包到期文件；不写则包不过期
+  - write_expire.py 收到非法 ALBN_EXPIRE_DAYS 时不改动已有 expire.json
+  - build_macos.sh 与 build_windows.*（调试壳）在 PyInstaller 前运行 write_expire.py，故 ALBN_EXPIRE_DAYS 决定包是否带到期日；build_license_macos.sh 不写到期文件
+  - 同一 ALBN_BUILD_SUFFIX 重复构建覆盖同名产物；不同后缀产物并存
+  - build_windows.sh 与 build_windows.ps1 重打同名目录时保留其中已有的 data/ 子目录；若 build/data_backup_<后缀> 残留则不打包、退出码 1
+  - build_windows.sh 与 build_windows.ps1 选解释器顺序一致：PYTHON → .venv/Scripts/python.exe →（仅 .sh）.venv/bin/python → .conda/python.exe → PATH 中 python
+  - build_windows.ps1 中 pip / write_expire.py / PyInstaller 任一步退出码非 0 即中止，不继续后续步骤
+  - 构建脚本只写仓库内 dist/、build/ 与 assets/expire.json（另向所用 Python 环境 pip 安装依赖）；调试壳包内含 assets/ 与（若存在）data/audio_sessions、data/audio_template 作为种子
+  - 调试壳包不含 sim、ui、pygame；密钥生成器包不含 autofish、tools、algo 等调试壳代码
+  - macOS 构建产物 .app 内未用的 WebEngine / Qt3D / QtQuick / QtQml / Designer 等组件被删除
+depends:
+  - src/common
+errors:
+  - code: "gen_license_key.py 退出码 2"
+    desc: DAYS 或 --count 非正整数 / 非整数
+  - code: "write_expire.py 退出码 2"
+    desc: ALBN_EXPIRE_DAYS 不是整数
+  - code: "build_*.sh 退出码 1"
+    desc: PyInstaller 后未找到预期产物；或 build_windows.sh 发现残留的 data 备份目录
+  - code: "build_*.sh 其它非 0 退出码"
+    desc: pip / write_expire / PyInstaller 任一步失败（set -e）
+tests:
+  - gen_license_key.py 生成 3 条互不相同的密钥，均能验签为 7 天，并可在临时用户状态目录激活
+  - gen_license_key.py 对 0、负数、--count 0、非整数天数退出码 2 且 stdout 无输出
+  - write_expire.py 在 ALBN_EXPIRE_DAYS=30 时写出 expire_on = built_on + 30 的 expire.json（写到临时包资源根）
+  - write_expire.py 在 ALBN_EXPIRE_DAYS 未设、空、空白、0、负数时删除已有 expire.json 并退出码 0
+  - write_expire.py 在 ALBN_EXPIRE_DAYS 非整数时退出码 2 且不改动已有文件
+  - trim_analysis 剔除 WebEngine / haarcascade / QtQml 条目并保留其余
+  - trim_analysis 在 pure 为 None 时正常工作
+  - 三个 spec 文件可被 Python 编译（语法正确）
+  - 四个 shell 脚本通过 bash -n 语法检查
+  - build_macos.sh 默认产出 dist/albn-autofish-<后缀>.app、写 .build_suffix / .build_macos_name、删除 WebEngine 组件，且先跑 write_expire.py 再跑 albn_autofish.spec
+  - build_macos.sh 对自定义 ALBN_APP_NAME 插入后缀、补 .app、不重复后缀
+  - 未设 ALBN_BUILD_SUFFIX 时后缀取 GITHUB_RUN_ID
+  - build_macos.sh 在产物缺失时退出码 1 且不写 .build_macos_name
+  - build_windows.sh 产出 dist/albn-autofish-<后缀>/albn-autofish.exe、忽略外部 ALBN_DIST_NAME、保留已有 data/、写名字文件并运行 write_expire.py
+  - build_windows.sh 遇残留 data 备份目录时退出码 1 且不调用 PyInstaller
+  - build_windows.ps1 可被 PowerShell 解析（无 pwsh 时跳过）
+  - build_license_macos.sh 产出 dist/albn-license-keygen-<后缀>.app、删除中间目录、写 .build_keygen_macos_name，且不运行 write_expire.py
+  - gen_license_ui 窗口默认 30 天；按 7 天×3 与 30 天×2 生成后列表追加为 5 条且天数正确；复制全部进剪贴板；清空后列表为空

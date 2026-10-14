@@ -38,6 +38,10 @@ class ThresholdHoldPolicy:
         self.min_interval = min_interval
         self.jitter = jitter
         self._rng = random.Random(seed)
+        self.reset()
+
+    def reset(self) -> None:
+        """回到开局状态（松开、可立即切换）；随机数序列继续，不重新播种。"""
         self._holding = False
         self._next_change_at = 0.0
 

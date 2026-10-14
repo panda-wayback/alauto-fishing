@@ -7,7 +7,6 @@ from enum import Enum
 
 import numpy as np
 
-from autofish.detect.bobber import BobberHit
 from autofish.locate.roi import Roi
 
 
@@ -35,6 +34,22 @@ class CastSessionState(str, Enum):
     FIRST_CLICK = "first_click"
     WAIT_BOBBER = "wait_bobber"
     FISHING = "fishing"
+
+
+@dataclass(frozen=True)
+class BobberHit:
+    """单帧识别结果：漂在绿条内 0～100 的位置 + 帧坐标。"""
+
+    pos: float
+    x: float
+    y: float
+    pixel_count: int
+    bar_left: float = 0.0
+    bar_top: float = 0.0
+    bar_width: float = 0.0
+    bar_height: float = 0.0
+    score: float = 0.0
+    detect_ms: float = 0.0
 
 
 @dataclass(frozen=True)

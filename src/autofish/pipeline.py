@@ -5,14 +5,14 @@ from __future__ import annotations
 import time
 
 from autofish.act.worker import ActWorker
-from autofish.bus import AutofishBus, AutofishSnapshot
+from autofish.events.bus import AutofishBus, AutofishSnapshot
 from autofish.capture import warmup as warmup_capture
 from autofish.capture.worker import CaptureWorker
 from autofish.decide.worker import DecideWorker
 from autofish.detect.worker import DetectorWorker
 from autofish.fishing_fsm import FishingStateMachine
 from autofish.locate import Roi
-from autofish.topics import RoiEvent, Topic
+from autofish.events.topics import RoiEvent, Topic
 
 
 class AutofishPipeline:

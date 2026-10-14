@@ -40,6 +40,9 @@ def run_episode(
     game = FishingGame()
     game.set_tier(tier)
     game.start()
+    reset = getattr(policy, "reset", None)
+    if callable(reset):
+        reset()
 
     obs: Observation = observe(game)
     frames = 0

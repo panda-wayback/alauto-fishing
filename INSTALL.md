@@ -95,7 +95,7 @@ Windows：顶栏可测截屏、以管理员重启（游戏提权时常用）。R
 4. 离线重框：对已有 `data/screen.png` 按 **C**，无需再截。
 
 ```bash
-PYTHONPATH=src .conda/bin/python -m autofish.preview --ui
+PYTHONPATH=src .conda/bin/python -m tools.preview_app
 ```
 
 读数 **0～100**（ROI 最左=0，最右=100）。窗口上方大号为**真机读数**，左侧真机截图，右侧模拟器。功能架构见 `docs/autofish/`。

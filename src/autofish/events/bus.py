@@ -10,10 +10,10 @@ from dataclasses import dataclass, replace
 import numpy as np
 
 from common.pubsub import EventBus
-from autofish.detect.bobber import BobberHit
 from autofish.locate.roi import Roi
-from autofish.topics import (
+from autofish.events.topics import (
     ActionIntentEvent,
+    BobberHit,
     CastSessionEvent,
     CastSessionState,
     FishingState,

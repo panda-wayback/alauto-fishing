@@ -1,47 +1,27 @@
-# 真机自动拉鱼（功能架构）
+# 真机自动拉鱼
 
 ## 目标
+在真实游戏画面上自动识别鱼漂位置并控制鼠标拉鱼，可选用开钓水声自动点第一下。
 
-真机自动拉鱼的**功能架构**：按五段拆开，每段只做一件事；段与段经总线交接。与 [`docs/simulator/`](../simulator/) 模拟器分离。不含 YOLO。
+## 需求
+- 用户手框一次游戏中的张力条区域后，程序持续截取该区域、读出鱼漂位置（0～100），并按策略自动按住 / 松开鼠标。
+- 两个能力可独立开关：声音开钓（A）负责听水声点第一下，自动拉漂（B）负责出漂后按住 / 松开。
+- 支持三种用法：A+B 全自动；只开 B（用户自己点第一下，程序拉漂）；全关（纯手钓，有 ROI 时仍持续出画面与读数，但不控鼠）。
+- 任一环节失败不让其它环节代为承担职责；声音开钓出错只回到等待听声，不影响截图与识别。
+- 发放的安装包可设到期日自毁；使用需有效密钥激活，两者互相独立。
+- 与模拟器（[模拟器](../simulator/README.md)）分离；不使用 YOLO 等训练模型。
 
-可选：**声音开钓（A）** 与 **自动拉漂（B）** 独立开关，支持全自动 / 只拉漂 / 全手钓。
-
-## 要实现的
-
-| 段 | 只做什么 | 产出 | 子文档 |
-|---|---|---|---|
-| **1. 圈定范围** | 手框产出**天花板 ROI**并存储；同步为 mss 初始截图范围 | 天花板 ROI / 无 ROI | [`docs/autofish/locate/`](locate/) |
-| **2. 截图** | mss **只**按**当前 ROI**持续截帧；无 ROI 则不截 | 最新 Frame | [`docs/autofish/capture/`](capture/) |
-| **3. 识别** | 订 ROI+Frame：在手框画面内绿+5% 找白得 0～100；**不改 mss** | Pos | [`docs/autofish/detect/`](detect/) |
-| **4. 算法** | 订 Pos，阈值策略产出按住/松开意图 | ActionIntent | [`docs/autofish/decide/`](decide/) |
-| **5. 执行** | 订意图，系统级鼠标按下/松开（当前光标） | 键态变化 | [`docs/autofish/act/`](act/) |
-| **（可选）声音开钓 A** | 会话状态机：听声 → 点第一下 → 等漂 → 交 B | 开钓第一下 / 会话态 | [`docs/autofish/first_click_trigger/`](first_click_trigger/) |
-| **调试壳** | 主控只打勾；标定/声音/更多分页面 | — | [`docs/autofish/shell/`](shell/) |
-| **打包过期** | 构建填天数；到期打开退出并尽删安装目录 | — | [`docs/autofish/expire/`](expire/) |
-| **密钥激活** | 输入密钥；按天数授权（与打包过期独立） | — | [`docs/autofish/license/`](license/) |
-
-### 能力组合（A / B）
-
-| 模式 | A 声音开钓 | B 自动拉漂 | 谁点第一下 | 谁拉漂 |
-|---|---|---|---|---|
-| 全自动 | 开 | 开 | 程序（水声） | 程序（Pos） |
-| 只拉漂 | 关 | 开 | 用户 | 程序（Pos） |
-| 全手钓 | 关 | 关 | 用户 | 用户 |
-
-约束：
-
-- 主线：手框存盘 → mss=手框 → 截帧 → 识别 Pos；Detect 不改 mss。  
-- 段不越权；串接见 [`docs/autofish/pipeline/`](pipeline/)。  
-- A 独立会话机；仅 `WAIT` 听声；细则见 [`docs/autofish/first_click_trigger/`](first_click_trigger/)。  
-- **壳 UI**：主控仅「自动拉漂(B) / 声音开钓(A)」勾选 + 精简状态 + 日志；无监控开关（有 ROI 则常开 Capture/Detect）；其余进标定/声音/更多页面。见 [`docs/autofish/shell/`](shell/)。  
-- 代码：`src/autofish/...`、`src/tools/`；总线 `src/common/pubsub/`。
-
-失败：段失败不互相顶替职责；A 回 `WAIT` 不拖垮 Capture/Detect。
-
-## 解决步骤
-
-1. 五段与 pipeline / Decide / Act（已完成）。  
-2. 声音开钓能力与会话状态机（已完成）→ [`first_click_trigger/`](first_click_trigger/)。  
-3. 壳 UI（主控 A/B + 分页面）（已完成）→ [`shell/`](shell/)。  
-4. 打包过期自毁 → [`expire/`](expire/)。  
-5. 密钥激活（离线半套）→ [`license/`](license/)。
+## 方案
+- 子功能：[圈定范围](locate/README.md)，手框 ROI 与手动条界的存盘与载入。
+- 子功能：[截图](capture/README.md)，只按当前 ROI 持续出帧。
+- 子功能：[识别](detect/README.md)，从帧中读出绿条与鱼漂位置。
+- 子功能：[算法判定](decide/README.md)，按读数与阈值策略给出按住 / 松开意图。
+- 子功能：[执行操作](act/README.md)，把意图落成系统鼠标按下 / 松开。
+- 子功能：[流水线串接](pipeline/README.md)，五段如何经总线交接与安全门控。
+- 子功能：[声音开钓与会话状态](first_click_trigger/README.md)，听水声自动点第一下（能力 A）。
+- 子功能：[调试壳界面](shell/README.md)，主控两个勾选，配置分页面。
+- 子功能：[打包过期自毁](expire/README.md)，到期打开即提示、尽删、退出。
+- 子功能：[密钥激活](license/README.md)，离线密钥按天数授权。
+- 落点：`src/autofish`，编排五段流水线与鱼漂状态机，接口见 [接口](../../src/autofish/interface.yaml)。
+- 取舍：五段各只做一件事、只经总线交接，不互相直调，便于单段替换与定位故障。
+- 取舍：开钓与拉漂拆成独立能力，而不是合成一条全自动流程，让用户可只用其中一项。
