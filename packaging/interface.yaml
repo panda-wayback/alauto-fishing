@@ -28,6 +28,9 @@ input:
   - name: python packaging/gen_license_ui.py（make license-ui）
     type: CLI 无参数；窗口内选 7 天 / 30 天（默认 30）、数量 1～200，按钮「生成」「复制全部」「清空」
     desc: 打开密钥生成小窗
+  - name: python packaging/clear_license.py（make clear-license）
+    type: CLI 无参数
+    desc: 清除本机密钥授权与首次激活台账，便于重测激活
   - name: pyi_trim.trim_analysis(a)
     type: "a: PyInstaller Analysis 对象（含 binaries / datas 列表与可为 None 的 pure，元素为 TOC 元组 (name, path, typecode)）"
     desc: 供 spec 调用，就地剔除未用的重量级 Qt / OpenCV 文件
@@ -67,6 +70,9 @@ output:
   - name: python packaging/gen_license_ui.py
     type: 窗口；文本框一行一条密钥；进程退出码为 Qt 事件循环返回值
     desc: 「生成」按所选天数生成所选数量并追加到列表末尾；「复制全部」把整个列表放入剪贴板；「清空」清空列表
+  - name: python packaging/clear_license.py
+    type: stdout 已删除路径列表，或「无授权文件（已是未激活状态）」；退出码 0
+    desc: 删除 user_state_root 下 license.json 与 license_ledger.json，以及 data_root 下旧版 license.json（若有）；其它用户状态文件不动
   - name: pyi_trim.trim_analysis(a)
     type: None
     desc: a.binaries / a.datas / a.pure 中名字或路径含 WebEngine、Qt3D、QtQuick、QtQml、QtPdf、QtSql、QtMultimedia、haarcascade 等子串的条目被移除，其余保持原顺序
@@ -79,6 +85,8 @@ output:
 contract:
   - gen_license_key.py 与 gen_license_ui.py 生成的密钥都能被 common.license.parse_key 验签且 days 与所选天数一致；可直接用于 common.license.activate_key
   - 每次生成的密钥互不相同（含随机 n）
+  - clear_license.py 删除后 common.license.is_licensed() 为 False；同一密钥再次 activate_key 按当天重新起算（台账已清）
+  - clear_license.py 不删除 ROI 等其它用户状态文件；无目标文件时仍退出码 0
   - write_expire.py 写出的 expire.json 正是 common.expire 在运行时读取的包到期文件；不写则包不过期
   - write_expire.py 收到非法 ALBN_EXPIRE_DAYS 时不改动已有 expire.json
   - build_macos.sh 与 build_windows.*（调试壳）在 PyInstaller 前运行 write_expire.py，故 ALBN_EXPIRE_DAYS 决定包是否带到期日；build_license_macos.sh 不写到期文件
@@ -103,6 +111,8 @@ errors:
 tests:
   - gen_license_key.py 生成 3 条互不相同的密钥，均能验签为 7 天，并可在临时用户状态目录激活
   - gen_license_key.py 对 0、负数、--count 0、非整数天数退出码 2 且 stdout 无输出
+  - clear_license.py 删除状态目录与旧版 data 下的授权/台账文件，保留其它文件；无文件时退出码 0
+  - clear_license.py 清除后同一密钥再次激活按当天重新起算
   - write_expire.py 在 ALBN_EXPIRE_DAYS=30 时写出 expire_on = built_on + 30 的 expire.json（写到临时包资源根）
   - write_expire.py 在 ALBN_EXPIRE_DAYS 未设、空、空白、0、负数时删除已有 expire.json 并退出码 0
   - write_expire.py 在 ALBN_EXPIRE_DAYS 非整数时退出码 2 且不改动已有文件

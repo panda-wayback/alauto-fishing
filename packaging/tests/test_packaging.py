@@ -85,6 +85,59 @@ def test_gen_license_key_cli_rejects_bad_args(tmp_path, args):
     assert res.stdout.strip() == ""
 
 
+# ---------- clear_license.py ----------
+
+
+def test_clear_license_removes_auth_keeps_other(tmp_path, monkeypatch, capsys):
+    state = tmp_path / "state"
+    data = tmp_path / "data"
+    state.mkdir()
+    data.mkdir()
+    (state / "license.json").write_text("{}", encoding="utf-8")
+    (state / "license_ledger.json").write_text("{}", encoding="utf-8")
+    (data / "license.json").write_text("{}", encoding="utf-8")
+    (state / "roi.json").write_text("{}", encoding="utf-8")
+
+    mod = _load("clear_license_under_test", PKG / "clear_license.py")
+    monkeypatch.setattr(mod, "user_state_root", lambda: state)
+    monkeypatch.setattr(mod, "data_root", lambda: data)
+    assert mod.main() == 0
+    out = capsys.readouterr().out
+    assert "已删除" in out
+    assert not (state / "license.json").exists()
+    assert not (state / "license_ledger.json").exists()
+    assert not (data / "license.json").exists()
+    assert (state / "roi.json").is_file()
+
+    assert mod.main() == 0
+    assert "无授权文件" in capsys.readouterr().out
+
+
+def test_clear_license_allows_fresh_activation(tmp_path, monkeypatch):
+    state = tmp_path / "state"
+    data = tmp_path / "data"
+    monkeypatch.setattr(license_mod, "user_state_root", lambda: state)
+    monkeypatch.setattr(license_mod, "data_root", lambda: data)
+
+    key = license_mod.issue_key(7)
+    day1 = date(2026, 1, 1)
+    first = license_mod.activate_key(key, today=day1)
+    assert first.expire_on == day1 + timedelta(days=7)
+    assert (state / "license.json").is_file()
+    assert (state / "license_ledger.json").is_file()
+
+    mod = _load("clear_license_fresh_under_test", PKG / "clear_license.py")
+    monkeypatch.setattr(mod, "user_state_root", lambda: state)
+    monkeypatch.setattr(mod, "data_root", lambda: data)
+    assert mod.main() == 0
+    assert not license_mod.is_licensed(today=day1)
+
+    day2 = date(2026, 2, 1)
+    again = license_mod.activate_key(key, today=day2)
+    assert again.activated_on == day2
+    assert again.expire_on == day2 + timedelta(days=7)
+
+
 # ---------- write_expire.py ----------
 
 

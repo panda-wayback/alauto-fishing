@@ -23,7 +23,7 @@ DAYS ?= 30
 COUNT ?= 1
 
 .PHONY: help install install-dev test sim preview algo \
-	license-ui gen-license \
+	license-ui gen-license clear-license \
 	build-macos build-macos-dev build-license-macos build-windows \
 	open-app open-app-dev open-license-app \
 	reset-perms clean release next-version
@@ -42,6 +42,7 @@ help:
 	@echo "密钥（本机发密钥，勿给用户）"
 	@echo "  make license-ui      打开密钥生成窗"
 	@echo "  make gen-license     CLI 生成（DAYS=30 COUNT=1）"
+	@echo "  make clear-license   删除本机密钥授权与首次激活台账（便于重测激活）"
 	@echo "  make build-license-macos  打密钥生成器 .app（仅 macOS）"
 	@echo "  make open-license-app     打开刚打的密钥生成器 .app"
 	@echo ""
@@ -87,6 +88,9 @@ license-ui:
 
 gen-license:
 	$(PY) $(ROOT)/packaging/gen_license_key.py $(DAYS) --count $(COUNT)
+
+clear-license:
+	$(PY) $(ROOT)/packaging/clear_license.py
 
 build-macos:
 	bash $(ROOT)/packaging/build_macos.sh
