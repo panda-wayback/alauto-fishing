@@ -65,18 +65,18 @@ input:
   - name: common.license.key_fingerprint(key)
     type: "key: str"
     desc: 计算密钥指纹（台账键）
-  - name: common.license.activate_key(key, today=None)
-    type: "key: str; today: datetime.date | None（默认今天）"
+  - name: common.license.activate_key(key, now=None)
+    type: "key: str; now: datetime.datetime | datetime.date | None（默认本机此刻；date 按当日 0:00）"
     desc: 验签并激活密钥，写入当前授权与首次激活台账
-  - name: common.license.is_licensed(today=None)
-    type: "today: datetime.date | None（默认今天）"
+  - name: common.license.is_licensed(now=None)
+    type: "now: datetime.datetime | datetime.date | None（默认本机此刻；date 按当日 0:00）"
     desc: 当前授权是否有效
   - name: common.license.load_license()
     type: 无参
-    desc: 读取当前授权（供界面展示到期日）
-  - name: LicenseInfo.is_valid(today=None)
-    type: "today: datetime.date | None（默认今天）"
-    desc: 该授权在 today 是否有效
+    desc: 读取当前授权（供界面展示到期时刻）
+  - name: LicenseInfo.is_valid(now=None)
+    type: "now: datetime.datetime | datetime.date | None（默认本机此刻；date 按当日 0:00）"
+    desc: 该授权在 now 是否有效
 output:
   - name: common.paths.bundle_root()
     type: pathlib.Path
@@ -126,18 +126,18 @@ output:
   - name: common.license.key_fingerprint(key)
     type: str
     desc: 12 位小写十六进制；密钥中任意位置的空白字符不影响结果
-  - name: common.license.activate_key(key, today=None)
-    type: "LicenseInfo(days: int, activated_on: date, expire_on: date, key_fp: str)"
+  - name: common.license.activate_key(key, now=None)
+    type: "LicenseInfo(days: int, activated_at: datetime, expire_at: datetime, key_fp: str)"
     desc: 本次生效的授权（首次激活或台账中的首次记录）
-  - name: common.license.is_licensed(today=None)
+  - name: common.license.is_licensed(now=None)
     type: bool
-    desc: 有当前授权且 today < expire_on
+    desc: 有当前授权且 now < expire_at
   - name: common.license.load_license()
     type: LicenseInfo | None
     desc: 无授权或文件损坏为 None
-  - name: LicenseInfo.is_valid(today=None)
+  - name: LicenseInfo.is_valid(now=None)
     type: bool
-    desc: today < expire_on
+    desc: now < expire_at
 contract:
   - 各子能力通过子模块导入：common.paths / common.permissions / common.expire / common.license / common.pubsub；包 common 本身不导出符号
   - "冻结 data_root：macOS 为 ~/Library/Application Support/albn-autofish；Windows 为 sys.executable 同级 data/（不可写时退回 %LOCALAPPDATA%\\albn-autofish，未设则 ~/AppData/Local/albn-autofish）；其它平台 ~/.local/share/albn-autofish"
@@ -158,9 +158,10 @@ contract:
   - 授权文件 license.json 与首次激活台账 license_ledger.json 均位于 user_state_root()
   - 密钥校验失败时 activate_key 不写任何文件
   - parse_key / activate_key / key_fingerprint 忽略密钥任意位置的空白字符（空格、制表、换行）
-  - 同一密钥（按 key_fingerprint）首次激活起算 expire_on = today + days；再次激活沿用台账中首次的 activated_on / expire_on，不重新起算，即使 license.json 已删除或密钥中插入了空白
+  - 同一密钥（按 key_fingerprint）首次激活起算 expire_at = activated_at + timedelta(days=days)（N×24 小时）；再次激活沿用台账中首次的 activated_at / expire_at，不重新起算，即使 license.json 已删除或密钥中插入了空白
   - 激活另一把密钥会覆盖当前授权 license.json；台账保留所有密钥的首次记录
-  - 授权过期（today >= expire_on）只表现为 is_licensed() 为 False，不删除文件
+  - 授权过期（now >= expire_at）只表现为 is_licensed() 为 False，不删除文件
+  - 读写兼容旧版仅含 activated_on / expire_on（日期）的文件：按当日 0:00 解释；新写入使用 activated_at / expire_at（含时分秒）
   - user_state_root() 下尚无 license.json 而 data_root() 下有旧版合法 license.json 时，load_license() / is_licensed() 将其迁入 user_state_root()、补登台账并删除旧文件
 depends: []
 errors:
@@ -214,12 +215,12 @@ tests:
   - issue_key 格式为 ALBN1 三段且 parse_key 取回 days；同天数两次签发不同
   - issue_key 的 days <= 0 抛 ValueError
   - key_fingerprint 为 12 位十六进制且忽略任意位置空白
-  - 激活往返：未激活 is_licensed 为 False；激活后 expire_on = today + days，到期前有效、到期日起无效
+  - 激活往返：未激活 is_licensed 为 False；激活后 expire_at = activated_at + N×24h，到期前有效、到期时刻起无效
   - 篡改载荷 / 签名 / 前缀的密钥被拒，且不写任何文件
-  - 同一密钥再次激活（含删除 license.json 后、插入空白后）沿用首次到期日
-  - 激活另一把密钥覆盖当前授权，原密钥再激活仍沿用其首次到期日
+  - 同一密钥再次激活（含删除 license.json 后、插入空白后）沿用首次到期时刻
+  - 激活另一把密钥覆盖当前授权，原密钥再激活仍沿用其首次到期时刻
   - 损坏的 license.json 视为未授权
   - data_root 下旧版 license.json 被迁入 user_state_root 并删除
-  - LicenseInfo.is_valid 在 expire_on 当日为 False
+  - 旧版仅日期字段的 license 可读取；LicenseInfo.is_valid 在 expire_at 时刻起为 False
   # integration
   - 子 Module common.pubsub 可经 common 包导入并工作

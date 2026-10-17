@@ -8,7 +8,7 @@ import hmac
 import json
 import secrets
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 
 from common.paths import data_root, user_state_root
@@ -42,15 +42,35 @@ def ledger_path() -> Path:
     return user_state_root() / _LEDGER_NAME
 
 
+def _as_now(now: datetime | date | None) -> datetime:
+    if now is None:
+        return datetime.now()
+    if isinstance(now, datetime):
+        return now
+    return datetime.combine(now, time.min)
+
+
+def _parse_dt(raw: object) -> datetime | None:
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip()
+    try:
+        if len(text) == 10:
+            return datetime.combine(date.fromisoformat(text), time.min)
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
 @dataclass(frozen=True)
 class LicenseInfo:
     days: int
-    activated_on: date
-    expire_on: date
+    activated_at: datetime
+    expire_at: datetime
     key_fp: str
 
-    def is_valid(self, *, today: date | None = None) -> bool:
-        return (today or date.today()) < self.expire_on
+    def is_valid(self, *, now: datetime | date | None = None) -> bool:
+        return _as_now(now) < self.expire_at
 
 
 def _normalize_key(key: str) -> str:
@@ -96,11 +116,22 @@ def parse_key(key: str) -> dict:
 
 def _info_from_raw(raw: dict) -> LicenseInfo | None:
     try:
+        days = int(raw["days"])
+        key_fp = str(raw.get("key_fp") or "")
+        activated_at = _parse_dt(raw.get("activated_at"))
+        expire_at = _parse_dt(raw.get("expire_at"))
+        # 旧版仅有日期字段：按当日 0:00 起算，兼容已发出的授权
+        if activated_at is None:
+            activated_at = _parse_dt(raw.get("activated_on"))
+        if expire_at is None:
+            expire_at = _parse_dt(raw.get("expire_on"))
+        if activated_at is None or expire_at is None or days <= 0:
+            return None
         return LicenseInfo(
-            days=int(raw["days"]),
-            activated_on=date.fromisoformat(str(raw["activated_on"])[:10]),
-            expire_on=date.fromisoformat(str(raw["expire_on"])[:10]),
-            key_fp=str(raw.get("key_fp") or ""),
+            days=days,
+            activated_at=activated_at,
+            expire_at=expire_at,
+            key_fp=key_fp,
         )
     except (KeyError, ValueError, TypeError):
         return None
@@ -109,8 +140,8 @@ def _info_from_raw(raw: dict) -> LicenseInfo | None:
 def _info_to_raw(info: LicenseInfo) -> dict:
     return {
         "days": info.days,
-        "activated_on": info.activated_on.isoformat(),
-        "expire_on": info.expire_on.isoformat(),
+        "activated_at": info.activated_at.isoformat(timespec="seconds"),
+        "expire_at": info.expire_at.isoformat(timespec="seconds"),
         "key_fp": info.key_fp,
     }
 
@@ -208,13 +239,13 @@ def save_license(info: LicenseInfo) -> Path:
     return path
 
 
-def is_licensed(*, today: date | None = None) -> bool:
+def is_licensed(*, now: datetime | date | None = None) -> bool:
     info = load_license()
-    return info is not None and info.is_valid(today=today)
+    return info is not None and info.is_valid(now=now)
 
 
-def activate_key(key: str, *, today: date | None = None) -> LicenseInfo:
-    """验签；首次激活起算天数，同密钥再激活沿用首次到期。"""
+def activate_key(key: str, *, now: datetime | date | None = None) -> LicenseInfo:
+    """验签；首次激活起算 N×24 小时，同密钥再激活沿用首次到期。"""
     body = parse_key(key)
     days = int(body["days"])
     fp = key_fingerprint(key)
@@ -222,11 +253,11 @@ def activate_key(key: str, *, today: date | None = None) -> LicenseInfo:
     if prior is not None:
         info = prior
     else:
-        activated = today or date.today()
+        activated = _as_now(now)
         info = LicenseInfo(
             days=days,
-            activated_on=activated,
-            expire_on=activated + timedelta(days=days),
+            activated_at=activated,
+            expire_at=activated + timedelta(days=days),
             key_fp=fp,
         )
         _ledger_put(info)

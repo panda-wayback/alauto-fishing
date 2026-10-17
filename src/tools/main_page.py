@@ -37,7 +37,7 @@ _STYLE_WARN = (
 
 def build_main_page(host: "PreviewApp") -> QWidget:
     from common.license import load_license
-    from datetime import datetime, time
+    from datetime import datetime
 
     # —— 主控 ——
     page_main = QWidget()
@@ -64,9 +64,11 @@ def build_main_page(host: "PreviewApp") -> QWidget:
             host.lbl_license.setToolTip("")
             host.lbl_license.setStyleSheet(_STYLE_WARN)
             return
-        deadline = datetime.combine(lic.expire_on, time.min)
+        deadline = lic.expire_at
         secs = int((deadline - datetime.now()).total_seconds())
-        host.lbl_license.setToolTip(f"到期：{lic.expire_on.isoformat()} 0:00")
+        host.lbl_license.setToolTip(
+            f"到期：{deadline.strftime('%Y-%m-%d %H:%M:%S')}"
+        )
         if secs <= 0:
             host.lbl_license.setText("授权已到期")
             host.lbl_license.setStyleSheet(_STYLE_WARN)

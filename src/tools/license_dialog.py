@@ -35,7 +35,7 @@ class LicenseDialog(QDialog):
         info = load_license()
         if info is not None and not info.is_valid():
             self._status.setText(
-                f"授权已于 {info.expire_on.isoformat()} 到期，请输入新密钥。"
+                f"授权已于 {info.expire_at.strftime('%Y-%m-%d %H:%M:%S')} 到期，请输入新密钥。"
             )
 
         btn_ok = QPushButton("激活")
@@ -65,13 +65,13 @@ class LicenseDialog(QDialog):
             return
         if not info.is_valid():
             self._status.setText(
-                f"该密钥已于 {info.expire_on.isoformat()} 到期，请使用新密钥。"
+                f"该密钥已于 {info.expire_at.strftime('%Y-%m-%d %H:%M:%S')} 到期，请使用新密钥。"
             )
             return
         QMessageBox.information(
             self,
             "激活成功",
-            f"已激活 {info.days} 天，有效期至 {info.expire_on.isoformat()}。",
+            f"已激活 {info.days} 天，有效期至 {info.expire_at.strftime('%Y-%m-%d %H:%M:%S')}。",
         )
         self.accept()
 

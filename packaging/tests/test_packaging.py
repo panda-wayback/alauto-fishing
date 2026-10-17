@@ -4,7 +4,7 @@ import os
 import shutil
 import subprocess
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -71,11 +71,11 @@ def test_gen_license_key_cli_keys_verify_and_activate(tmp_path, monkeypatch):
 
     monkeypatch.setattr(license_mod, "user_state_root", lambda: tmp_path / "state")
     monkeypatch.setattr(license_mod, "data_root", lambda: tmp_path / "data")
-    today = date(2026, 1, 1)
-    info = license_mod.activate_key(keys[0], today=today)
-    assert info.expire_on == today + timedelta(days=7)
+    now = datetime(2026, 1, 1, 12, 0, 0)
+    info = license_mod.activate_key(keys[0], now=now)
+    assert info.expire_at == now + timedelta(days=7)
     assert (tmp_path / "state" / "license.json").is_file()
-    assert license_mod.is_licensed(today=today)
+    assert license_mod.is_licensed(now=now)
 
 
 @pytest.mark.parametrize("args", [["0"], ["-3"], ["7", "--count", "0"], ["abc"]])
@@ -120,9 +120,9 @@ def test_clear_license_allows_fresh_activation(tmp_path, monkeypatch):
     monkeypatch.setattr(license_mod, "data_root", lambda: data)
 
     key = license_mod.issue_key(7)
-    day1 = date(2026, 1, 1)
-    first = license_mod.activate_key(key, today=day1)
-    assert first.expire_on == day1 + timedelta(days=7)
+    t1 = datetime(2026, 1, 1, 15, 30, 0)
+    first = license_mod.activate_key(key, now=t1)
+    assert first.expire_at == t1 + timedelta(days=7)
     assert (state / "license.json").is_file()
     assert (state / "license_ledger.json").is_file()
 
@@ -130,12 +130,12 @@ def test_clear_license_allows_fresh_activation(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, "user_state_root", lambda: state)
     monkeypatch.setattr(mod, "data_root", lambda: data)
     assert mod.main() == 0
-    assert not license_mod.is_licensed(today=day1)
+    assert not license_mod.is_licensed(now=t1)
 
-    day2 = date(2026, 2, 1)
-    again = license_mod.activate_key(key, today=day2)
-    assert again.activated_on == day2
-    assert again.expire_on == day2 + timedelta(days=7)
+    t2 = datetime(2026, 2, 1, 10, 0, 0)
+    again = license_mod.activate_key(key, now=t2)
+    assert again.activated_at == t2
+    assert again.expire_at == t2 + timedelta(days=7)
 
 
 # ---------- write_expire.py ----------

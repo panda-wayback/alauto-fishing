@@ -2,7 +2,7 @@ import base64
 import json
 import re
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, time, timedelta
 
 import pytest
 
@@ -10,6 +10,7 @@ from common import license as lic
 from common.paths import data_root, user_state_root
 
 D0 = date(2026, 5, 1)
+T0 = datetime.combine(D0, time(15, 30, 0))
 
 
 def _state_files():
@@ -41,20 +42,20 @@ def test_key_fingerprint():
 
 def test_activate_roundtrip_and_expiry(sandbox):
     assert lic.load_license() is None
-    assert lic.is_licensed(today=D0) is False
+    assert lic.is_licensed(now=T0) is False
 
     key = lic.issue_key(10)
-    info = lic.activate_key(key, today=D0)
+    info = lic.activate_key(key, now=T0)
     assert info.days == 10
-    assert info.activated_on == D0
-    assert info.expire_on == D0 + timedelta(days=10)
+    assert info.activated_at == T0
+    assert info.expire_at == T0 + timedelta(days=10)
     assert info.key_fp == lic.key_fingerprint(key)
 
     assert lic.load_license() == info
-    assert lic.is_licensed(today=D0) is True
-    assert lic.is_licensed(today=info.expire_on - timedelta(days=1)) is True
-    assert lic.is_licensed(today=info.expire_on) is False
-    assert lic.is_licensed(today=info.expire_on + timedelta(days=100)) is False
+    assert lic.is_licensed(now=T0) is True
+    assert lic.is_licensed(now=info.expire_at - timedelta(seconds=1)) is True
+    assert lic.is_licensed(now=info.expire_at) is False
+    assert lic.is_licensed(now=info.expire_at + timedelta(days=100)) is False
     assert {"license.json", "license_ledger.json"} <= set(_state_files())
 
 
@@ -62,7 +63,7 @@ def test_activate_accepts_surrounding_and_inner_spaces(sandbox):
     key = lic.issue_key(3)
     spaced = f"  {key[:10]} {key[10:]}  "
     assert lic.parse_key(spaced)["days"] == 3
-    assert lic.activate_key(f"  {key}\n", today=D0).expire_on == D0 + timedelta(days=3)
+    assert lic.activate_key(f"  {key}\n", now=T0).expire_at == T0 + timedelta(days=3)
 
 
 def _forge_days(key: str, days: int) -> str:
@@ -95,49 +96,49 @@ def test_tampered_key_rejected_without_writing(sandbox, tamper):
     with pytest.raises(ValueError):
         lic.parse_key(bad)
     with pytest.raises(ValueError):
-        lic.activate_key(bad, today=D0)
+        lic.activate_key(bad, now=T0)
     assert _state_files() == before
-    assert lic.is_licensed(today=D0) is False
+    assert lic.is_licensed(now=T0) is False
 
 
 def test_reactivating_same_key_keeps_first_expiry(sandbox):
     key = lic.issue_key(5)
-    first = lic.activate_key(key, today=D0)
+    first = lic.activate_key(key, now=T0)
 
-    again = lic.activate_key(key, today=D0 + timedelta(days=3))
-    assert (again.activated_on, again.expire_on) == (first.activated_on, first.expire_on)
+    again = lic.activate_key(key, now=T0 + timedelta(days=3))
+    assert (again.activated_at, again.expire_at) == (first.activated_at, first.expire_at)
 
     lic.license_path().unlink()
-    later = D0 + timedelta(days=30)
-    reinstall = lic.activate_key(key, today=later)
-    assert (reinstall.activated_on, reinstall.expire_on) == (first.activated_on, first.expire_on)
+    later = T0 + timedelta(days=30)
+    reinstall = lic.activate_key(key, now=later)
+    assert (reinstall.activated_at, reinstall.expire_at) == (first.activated_at, first.expire_at)
     assert lic.load_license() == first
-    assert lic.is_licensed(today=later) is False
+    assert lic.is_licensed(now=later) is False
 
     spaced = f"{key[:10]} {key[10:20]}\t{key[20:]}"
-    respaced = lic.activate_key(spaced, today=later)
-    assert (respaced.activated_on, respaced.expire_on) == (first.activated_on, first.expire_on)
+    respaced = lic.activate_key(spaced, now=later)
+    assert (respaced.activated_at, respaced.expire_at) == (first.activated_at, first.expire_at)
 
 
 def test_new_key_overrides_and_old_key_keeps_its_record(sandbox):
     k1, k2 = lic.issue_key(5), lic.issue_key(20)
-    first = lic.activate_key(k1, today=D0)
-    d1 = D0 + timedelta(days=10)
-    second = lic.activate_key(k2, today=d1)
-    assert second.expire_on == d1 + timedelta(days=20)
+    first = lic.activate_key(k1, now=T0)
+    t1 = T0 + timedelta(days=10)
+    second = lic.activate_key(k2, now=t1)
+    assert second.expire_at == t1 + timedelta(days=20)
     assert lic.load_license() == second
-    assert lic.is_licensed(today=d1) is True
+    assert lic.is_licensed(now=t1) is True
 
-    back = lic.activate_key(k1, today=d1)
-    assert back.expire_on == first.expire_on
-    assert lic.is_licensed(today=d1) is False
+    back = lic.activate_key(k1, now=t1)
+    assert back.expire_at == first.expire_at
+    assert lic.is_licensed(now=t1) is False
 
 
 @pytest.mark.parametrize("content", ["{oops", "[]", '{"days": 1}'])
 def test_corrupt_license_file_is_unlicensed(sandbox, content):
     lic.license_path().write_text(content, encoding="utf-8")
     assert lic.load_license() is None
-    assert lic.is_licensed(today=D0) is False
+    assert lic.is_licensed(now=T0) is False
 
 
 def test_legacy_license_migrates_to_user_state(sandbox, monkeypatch):
@@ -157,16 +158,28 @@ def test_legacy_license_migrates_to_user_state(sandbox, monkeypatch):
         encoding="utf-8",
     )
     info = lic.load_license()
-    assert info is not None and info.expire_on == D0 + timedelta(days=7)
+    assert info is not None
+    assert info.activated_at == datetime.combine(D0, time.min)
+    assert info.expire_at == datetime.combine(D0 + timedelta(days=7), time.min)
     assert not legacy.exists()
     assert lic.license_path().is_file()
     assert lic.ledger_path().is_file()
-    assert lic.is_licensed(today=D0) is True
+    assert lic.is_licensed(now=D0) is True
 
 
 def test_license_info_is_valid_boundary():
+    exp = T0 + timedelta(days=1)
     info = lic.LicenseInfo(
-        days=1, activated_on=D0, expire_on=D0 + timedelta(days=1), key_fp="x"
+        days=1, activated_at=T0, expire_at=exp, key_fp="x"
     )
-    assert info.is_valid(today=D0) is True
-    assert info.is_valid(today=D0 + timedelta(days=1)) is False
+    assert info.is_valid(now=T0) is True
+    assert info.is_valid(now=exp - timedelta(seconds=1)) is True
+    assert info.is_valid(now=exp) is False
+
+
+def test_date_only_now_accepted(sandbox):
+    """传入 date 时按当日 0:00 起算。"""
+    key = lic.issue_key(2)
+    info = lic.activate_key(key, now=D0)
+    assert info.activated_at == datetime.combine(D0, time.min)
+    assert info.expire_at == datetime.combine(D0 + timedelta(days=2), time.min)
