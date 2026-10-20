@@ -20,15 +20,18 @@ input:
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: "PreviewApp.btn_float 点击；紧凑态文字为「主界面」的按钮点击"
     desc: 同一主窗在完整态与紧凑态之间切换
-  - name: UI 操作：拉漂配置页（框选 ROI、条界、策略数轴、按下间隔）/ 开钓配置页（设备、模板、阈值）/ 更多页（置顶、开钓第一下区间、写入打包默认）
+  - name: UI 操作：拉漂配置页（框选 ROI、条界、策略数轴、按下间隔、恢复默认框）/ 开钓配置页（设备、模板、阈值）/ 更多页（置顶、开钓第一下区间、恢复默认、写入打包默认）
     type: Qt 控件交互
-    desc: 调整 autofish 参数；均写入下述持久化
+    desc: 调整 autofish 参数；均写入下述持久化。恢复默认见 load_default_shell_settings
   - name: tools.shell_config.ShellSettings
     type: "dataclass（可变）；字段与默认：sound_threshold=0.70, press_lo=70.6, press_hi=74.4, release_lo=76.6, release_hi=79.2, press_interval_s=0.0, stay_on_top=True, compact_mode=False, hud_x=-1, hud_y=-1, sound_enabled=False, auto_bobber_enabled=True, audio_device_name='', window_x=-1, window_y=-1, window_w=0, window_h=0, click_delay_lo_s=0.3, click_delay_hi_s=1.5, click_hold_lo_s=0.7, click_hold_hi_s=1.5, click_after_lo_s=0.2, click_after_hi_s=0.8"
     desc: 壳配置；字段即设置文件 JSON 的全部键（秒 / 百分点 / 像素）
   - name: tools.shell_config.load_shell_settings()
     type: 无参
     desc: 读取壳配置
+  - name: tools.shell_config.load_default_shell_settings()
+    type: 无参
+    desc: 忽略用户文件，取恢复默认要写回的配置
   - name: tools.shell_config.save_shell_settings(settings)
     type: "settings: ShellSettings"
     desc: 写用户设置文件
@@ -66,6 +69,9 @@ output:
   - name: tools.shell_config.load_shell_settings()
     type: ShellSettings
     desc: 用户文件优先 → 打包默认 → 代码内建缺省；文件中缺的键取内建缺省，未知键忽略，取值经规范化
+  - name: tools.shell_config.load_default_shell_settings()
+    type: ShellSettings
+    desc: 忽略用户文件；有合法打包默认则采用（缺键取内建缺省），否则内建缺省；紧凑态、紧凑落点、窗口几何与音频设备名清空
   - name: tools.shell_config.save_shell_settings(settings)
     type: None
     desc: 把规范化后的全部字段写入 settings_path()（UTF-8 JSON，缩进 2）；父目录不存在时自动创建
@@ -93,6 +99,8 @@ contract:
   - 激活对话框接受有效密钥时经 common.license 写入授权，随即进入主窗
   - 主窗关闭时停止 Capture / Detect / Decide / Act 与声音监听线程
   - 冻结运行时「更多」页不显示「写入打包默认」，save_bundled_shell_settings 拒绝写入
+  - 「更多」页「恢复默认」在冻结运行时仍显示。确认后把 load_default_shell_settings() 写入用户设置文件，并立刻反映到 A/B、阈值、策略区间、按下间隔、置顶、开钓第一下、紧凑态（关）与默认窗口尺寸（就地，不跳屏）；音频设备名按空字符串重新匹配。同时按当前主屏重算默认 ROI（source=default），清空手动条界与参考图，并继续截图。取消确认则用户设置与 ROI 都不变
+  - 恢复默认不删除模板、长录音，不改授权，不改打包默认文件。策略区间非法时沿用 B 的既有失败行为（弹警告并取消勾选）。关闭窗口仍把当时几何写入用户设置
 depends:
   - src/autofish
   - src/autofish/events
@@ -118,6 +126,9 @@ tests:
   - save_shell_settings 写入 settings_path()，键恰为 ShellSettings 全部字段，可读回相同值
   - save_bundled_shell_settings 写入 bundled_settings_path() 并去掉窗口几何、紧凑态与设备名，保留玩法项
   - 冻结运行时 save_bundled_shell_settings 抛 RuntimeError 且不写文件
+  - load_default_shell_settings 忽略用户文件；有打包默认时采用打包默认并清空紧凑态、窗口几何与设备名；没有则返回内建缺省
+  - 确认「恢复默认」后用户设置文件等于 load_default_shell_settings（B 因策略非法被取消勾选时 auto_bobber_enabled 为 false），ROI 变为当前主屏居中默认框且条界与参考图被清空，界面勾选与数轴与该设置一致
+  - 取消「恢复默认」时用户设置文件与 ROI 保持原样
   - global_qss / preview_canvas_qss 返回含色板颜色的非空样式表且可被 QWidget 应用
   - 无 ROI 存盘时 PreviewApp 在 roi_path 写入默认 ROI 并开启监控；默认设置下 B 开启 Decide + Act
   - 已有 ROI 存盘时 PreviewApp 载入该 ROI 交给流水线并开启监控

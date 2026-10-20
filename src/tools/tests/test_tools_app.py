@@ -21,7 +21,15 @@ import common.permissions as perms
 from autofish.events.bus import AutofishBus
 from autofish.events.topics import CastSessionState
 from autofish.first_click_trigger.audio_input import AudioInput
-from autofish.locate import Roi, load_roi, load_roi_source, save_roi
+from autofish.locate import (
+    BarMark,
+    Roi,
+    bar_ref_path,
+    load_bar_mark,
+    load_roi,
+    load_roi_source,
+    save_roi,
+)
 from tools import preview_app, shell_config
 from tools.preview_app import PreviewApp, launch_ui
 from tools.shell_config import ShellSettings, save_shell_settings
@@ -329,6 +337,107 @@ def test_launch_refused_when_package_expired(env):
     assert [k for k, _ in env.boxes] == ["critical"]
     assert FakePipeline.instances == []
     assert not env.roi.exists()
+
+
+def _yes(monkeypatch):
+    monkeypatch.setattr(
+        preview_app.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.Yes),
+    )
+
+
+def _no(monkeypatch):
+    monkeypatch.setattr(
+        preview_app.QMessageBox,
+        "question",
+        staticmethod(lambda *a, **k: QMessageBox.StandardButton.No),
+    )
+
+
+def test_restore_defaults_resets_settings_and_roi(env, monkeypatch):
+    save_shell_settings(
+        ShellSettings(
+            sound_threshold=0.55,
+            sound_enabled=True,
+            auto_bobber_enabled=False,
+            compact_mode=True,
+            audio_device_name="BlackHole 2ch",
+            window_x=10,
+            window_y=20,
+            window_w=500,
+            window_h=800,
+            press_lo=62.0,
+            press_interval_s=0.2,
+            click_delay_lo_s=1.0,
+            click_delay_hi_s=2.0,
+        )
+    )
+    (env.assets / "shell_settings.json").write_text(
+        json.dumps({"sound_threshold": 0.81, "sound_enabled": False, "press_lo": 71.2}),
+        encoding="utf-8",
+    )
+    save_roi(
+        Roi(11, 22, 200, 100),
+        env.roi,
+        bar=BarMark(10, 80, 0, 12, frame_width=200),
+        source="manual",
+    )
+    ref = bar_ref_path(env.roi)
+    ref.write_bytes(b"png")
+    _yes(monkeypatch)
+    win = _make(env)
+    assert win._compact
+    assert win.chk_b.isChecked() is False
+    win.btn_restore_defaults.click()
+    env.app.processEvents()
+    raw = _settings(env)
+    assert raw["sound_threshold"] == pytest.approx(0.81)
+    assert raw["press_lo"] == pytest.approx(71.2)
+    assert raw["sound_enabled"] is False
+    assert raw["auto_bobber_enabled"] is True
+    assert raw["compact_mode"] is False
+    assert raw["audio_device_name"] == ""
+    assert (raw["window_x"], raw["window_y"], raw["window_w"], raw["window_h"]) == (
+        -1,
+        -1,
+        0,
+        0,
+    )
+    assert (raw["hud_x"], raw["hud_y"]) == (-1, -1)
+    assert raw["press_interval_s"] == pytest.approx(0.0)
+    assert (raw["click_delay_lo_s"], raw["click_delay_hi_s"]) == (0.3, 1.5)
+    assert load_roi(env.roi) == Roi(left=600, top=450, width=400, height=300)
+    assert load_roi_source(env.roi) == "default"
+    assert load_bar_mark(env.roi) is None
+    assert not ref.exists()
+    assert win.chk_a.isChecked() is False
+    assert win.chk_b.isChecked() is True
+    assert win.range_axis.ranges()[0] == pytest.approx(71.2)
+    assert win.sld_press_interval.value() == 0
+    assert win.bar_delay.range() == pytest.approx((0.3, 1.5))
+    assert win._sound_panel.current_threshold() == pytest.approx(0.81)
+    assert not win._compact
+    assert (win.width(), win.height()) == (460, 800)
+    assert _pipe().decide_on and _pipe().act_on
+    assert _pipe().monitor_on
+    assert _pipe().rois[-1] == load_roi(env.roi)
+    _close(win, env)
+
+
+def test_restore_defaults_cancel_keeps_settings_and_roi(env, monkeypatch):
+    save_shell_settings(ShellSettings(sound_threshold=0.55, press_lo=62.0))
+    save_roi(Roi(11, 22, 200, 100), env.roi, source="manual")
+    _no(monkeypatch)
+    win = _make(env)
+    before = env.settings_file.read_text(encoding="utf-8")
+    win.btn_restore_defaults.click()
+    env.app.processEvents()
+    assert env.settings_file.read_text(encoding="utf-8") == before
+    assert load_roi(env.roi) == Roi(11, 22, 200, 100)
+    assert load_roi_source(env.roi) == "manual"
+    assert win.range_axis.ranges()[0] == pytest.approx(62.0)
+    _close(win, env)
 
 
 def test_launch_refused_when_activation_cancelled(env, monkeypatch):

@@ -156,6 +156,13 @@ def load_shell_settings() -> ShellSettings:
     return ShellSettings()
 
 
+def load_default_shell_settings() -> ShellSettings:
+    """忽略用户文件：打包默认，否则内建缺省；并清空机器相关项。"""
+    bundled = _parse_settings_file(bundled_settings_path())
+    base = bundled if bundled is not None else ShellSettings()
+    return package_defaults_from(base)
+
+
 def save_shell_settings(settings: ShellSettings) -> None:
     path = settings_path()
     path.parent.mkdir(parents=True, exist_ok=True)

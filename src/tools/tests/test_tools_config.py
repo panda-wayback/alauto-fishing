@@ -11,6 +11,7 @@ from tools import shell_config, shell_theme
 from tools.shell_config import (
     ShellSettings,
     bundled_settings_path,
+    load_default_shell_settings,
     load_shell_settings,
     save_bundled_shell_settings,
     save_shell_settings,
@@ -117,6 +118,34 @@ def test_save_writes_all_keys_and_roundtrips(dirs):
     assert raw["sound_threshold"] == pytest.approx(0.55)
     back = load_shell_settings()
     assert back == s
+
+
+def test_load_default_ignores_user_file_and_strips_machine_fields(dirs):
+    data, assets = dirs
+    assert load_default_shell_settings() == ShellSettings()
+    _write(
+        assets / "shell_settings.json",
+        {
+            "sound_threshold": 0.81,
+            "sound_enabled": True,
+            "press_lo": 71.2,
+            "compact_mode": True,
+            "audio_device_name": "Speakers",
+            "window_x": 12,
+            "window_w": 500,
+            "hud_y": 40,
+        },
+    )
+    _write(data / "shell_settings.json", {"sound_threshold": 0.2, "press_lo": 50.0})
+    s = load_default_shell_settings()
+    assert s.sound_threshold == pytest.approx(0.81)
+    assert s.sound_enabled is True
+    assert s.press_lo == pytest.approx(71.2)
+    assert s.press_hi == 74.4
+    assert s.compact_mode is False
+    assert s.audio_device_name == ""
+    assert (s.window_x, s.window_w, s.hud_y) == (-1, 0, -1)
+    assert load_shell_settings().sound_threshold == pytest.approx(0.2)
 
 
 def test_save_bundled_strips_machine_fields(dirs):

@@ -1,4 +1,4 @@
-"""更多页：权限、开钓第一下区间、打包默认。"""
+"""更多页：权限、开钓第一下区间、恢复默认、打包默认。"""
 
 from __future__ import annotations
 
@@ -117,7 +117,25 @@ def build_more_page(host: "PreviewApp") -> QWidget:
     host.bar_after.rangeChanged.connect(host._on_click_timing_changed)
     click_l.addWidget(host.bar_after)
     more_l.addWidget(click)
-    
+
+    restore = QGroupBox("恢复默认")
+    restore_l = QVBoxLayout(restore)
+    hint_restore = QLabel(
+        "把拉漂、开钓和截图范围恢复为默认，并清空手动条界；"
+        "不删除模板、录音和授权"
+    )
+    hint_restore.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+    hint_restore.setWordWrap(True)
+    restore_l.addWidget(hint_restore)
+    host.btn_restore_defaults = QPushButton("恢复默认")
+    host.btn_restore_defaults.setObjectName("btnGhost")
+    host.btn_restore_defaults.setToolTip(
+        "恢复打包默认（没有则用内建缺省），并按当前主屏重算截图框"
+    )
+    host.btn_restore_defaults.clicked.connect(host._on_restore_defaults)
+    restore_l.addWidget(host.btn_restore_defaults)
+    more_l.addWidget(restore)
+
     if not is_frozen_app():
         pack = QGroupBox("打包默认")
         pack_l = QVBoxLayout(pack)

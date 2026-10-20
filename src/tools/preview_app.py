@@ -66,6 +66,7 @@ from autofish.events.topics import (
 from common import permissions as perms
 from tools.shell_config import (
     ShellSettings,
+    load_default_shell_settings,
     load_shell_settings,
     save_bundled_shell_settings,
     save_shell_settings,
@@ -674,6 +675,108 @@ class PreviewApp(QMainWindow):
             "打包默认",
             f"已写入：\n{path}\n\n提交后打包即可带上当前玩法默认。",
         )
+
+    def _on_restore_defaults(self) -> None:
+        reply = QMessageBox.question(
+            self,
+            "恢复默认",
+            "将把拉漂、开钓和截图范围恢复为默认，并清空手动条界与参考图。\n"
+            "模板、录音和授权会保留。\n\n"
+            "继续？",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+        self._apply_factory_defaults()
+
+    def _apply_factory_defaults(self) -> None:
+        """用打包默认（否则内建缺省）覆盖壳配置，并恢复截图框。"""
+        defaults = load_default_shell_settings()
+        self._persist_timer.stop()
+
+        self.chk_stay_on_top.blockSignals(True)
+        self.chk_stay_on_top.setChecked(bool(defaults.stay_on_top))
+        self.chk_stay_on_top.blockSignals(False)
+        self.range_axis.setRanges(
+            defaults.press_lo,
+            defaults.press_hi,
+            defaults.release_lo,
+            defaults.release_hi,
+            emit=False,
+        )
+        self.sld_press_interval.blockSignals(True)
+        self.sld_press_interval.setValue(int(round(defaults.press_interval_s * 1000)))
+        self.sld_press_interval.blockSignals(False)
+        self.lbl_press_interval.setText(f"{defaults.press_interval_s:.2f}s")
+        self.bar_delay.setRange(
+            defaults.click_delay_lo_s, defaults.click_delay_hi_s, emit=False
+        )
+        self.bar_hold.setRange(
+            defaults.click_hold_lo_s, defaults.click_hold_hi_s, emit=False
+        )
+        self.bar_after.setRange(
+            defaults.click_after_lo_s, defaults.click_after_hi_s, emit=False
+        )
+        if self._sound_panel is not None:
+            self._sound_panel.set_threshold_value(defaults.sound_threshold, emit=False)
+            self._sound_panel.set_click_timing(
+                defaults.click_delay_lo_s,
+                defaults.click_delay_hi_s,
+                defaults.click_hold_lo_s,
+                defaults.click_hold_hi_s,
+                defaults.click_after_lo_s,
+                defaults.click_after_hi_s,
+            )
+            self._sound_panel.set_preferred_device_name("")
+            trig = self._sound_panel.trigger
+            if defaults.sound_enabled and trig is not None:
+                trig.stop()
+
+        self._settings = defaults
+        self._reset_window_after_restore(bool(defaults.stay_on_top))
+
+        self._block_checks(True)
+        self.chk_b.setChecked(bool(defaults.auto_bobber_enabled))
+        self.chk_a.setChecked(bool(defaults.sound_enabled))
+        self._block_checks(False)
+        self._on_b_toggled(bool(defaults.auto_bobber_enabled))
+        if defaults.sound_enabled:
+            self._activate_sound_session(persist=False)
+        else:
+            self._on_a_toggled(False)
+        self._restore_default_roi()
+        self._publish_press_interval()
+
+        self._persist_timer.stop()
+        clean = load_default_shell_settings()
+        self._settings = replace(
+            clean,
+            auto_bobber_enabled=bool(self.chk_b.isChecked()),
+            sound_enabled=bool(self.chk_a.isChecked()),
+            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+        )
+        save_shell_settings(self._settings)
+        self.lbl_hint.setText("已恢复默认")
+        self._main_log("已恢复默认")
+
+    def _reset_window_after_restore(self, stay_on_top: bool) -> None:
+        """退出紧凑态，就地回到默认窗口尺寸。"""
+        self._full_geo = None
+        if self._compact:
+            self._set_compact_mode(False, persist=False)
+        else:
+            anchor = self.geometry().topLeft()
+            self.setMinimumSize(360, 480)
+            self.resize(460, 800)
+            self.move(anchor)
+            self._ensure_frame_on_screen()
+        was_visible = self.isVisible()
+        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, bool(stay_on_top))
+        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
+        if was_visible:
+            self.show()
+        QTimer.singleShot(0, self._apply_no_minimize)
 
     def _on_perm_screen(self) -> None:
         msg = perms.request_screen_access()
