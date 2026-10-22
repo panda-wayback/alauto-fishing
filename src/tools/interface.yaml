@@ -29,9 +29,9 @@ input:
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: "PreviewApp.btn_float 点击；紧凑态文字为「主界面」的按钮点击"
     desc: 同一主窗在完整态与紧凑态之间切换
-  - name: UI 操作：自动拉线页（框选 ROI、条界、策略数轴、按下间隔、恢复默认框）/ 自动起勾页（设备、模板、阈值、开钓第一下区间）/ 更多页（置顶、恢复默认、写入打包默认）
+  - name: UI 操作：自动拉线页（框选 ROI、条界、策略数轴、按下间隔、恢复默认框、刷新参考图）/ 自动起勾页（设备、模板、阈值、开钓第一下区间）/ 更多页（置顶、恢复默认、写入打包默认）
     type: Qt 控件交互
-    desc: 调整 autofish 参数；均写入下述持久化。恢复默认见 load_default_shell_settings
+    desc: 调整 autofish 参数；均写入下述持久化。刷新参考图会先清旧参考图、手动黄线与程序条界锁再等漂更新。恢复默认见 load_default_shell_settings
   - name: tools.shell_config.ShellSettings
     type: "dataclass（可变）；字段与默认：… compact_mode=False, hud_x=-1, hud_y=-1, hud_opacity=0.88, … auto_cast_enabled=False, cast_count_lo=5, cast_count_hi=5, …"
     desc: 壳配置；字段即设置文件 JSON 的全部键（秒 / 百分点 / 像素）
@@ -106,7 +106,7 @@ contract:
   - 一窗两态：完整态与紧凑态是同一个 PreviewApp 窗口的两种显示，不另开独立窗口；完整→紧凑就地缩小（保留左上角），紧凑→完整就地恢复先前尺寸（保留左上角）
   - 仅当启动时已是紧凑态，才把窗口放到上次紧凑拖动落点（hud_x/hud_y），且夹到某块屏幕可用区内
   - 有 ROI 时 Capture + Detect 常开；与 A/B/C 勾选无关；无 ROI 存盘时启动即在 roi_path 写入主屏居中 1/4×1/4 默认 ROI（source=default）并开监控
-  - C = 自动抛竿：勾选后启工人待命 + 光标低频认漂；主控「抛竿」卡显示剩余次数大字、状态与光标小预览（与 POS 卡分离）；可开抛且空闲时右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务中右键 cancel；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；认漂翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
+  - C = 自动抛竿：勾选后启工人待命 + 光标低频认漂；主控「抛竿」卡显示剩余次数大字、状态与光标小预览（与 POS 卡分离）；可开抛且空闲时系统右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务进行中系统右键立刻 cancel（不要求认漂）；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；认漂翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
   - B = Decide + Act：勾选时策略区间非法（上下限颠倒，或松开下限 − 按住上限 < 1）则弹警告并自动取消勾选，不启动 Decide/Act
   - A = 会话机：勾选即偏好；启动失败（无音频设备 / 无模板 / 监听未运行）时保留勾选并落盘 sound_enabled=true，只在提示与日志中报告
   - 启动时先恢复 A/B/C 勾选再应用；B/C 立即应用，A 在事件循环下一拍尝试启动

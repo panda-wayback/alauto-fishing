@@ -23,13 +23,19 @@ class CastRightClickListener:
             except ImportError:
                 return
 
+            def _is_right(btn) -> bool:
+                try:
+                    if btn == Button.right:
+                        return True
+                except Exception:  # noqa: BLE001
+                    pass
+                name = str(getattr(btn, "name", "") or "").lower()
+                return name in ("right", "button.right")
+
             def _on_click(x, y, button, pressed):  # noqa: ARG001
                 if not pressed:
                     return
-                try:
-                    if button != Button.right:
-                        return
-                except Exception:  # noqa: BLE001
+                if not _is_right(button):
                     return
                 try:
                     self._on_press()

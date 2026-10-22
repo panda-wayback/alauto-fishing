@@ -81,7 +81,8 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     bar_title.addWidget(host.lbl_bar_hint, 1)
     host.btn_bar_refresh = QPushButton("刷新参考图")
     host.btn_bar_refresh.setToolTip(
-        "先清除下方旧参考图，再等待下一次鱼漂识别成功后用该帧更新"
+        "先清除旧参考图与黄线标记（防错标记继续控拉线），"
+        "再等待下一次鱼漂识别成功后用该帧更新；更新后请重新标左右界"
     )
     host.btn_bar_refresh.clicked.connect(host._refresh_bar_ref)
     bar_title.addWidget(host.btn_bar_refresh)

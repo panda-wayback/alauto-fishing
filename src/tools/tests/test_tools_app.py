@@ -572,6 +572,48 @@ def _no(monkeypatch):
     )
 
 
+def test_refresh_bar_ref_clears_marks_and_old_ref(env, monkeypatch):
+    """刷新参考图兜底：旧图 + 手动黄线 + 程序锁一并清掉，再进入等漂。"""
+    save_roi(
+        Roi(11, 22, 200, 100),
+        env.roi,
+        bar=BarMark(10, 80, 0, 12, frame_width=200),
+        source="manual",
+    )
+    ref = bar_ref_path(env.roi)
+    ref.write_bytes(b"png")
+    cleared = {"manual": 0, "lock": 0}
+
+    class _Det:
+        program_bar = (1.0, 2.0, 3.0, 4.0)
+        manual_bar = (1.0, 2.0, 3.0, 4.0)
+
+        def clear_bar_lock(self) -> None:
+            cleared["lock"] += 1
+            self.program_bar = None
+
+    det = _Det()
+
+    def _apply(box) -> None:
+        cleared["manual"] += 1
+        det.manual_bar = box
+
+    monkeypatch.setattr(preview_app, "get_detector", lambda: det)
+    monkeypatch.setattr(preview_app, "apply_manual_bar", _apply)
+    win = _make(env)
+    assert load_bar_mark(env.roi) is not None
+    win._refresh_bar_ref()
+    assert load_bar_mark(env.roi) is None
+    assert not ref.exists()
+    assert win._bar_ref_wait_bobber is True
+    assert win.btn_bar_refresh.text() == "等待鱼漂…"
+    assert cleared["manual"] >= 1
+    assert cleared["lock"] >= 1
+    assert det.manual_bar is None
+    assert win.bar_canvas.manual_bar is None
+    _close(win, env)
+
+
 def test_restore_defaults_resets_settings_and_roi(env, monkeypatch):
     save_shell_settings(
         ShellSettings(

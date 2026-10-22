@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 
 from PySide6.QtCore import QPoint, Qt
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
@@ -76,11 +76,31 @@ class CastCanvas(QFrame):
             p.setPen(QPen(QColor(255, 210, 60, alpha), width))
             p.drawPath(path)
 
+        # 屏心（对照）：画布正中，不等于圆心
+        mid = QPoint(self.canvas_w // 2, self.canvas_h // 2)
+        p.setPen(QPen(QColor(140, 150, 160, 140), 1, Qt.PenStyle.DashLine))
+        p.drawLine(mid - QPoint(22, 0), mid + QPoint(22, 0))
+        p.drawLine(mid - QPoint(0, 22), mid + QPoint(0, 22))
+        p.setFont(QFont("", 10))
+        p.setPen(QColor(140, 150, 160, 180))
+        p.drawText(mid + QPoint(8, -8), "屏心")
+
+        # 圆心 = 标定 (cx,cy) → 人物脚下（力度 0）；透视下黄环视觉中心会偏下
         ax, ay = self.circle.anchor(self.canvas_w, self.canvas_h)
         center = QPoint(int(round(ax)), int(round(ay)))
-        p.setPen(QPen(QColor(255, 90, 90, 240), 2))
-        p.drawLine(center - QPoint(9, 0), center + QPoint(9, 0))
-        p.drawLine(center - QPoint(0, 9), center + QPoint(0, 9))
+        p.setPen(QPen(QColor(255, 90, 90, 220), 2))
+        p.setBrush(QColor(255, 90, 90, 40))
+        p.drawEllipse(center, 14, 14)
+        p.setBrush(QColor(255, 90, 90, 240))
+        p.setPen(Qt.PenStyle.NoPen)
+        p.drawEllipse(center, 5, 5)
+        p.setPen(QPen(QColor(255, 230, 230, 255), 2))
+        p.drawLine(center - QPoint(20, 0), center + QPoint(20, 0))
+        p.drawLine(center - QPoint(0, 20), center + QPoint(0, 20))
+        p.setPen(QColor(255, 120, 120, 255))
+        p.setFont(QFont("", 11, QFont.Weight.Bold))
+        label = f"圆心 ({self.circle.cx:.2f},{self.circle.cy:.2f})"
+        p.drawText(center + QPoint(12, 4), label)
         p.end()
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
@@ -142,7 +162,10 @@ class CastCalibrationWindow(QWidget):
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(10)
         layout.addWidget(
-            QLabel("拖红十字到人物脚下；调俯视角度与大小（也可滚轮）。保存的是比例，换屏幕自适应。")
+            QLabel(
+                "红点「圆心」=人物脚下（力度0），拖它对准角色；灰虚线「屏心」=幕布正中，仅对照。"
+                "透视下黄环视觉中心会偏下。调角度/大小也可用滚轮。保存的是比例，换屏自适应。"
+            )
         )
         layout.addWidget(self.canvas, 0, Qt.AlignmentFlag.AlignCenter)
 

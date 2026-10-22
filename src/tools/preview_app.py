@@ -1256,8 +1256,18 @@ class PreviewApp(QMainWindow):
         self.bar_canvas.set_rgb(rgb)
         self._bar_ref_saved = True
 
+    def _clear_bar_marks_for_ref_refresh(self) -> None:
+        """刷新参考图兜底：旧手动黄线 / 程序锁一并清掉，避免错标记继续控拉线。"""
+        clear_bar_mark(self.roi_path)
+        apply_manual_bar(None)
+        clear = getattr(get_detector(), "clear_bar_lock", None)
+        if callable(clear):
+            clear()
+        self.bar_canvas.set_manual_bar(None)
+        self.bar_canvas.set_program_bar(None)
+
     def _refresh_bar_ref(self) -> None:
-        """先清掉旧参考图，再挂起等待；下一帧有漂再落新图（不用无漂空图）。"""
+        """先清旧参考图与条界标记，再挂起等待；下一帧有漂再落新图（不用无漂空图）。"""
         if self._bar_ref_wait_bobber:
             self._bar_ref_wait_bobber = False
             self.btn_bar_refresh.setText("刷新参考图")
@@ -1265,27 +1275,29 @@ class PreviewApp(QMainWindow):
             self.lbl_hint.setText("已取消等待参考图")
             return
         clear_bar_ref(self.roi_path)
+        self._clear_bar_marks_for_ref_refresh()
         self._bar_ref_saved = False
         self.bar_canvas.set_rgb(None)
-        self.bar_canvas.set_program_bar(None)
         self._bar_ref_wait_bobber = True
         self.btn_bar_refresh.setText("等待鱼漂…")
-        self._cal_log("已清除旧参考图 · 等待下一次鱼漂识别")
-        self.lbl_hint.setText("旧图已清 · 等待鱼漂后更新参考图")
+        self._cal_log("已清除旧参考图与条界标记 · 等待下一次鱼漂识别")
+        self.lbl_hint.setText("旧图与标记已清 · 等待鱼漂后更新参考图")
 
     def _maybe_commit_bar_ref_wait(self, event: PosEvent) -> None:
         if not self._bar_ref_wait_bobber:
             return
         if event.hit is None or event.frame is None:
             return
+        # 落新图前再清一次标记，防止等待期间又被旧逻辑写回
+        self._clear_bar_marks_for_ref_refresh()
         self._save_bar_ref(event.frame)
         det = get_detector()
         if hasattr(det, "program_bar"):
             self.bar_canvas.set_program_bar(det.program_bar)
         self._bar_ref_wait_bobber = False
         self.btn_bar_refresh.setText("刷新参考图")
-        self._cal_log("已刷新条界参考图（等漂命中）")
-        self.lbl_hint.setText("参考图已更新")
+        self._cal_log("已刷新条界参考图（等漂命中）· 请重新拖黄线标左右界")
+        self.lbl_hint.setText("参考图已更新 · 请重新标记条界")
 
     def _clear_manual_bar(self) -> None:
         clear_bar_mark(self.roi_path)
@@ -1660,12 +1672,13 @@ class PreviewApp(QMainWindow):
         self._refresh_cast_label()
 
     def _on_cast_right_click(self) -> None:
-        """右键：可开抛且空闲 → 开始；任务中 → 结束；否则不抢游戏。"""
+        """系统右键：任务进行中 → 立刻结束（不要求认漂）；可开抛且空闲 → 开始；否则不抢。"""
         if not self.chk_c.isChecked():
             return
-        pipe = self._pipe
-        if pipe is not None and pipe.auto_cast.active:
-            self._on_cast_hotkey_stop()
+        pipe = self._ensure_pipe()
+        # 进行中任意阶段（蓄力 / 等漂 / 等待）右键都停，不依赖认漂
+        if pipe.auto_cast.active:
+            self._on_cast_hotkey_stop(via="右键")
             return
         armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
         if not armed:
@@ -2045,7 +2058,7 @@ class PreviewApp(QMainWindow):
             self._main_log(f"抛杆开始 · {n} 次")
         self._refresh_cast_label()
 
-    def _on_cast_hotkey_stop(self) -> None:
+    def _on_cast_hotkey_stop(self, *, via: str = "快捷键") -> None:
         if not self.chk_c.isChecked():
             return
         pipe = self._pipe
@@ -2054,8 +2067,8 @@ class PreviewApp(QMainWindow):
         pipe.cancel_cast_batch()
         self._cast_paused_for_select = False
         self._cast_paused_remaining = 0
-        self._cast_log("已结束抛杆任务")
-        self._main_log("抛杆结束")
+        self._cast_log(f"已结束抛竿任务（{via}）")
+        self._main_log(f"抛竿结束 · {via}")
         self._refresh_cast_label()
 
     def _on_cast_count_changed(self, lo: float, hi: float) -> None:
