@@ -9,6 +9,8 @@ from autofish.events.bus import AutofishBus
 from autofish.events.topics import (
     ActionIntentEvent,
     BobberHit,
+    CastPhase,
+    CastPhaseEvent,
     CastSessionEvent,
     CastSessionState,
     FishingState,
@@ -58,7 +60,14 @@ def test_payloads_frozen_and_enums_are_strings():
     assert FishingState.FISHING == "fishing"
     assert CastSessionState.DISABLED == "disabled"
     assert {t.value for t in Topic} == {
-        "roi", "frame", "pos", "fishing_state", "cast_session", "action_intent", "press_interval",
+        "roi",
+        "frame",
+        "pos",
+        "fishing_state",
+        "cast_session",
+        "cast_phase",
+        "action_intent",
+        "press_interval",
     }
 
 
@@ -193,6 +202,29 @@ def test_state_and_cast_session_dedup():
     snap = bus.snapshot()
     assert snap.cast_session == CastSessionState.FIRST_CLICK
     assert snap.cast_splash == splash and snap.cast_ts == 4.0
+
+
+def test_cast_phase_dedup():
+    bus = AutofishBus()
+    got = recorder(bus, Topic.CAST_PHASE)
+    assert bus.snapshot().cast_phase == CastPhase.DISABLED
+
+    bus.publish_cast_phase(CastPhaseEvent(phase=CastPhase.WAIT, ts=1.0))
+    bus.publish_cast_phase(CastPhaseEvent(phase=CastPhase.WAIT, ts=2.0))
+    bus.publish_cast_phase(CastPhaseEvent(phase=CastPhase.WAIT, ts=3.0, detail="next"))
+    bus.publish_cast_phase(
+        CastPhaseEvent(phase=CastPhase.CHARGING, ts=4.0, target=0.5, power=0.1)
+    )
+
+    assert [(e.phase, e.detail) for e in got] == [
+        (CastPhase.WAIT, ""),
+        (CastPhase.WAIT, "next"),
+        (CastPhase.CHARGING, ""),
+    ]
+    snap = bus.snapshot()
+    assert snap.cast_phase == CastPhase.CHARGING
+    assert snap.cast_phase_detail == ""
+    assert snap.cast_ts == 4.0
 
 
 def test_action_intent_not_deduplicated():

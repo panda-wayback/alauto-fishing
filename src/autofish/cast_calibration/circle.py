@@ -19,10 +19,17 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
-from common.paths import data_root
+import sys
+
+from common.paths import assets_dir, data_root
 
 DEFAULT_CAST_CIRCLE_PATH = data_root() / "cast_circle.json"
+BUNDLED_CAST_CIRCLE_PATH = assets_dir() / "cast_circle.json"
 DEFAULT_RADIUS_RATIO = 0.35
+
+
+def _is_frozen_app() -> bool:
+    return bool(getattr(sys, "frozen", False) and getattr(sys, "_MEIPASS", None))
 
 
 @dataclass(frozen=True)
@@ -161,8 +168,7 @@ def save_cast_circle(circle: CastCircle, path: Path | None = None) -> Path:
     return p
 
 
-def load_cast_circle(path: Path | None = None) -> CastCircle:
-    p = path or DEFAULT_CAST_CIRCLE_PATH
+def _load_cast_circle_file(p: Path) -> CastCircle:
     data = json.loads(p.read_text(encoding="utf-8"))
     return CastCircle(
         cx=float(data["cx"]),
@@ -170,3 +176,24 @@ def load_cast_circle(path: Path | None = None) -> CastCircle:
         angle_deg=float(data["angle_deg"]),
         radius_ratio=float(data.get("radius_ratio", DEFAULT_RADIUS_RATIO)),
     )
+
+
+def load_cast_circle(path: Path | None = None) -> CastCircle:
+    if path is not None:
+        return _load_cast_circle_file(path)
+    if DEFAULT_CAST_CIRCLE_PATH.is_file():
+        return _load_cast_circle_file(DEFAULT_CAST_CIRCLE_PATH)
+    if BUNDLED_CAST_CIRCLE_PATH.is_file():
+        return _load_cast_circle_file(BUNDLED_CAST_CIRCLE_PATH)
+    raise FileNotFoundError(
+        f"cast circle not found: {DEFAULT_CAST_CIRCLE_PATH} or {BUNDLED_CAST_CIRCLE_PATH}"
+    )
+
+
+def save_bundled_cast_circle(circle: CastCircle) -> Path:
+    """写入 assets/cast_circle.json（随包默认）。仅源码可写；冻结包抛错。"""
+    if _is_frozen_app():
+        raise RuntimeError(
+            "打包后的应用无法改内置标定，请在源码里「写入打包默认」后再打包"
+        )
+    return save_cast_circle(circle, BUNDLED_CAST_CIRCLE_PATH)

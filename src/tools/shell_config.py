@@ -44,6 +44,14 @@ class ShellSettings:
     # 主控勾选
     sound_enabled: bool = False
     auto_bobber_enabled: bool = True
+    auto_cast_enabled: bool = False
+    # 自动抛杆：次数、快捷键、收竿后随机等待区间（秒）
+    cast_count: int = 5
+    cast_start_hotkey: str = "F8"
+    cast_stop_hotkey: str = "F9"
+    cast_wait_lo_s: float = 3.0
+    cast_wait_hi_s: float = 3.0
+    cast_full_charge_s: float = 1.0
     # 声音页：按名称匹配设备（索引会变）
     audio_device_name: str = ""
     # 完整态窗口几何（-1 / 0 表示未存）
@@ -92,6 +100,8 @@ def _parse_settings_file(path: Path) -> ShellSettings | None:
 
 
 def _normalize_settings(out: ShellSettings) -> ShellSettings:
+    from tools.cast_hotkeys import normalize_hotkey
+
     out.sound_threshold = float(max(0.15, min(1.0, out.sound_threshold)))
     out.press_interval_s = float(max(0.0, min(0.3, out.press_interval_s)))
     out.compact_mode = bool(out.compact_mode)
@@ -99,11 +109,27 @@ def _normalize_settings(out: ShellSettings) -> ShellSettings:
     out.hud_y = int(out.hud_y)
     out.sound_enabled = bool(out.sound_enabled)
     out.auto_bobber_enabled = bool(out.auto_bobber_enabled)
+    out.auto_cast_enabled = bool(out.auto_cast_enabled)
+    out.cast_count = int(max(1, min(20, int(out.cast_count))))
+    out.cast_start_hotkey = normalize_hotkey(out.cast_start_hotkey, default="F8")
+    out.cast_stop_hotkey = normalize_hotkey(out.cast_stop_hotkey, default="F9")
+    if out.cast_start_hotkey == out.cast_stop_hotkey:
+        out.cast_stop_hotkey = "F9" if out.cast_start_hotkey == "F8" else "F8"
     out.audio_device_name = str(out.audio_device_name or "")
     out.window_x = int(out.window_x)
     out.window_y = int(out.window_y)
     out.window_w = int(out.window_w)
     out.window_h = int(out.window_h)
+    out.cast_wait_lo_s, out.cast_wait_hi_s = _clamp_pair(
+        float(out.cast_wait_lo_s),
+        float(out.cast_wait_hi_s),
+        min_v=0.0,
+        max_v=30.0,
+        min_span=0.0,
+    )
+    out.cast_full_charge_s = float(
+        max(0.05, min(5.0, float(out.cast_full_charge_s)))
+    )
     out.click_delay_lo_s, out.click_delay_hi_s = _clamp_pair(
         float(out.click_delay_lo_s),
         float(out.click_delay_hi_s),

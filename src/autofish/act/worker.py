@@ -8,6 +8,7 @@ from autofish.act.mouse import MouseActuator, os_left_down
 from autofish.events.bus import AutofishBus
 from autofish.events.topics import (
     ActionIntentEvent,
+    CastPhase,
     CastSessionEvent,
     CastSessionState,
     FishingState,
@@ -50,6 +51,7 @@ class ActWorker:
             return
         self.bus.subscribe(Topic.ACTION_INTENT, self._on_intent)
         self.bus.subscribe(Topic.CAST_SESSION, self._on_cast)
+        self.bus.subscribe(Topic.CAST_PHASE, self._on_cast_phase)
         self._active = True
         self.poll()
 
@@ -58,6 +60,7 @@ class ActWorker:
             return
         self.bus.unsubscribe(Topic.ACTION_INTENT, self._on_intent)
         self.bus.unsubscribe(Topic.CAST_SESSION, self._on_cast)
+        self.bus.unsubscribe(Topic.CAST_PHASE, self._on_cast_phase)
         self._active = False
         self._yield_to_system = False
         self._mouse.force_release()
@@ -73,7 +76,9 @@ class ActWorker:
 
     @staticmethod
     def _may_control(snap) -> bool:
-        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
+        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。C 蓄力中一律让鼠。"""
+        if snap.cast_phase == CastPhase.CHARGING:
+            return False
         if snap.cast_session == CastSessionState.DISABLED:
             return snap.fishing_state == FishingState.FISHING
         return snap.cast_session == CastSessionState.FISHING
@@ -102,6 +107,25 @@ class ActWorker:
             return
         if event.state != CastSessionState.FISHING:
             self._release_program()
+
+    def _on_cast_phase(self, event) -> None:
+        """C 蓄力：松本段键让鼠；离开蓄力：立即按当前意图接管（不依赖下一次 poll）。"""
+        if not self._active:
+            return
+        if event.phase == CastPhase.CHARGING:
+            self._release_program()
+            return
+        # 离开 CHARGING（DONE / ABORT / WAIT / …）：
+        # 不走 _system_owns——C 刚松手时 OS 可能仍短暂报按下，否则会把 C 当成「系统占用」让 B 永久让位。
+        self._yield_to_system = False
+        snap = self.bus.snapshot()
+        if not self._may_control(snap):
+            self._release_program()
+            return
+        if snap.holding is True:
+            self._try_press()
+        elif snap.holding is False:
+            self._mouse.set_holding(False)
 
     def _apply(
         self,

@@ -14,6 +14,8 @@ from autofish.locate.roi import Roi
 from autofish.events.topics import (
     ActionIntentEvent,
     BobberHit,
+    CastPhase,
+    CastPhaseEvent,
     CastSessionEvent,
     CastSessionState,
     FishingState,
@@ -46,6 +48,8 @@ class AutofishSnapshot:
     cast_detail: str = ""
     cast_splash: SplashHit | None = None
     cast_ts: float = 0.0
+    cast_phase: CastPhase = CastPhase.DISABLED
+    cast_phase_detail: str = ""
     holding: bool | None = None
     intent_reason: str = ""
     intent_ts: float = 0.0
@@ -136,6 +140,18 @@ class AutofishBus:
             self._snap.cast_splash = event.splash
             self._snap.cast_ts = event.ts
         self._events.publish(Topic.CAST_SESSION, event)
+
+    def publish_cast_phase(self, event: CastPhaseEvent) -> None:
+        with self._lock:
+            if (
+                event.phase == self._snap.cast_phase
+                and event.detail == self._snap.cast_phase_detail
+            ):
+                return
+            self._snap.cast_phase = event.phase
+            self._snap.cast_phase_detail = event.detail
+            self._snap.cast_ts = event.ts
+        self._events.publish(Topic.CAST_PHASE, event)
 
     def publish_action_intent(self, event: ActionIntentEvent) -> None:
         with self._lock:

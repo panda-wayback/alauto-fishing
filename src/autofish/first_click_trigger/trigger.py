@@ -15,7 +15,14 @@ from autofish.act.mouse import MouseActuator
 from autofish.first_click_trigger.audio_input import AudioInput
 from autofish.first_click_trigger.ring_buffer import AudioRingBuffer
 from autofish.first_click_trigger.template_matcher import TemplateMatcher
-from autofish.events.topics import CastSessionEvent, CastSessionState, PosEvent, SplashHit, Topic
+from autofish.events.topics import (
+    CastPhase,
+    CastSessionEvent,
+    CastSessionState,
+    PosEvent,
+    SplashHit,
+    Topic,
+)
 from autofish.events.worker_base import WorkerBase
 
 if TYPE_CHECKING:
@@ -632,12 +639,22 @@ class FirstClickTrigger(WorkerBase):
         with self._log_lock:
             self._pending_logs.append((channel, msg))
 
+    def _cast_charging(self) -> bool:
+        """自动抛杆（C）正在蓄力时，A 不点第一下、让出鼠标。"""
+        if self.bus is None:
+            return False
+        return self.bus.snapshot().cast_phase == CastPhase.CHARGING
+
     def _do_first_click(self, score: float = 0.0) -> None:
         with self._lock:
             if (
                 not self._session_enabled
                 or self._session != CastSessionState.WAIT
             ):
+                return
+            if self._cast_charging():
+                # C 蓄力中：忽略本次水声，留在 WAIT 等下一轮
+                self._emit_log("自动抛杆蓄力中 · 让鼠不点第一下")
                 return
             thr = float(self._matcher.threshold)
             delay_s = random.uniform(self._delay_lo_s, self._delay_hi_s)

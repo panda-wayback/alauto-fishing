@@ -22,7 +22,7 @@ VERSION ?=
 DAYS ?= 30
 COUNT ?= 1
 
-.PHONY: help install install-dev test sim preview algo \
+.PHONY: help install install-dev test sim preview cast-calib algo \
 	license-ui gen-license clear-license \
 	build-macos build-macos-dev build-license-macos build-windows \
 	open-app open-app-dev open-license-app \
@@ -37,6 +37,7 @@ help:
 	@echo "  make test            运行全部 Module 测试（M=src/sim 只跑一个 Module）"
 	@echo "  make sim             启动模拟器 (main.py)"
 	@echo "  make preview         启动真机预览壳 (--ui)"
+	@echo "  make cast-calib      启动抛杆透视贴地环标定小程序（比例数据，换屏自适应）"
 	@echo "  make algo            无头跑策略 (tier=4 episodes=50)"
 	@echo ""
 	@echo "密钥（本机发密钥，勿给用户）"
@@ -79,6 +80,9 @@ sim:
 
 preview:
 	$(PY) -m tools.preview_app
+
+cast-calib:
+	$(PY) -m tools.cast_calibration_app
 
 algo:
 	$(PY) -m algo --tier 4 --episodes 50

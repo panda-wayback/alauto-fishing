@@ -16,6 +16,7 @@ class Topic(str, Enum):
     POS = "pos"
     FISHING_STATE = "fishing_state"
     CAST_SESSION = "cast_session"
+    CAST_PHASE = "cast_phase"
     ACTION_INTENT = "action_intent"
     PRESS_INTERVAL = "press_interval"
 
@@ -34,6 +35,17 @@ class CastSessionState(str, Enum):
     FIRST_CLICK = "first_click"
     WAIT_BOBBER = "wait_bobber"
     FISHING = "fishing"
+
+
+class CastPhase(str, Enum):
+    """自动抛杆阶段；DISABLED = 无进行中任务。CHARGING 时 A / B 须让鼠。"""
+
+    DISABLED = "disabled"
+    WAIT = "wait"
+    AIM = "aim"
+    CHARGING = "charging"
+    DONE = "done"
+    ABORT = "abort"
 
 
 @dataclass(frozen=True)
@@ -108,6 +120,17 @@ class CastSessionEvent:
     ts: float
     detail: str = ""
     splash: SplashHit | None = None
+
+
+@dataclass(frozen=True)
+class CastPhaseEvent:
+    """自动抛杆阶段（C）。CHARGING 时 A / B 让鼠。"""
+
+    phase: CastPhase
+    ts: float
+    detail: str = ""
+    target: float | None = None
+    power: float | None = None
 
 
 @dataclass(frozen=True)

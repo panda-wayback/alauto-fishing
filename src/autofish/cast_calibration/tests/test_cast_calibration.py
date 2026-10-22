@@ -8,6 +8,7 @@ import autofish.cast_calibration.circle as circle_mod
 from autofish.cast_calibration import (
     CastCircle,
     load_cast_circle,
+    save_bundled_cast_circle,
     save_cast_circle,
 )
 
@@ -150,7 +151,30 @@ def test_missing_file_raises(tmp_path):
 
 def test_default_path_used_when_none(tmp_path, monkeypatch):
     fake_default = tmp_path / "data" / "cast_circle.json"
+    fake_bundled = tmp_path / "assets" / "cast_circle.json"
     monkeypatch.setattr(circle_mod, "DEFAULT_CAST_CIRCLE_PATH", fake_default)
+    monkeypatch.setattr(circle_mod, "BUNDLED_CAST_CIRCLE_PATH", fake_bundled)
     c = CastCircle(0.5, 0.6, 30)
     assert save_cast_circle(c) == fake_default
     assert load_cast_circle() == c
+
+
+def test_load_falls_back_to_bundled(tmp_path, monkeypatch):
+    fake_default = tmp_path / "data" / "cast_circle.json"
+    fake_bundled = tmp_path / "assets" / "cast_circle.json"
+    monkeypatch.setattr(circle_mod, "DEFAULT_CAST_CIRCLE_PATH", fake_default)
+    monkeypatch.setattr(circle_mod, "BUNDLED_CAST_CIRCLE_PATH", fake_bundled)
+    monkeypatch.setattr(circle_mod, "_is_frozen_app", lambda: False)
+    c = CastCircle(0.4, 0.5, 40, 0.4)
+    assert save_bundled_cast_circle(c) == fake_bundled
+    assert not fake_default.exists()
+    assert load_cast_circle() == c
+
+
+def test_save_bundled_refuses_frozen(tmp_path, monkeypatch):
+    fake_bundled = tmp_path / "assets" / "cast_circle.json"
+    monkeypatch.setattr(circle_mod, "BUNDLED_CAST_CIRCLE_PATH", fake_bundled)
+    monkeypatch.setattr(circle_mod, "_is_frozen_app", lambda: True)
+    with pytest.raises(RuntimeError):
+        save_bundled_cast_circle(CastCircle(0.5, 0.6, 30))
+    assert not fake_bundled.exists()

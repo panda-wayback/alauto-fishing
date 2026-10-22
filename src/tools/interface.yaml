@@ -8,6 +8,12 @@ input:
   - name: python -m tools.preview_app
     type: CLI，无参数（无需预设 PYTHONPATH，模块自行把 src 加入 sys.path）
     desc: 等价于 launch_ui()，以其返回值作为进程退出码
+  - name: tools.cast_calibration_app.launch_cast_calibration(*, circle_path=None)
+    type: "circle_path: Path | str | None；None = cast_calibration 默认用户存盘路径"
+    desc: 独立标定小程序：幕布上调圆心 / 俯视角 / 大小；「保存」写用户文件，「写入打包默认」写 assets（仅源码）；不截屏、不识图、不抛杆
+  - name: python -m tools.cast_calibration_app
+    type: CLI，无参数
+    desc: 等价于 launch_cast_calibration()，以其返回值作为进程退出码
   - name: tools.preview_app.PreviewApp(roi_path=DEFAULT_ROI_PATH)
     type: "roi_path: Path；须已存在 QApplication"
     desc: 构造调试壳主窗（QMainWindow），不经门禁；roi_path 为 ROI / 条界 / 条界参考图（同目录 bar_ref.png）存盘位置
@@ -17,6 +23,9 @@ input:
   - name: UI 操作：主控勾选「声音开钓」(A)
     type: "PreviewApp.chk_a: QCheckBox 勾选 / 取消"
     desc: 开关听水花开钓会话机（first_click_trigger）
+  - name: UI 操作：主控勾选「自动抛杆」(C)
+    type: "PreviewApp.chk_c: QCheckBox 勾选 / 取消"
+    desc: 开关自动抛杆模块（工人待命 + 光标旁认漂 + 右键 / F8·F9 + 门闩小预览）；默认关
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: "PreviewApp.btn_float 点击；紧凑态文字为「主界面」的按钮点击"
     desc: 同一主窗在完整态与紧凑态之间切换
@@ -24,7 +33,7 @@ input:
     type: Qt 控件交互
     desc: 调整 autofish 参数；均写入下述持久化。恢复默认见 load_default_shell_settings
   - name: tools.shell_config.ShellSettings
-    type: "dataclass（可变）；字段与默认：sound_threshold=0.70, press_lo=70.6, press_hi=74.4, release_lo=76.6, release_hi=79.2, press_interval_s=0.0, stay_on_top=True, compact_mode=False, hud_x=-1, hud_y=-1, sound_enabled=False, auto_bobber_enabled=True, audio_device_name='', window_x=-1, window_y=-1, window_w=0, window_h=0, click_delay_lo_s=0.3, click_delay_hi_s=1.5, click_hold_lo_s=0.7, click_hold_hi_s=1.5, click_after_lo_s=0.2, click_after_hi_s=0.8"
+    type: "dataclass（可变）；字段与默认：sound_threshold=0.70, press_lo=70.6, press_hi=74.4, release_lo=76.6, release_hi=79.2, press_interval_s=0.0, stay_on_top=True, compact_mode=False, hud_x=-1, hud_y=-1, sound_enabled=False, auto_bobber_enabled=True, auto_cast_enabled=False, cast_count=5, cast_start_hotkey='F8', cast_stop_hotkey='F9', cast_wait_lo_s=3.0, cast_wait_hi_s=3.0, cast_full_charge_s=1.0, audio_device_name='', window_x=-1, window_y=-1, window_w=0, window_h=0, click_delay_lo_s=0.3, click_delay_hi_s=1.5, click_hold_lo_s=0.7, click_hold_hi_s=1.5, click_after_lo_s=0.2, click_after_hi_s=0.8"
     desc: 壳配置；字段即设置文件 JSON 的全部键（秒 / 百分点 / 像素）
   - name: tools.shell_config.load_shell_settings()
     type: 无参
@@ -57,12 +66,21 @@ output:
   - name: tools.preview_app.PreviewApp(roi_path=...)
     type: QMainWindow
     desc: 完整态主窗；启动即恢复持久化的 A/B、窗几何、紧凑态，有 ROI 则开监控；关闭时落盘设置并停止全部 autofish 线程与声音监听
+  - name: tools.cast_calibration_app.CastCalibrationWindow(circle_path=DEFAULT_CAST_CIRCLE_PATH, screen_size=None)
+    type: "QWidget；circle_path: Path；screen_size: (w,h)|None（测试注入，None 取主屏）"
+    desc: 独立窗口；内含按主屏纵横比缩放的幕布，拖圆心、滑块调俯视角度与大小；保存分辨率无关的比例与角度
+  - name: launch_cast_calibration(...)
+    type: int
+    desc: 正常关闭返回事件循环退出码
   - name: UI 操作：主控勾选「自动拉漂」(B)
     type: 对 autofish.AutofishPipeline 的调用 + 设置落盘
     desc: 勾选 = set_decide_ranges(策略数轴区间) 后 start_decide + start_act（并确保监控开）；取消 = stop_act + stop_decide（监控不停）；auto_bobber_enabled 写入用户设置
   - name: UI 操作：主控勾选「声音开钓」(A)
     type: 对 first_click_trigger 的调用 + 设置落盘
     desc: 勾选 = 按所选设备开监听并 set_session_enabled(True)，会话事件经流水线总线发布；取消 = set_session_enabled(False)；sound_enabled 写入用户设置
+  - name: UI 操作：主控勾选「自动抛杆」(C)
+    type: 对 autofish.AutofishPipeline / cursor_arm / 右键监听的调用 + 设置落盘
+    desc: 勾选 = start_auto_cast + CursorArmWatcher 启用 + 右键监听 + 显示光标旁小预览（绿/灰边框）；取消 = cancel_cast_batch + stop_auto_cast + 停认漂与右键并隐藏预览；auto_cast_enabled 写入用户设置（默认 false）；认漂翻转不写主控/抛杆日志
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: 主窗显示态 + 设置落盘
     desc: 紧凑态只显示阶段灯（待机 / 听声中 / 听到声音 / 等漂 / 开始游戏 / 拉漂 / 松漂 / 结束游戏）+「上次：…」+「主界面」按钮，窗体缩小且置顶；compact_mode 与几何立即写入用户设置
@@ -87,17 +105,18 @@ output:
 contract:
   - 一窗两态：完整态与紧凑态是同一个 PreviewApp 窗口的两种显示，不另开独立窗口；完整→紧凑就地缩小（保留左上角），紧凑→完整就地恢复先前尺寸（保留左上角）
   - 仅当启动时已是紧凑态，才把窗口放到上次紧凑拖动落点（hud_x/hud_y），且夹到某块屏幕可用区内
-  - 有 ROI 时 Capture + Detect 常开，与 A/B 勾选无关；无 ROI 存盘时启动即在 roi_path 写入主屏居中 1/4×1/4 默认 ROI（source=default）并开监控
+  - 有 ROI 时 Capture + Detect 常开；与 A/B/C 勾选无关；无 ROI 存盘时启动即在 roi_path 写入主屏居中 1/4×1/4 默认 ROI（source=default）并开监控
+  - C = 自动抛杆：勾选后启工人待命 + 光标旁低频认漂；主控显示「抛杆门闩」文案与光标旁小预览（与 POS 分离）；可开抛且空闲时右键 start_cast_batch(cast_count)；任务中右键 cancel；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；认漂翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
   - B = Decide + Act：勾选时策略区间非法（上下限颠倒，或松开下限 − 按住上限 < 1）则弹警告并自动取消勾选，不启动 Decide/Act
   - A = 会话机：勾选即偏好；启动失败（无音频设备 / 无模板 / 监听未运行）时保留勾选并落盘 sound_enabled=true，只在提示与日志中报告
-  - 启动时先恢复 A/B 勾选再应用；B 立即应用，A 在事件循环下一拍尝试启动
-  - 持久化：壳配置只写 tools.shell_config.settings_path()（data_root/shell_settings.json），键恰为 ShellSettings 全部字段；A/B 勾选、置顶、紧凑切换、窗口关闭立即落盘，阈值 / 设备 / 策略数轴 / 开钓第一下区间拖动约 0.4 s 防抖后落盘
+  - 启动时先恢复 A/B/C 勾选再应用；B/C 立即应用，A 在事件循环下一拍尝试启动
+  - 持久化：壳配置只写 tools.shell_config.settings_path()（data_root/shell_settings.json），键恰为 ShellSettings 全部字段；A/B/C 勾选、置顶、紧凑切换、窗口关闭立即落盘，阈值 / 设备 / 策略数轴 / 开钓第一下 / 抛杆次数与快捷键 / 满蓄 / 抛杆等待区间约 0.4 s 防抖后落盘
   - 当前模板选择写入 first_click_trigger 的 active.json；ROI、手动条界写入 roi_path，条界参考图写入 roi_path 同目录 bar_ref.png
-  - 规范化：sound_threshold 夹到 [0.15, 1.0]；press_interval_s 夹到 [0, 0.3]；开钓第一下三组区间各自夹到 [0 或 0.05, 5.0]、颠倒时交换、跨度不足 0.05 s 时上调上限（顶到 5.0 为止）；布尔 / 整数 / 字符串字段强制转换类型
+  - 规范化：sound_threshold 夹到 [0.15, 1.0]；press_interval_s 夹到 [0, 0.3]；cast_count 夹到 [1, 20]；cast_full_charge_s 夹到 [0.05, 5]；cast_*_hotkey 规范化为 F1～F12 或单字母，起止相同则拆开；cast_wait_* 夹到 [0, 30]、颠倒时交换；开钓第一下三组区间各自夹到 [0 或 0.05, 5.0]、颠倒时交换、跨度不足 0.05 s 时上调上限（顶到 5.0 为止）；布尔 / 整数 / 字符串字段强制转换类型
   - 设置文件不存在、不是合法 JSON 或顶层不是对象时视为缺失，load_shell_settings 不抛异常
   - 门禁：包已到期（common.expire）时弹「已过期」提示、尝试删除安装目录并返回 1；未激活或授权已到期时弹激活对话框，取消或激活失败返回 1；两种情况都不创建主窗
   - 激活对话框接受有效密钥时经 common.license 写入授权，随即进入主窗
-  - 主窗关闭时停止 Capture / Detect / Decide / Act 与声音监听线程
+  - 主窗关闭时停止 Capture / Detect / Decide / Act / AutoCast 与声音监听线程
   - 冻结运行时「更多」页不显示「写入打包默认」，save_bundled_shell_settings 拒绝写入
   - 「更多」页「恢复默认」在冻结运行时仍显示。确认后把 load_default_shell_settings() 写入用户设置文件，并立刻反映到 A/B、阈值、策略区间、按下间隔、置顶、开钓第一下、紧凑态（关）与默认窗口尺寸（就地，不跳屏）；音频设备名按空字符串重新匹配。同时按当前主屏重算默认 ROI（source=default），清空手动条界与参考图，并继续截图。取消确认则用户设置与 ROI 都不变
   - 恢复默认不删除模板、长录音，不改授权，不改打包默认文件。策略区间非法时沿用 B 的既有失败行为（弹警告并取消勾选）。关闭窗口仍把当时几何写入用户设置
@@ -109,6 +128,7 @@ depends:
   - src/autofish/detect
   - src/autofish/act
   - src/autofish/first_click_trigger
+  - src/autofish/cast_calibration
   - src/common
 errors:
   - code: "launch_ui 返回 1"
@@ -118,7 +138,7 @@ errors:
   - code: OSError
     desc: save_shell_settings / save_bundled_shell_settings 目标目录不可写
 tests:
-  - 无任何设置文件时 load_shell_settings 返回内建缺省（A 关、B 开、阈值 0.70、策略 70.6～74.4 / 76.6～79.2、完整态、第一下区间默认）
+  - 无任何设置文件时 load_shell_settings 返回内建缺省（A 关、B 开、C 关、阈值 0.70、策略 70.6～74.4 / 76.6～79.2、完整态、第一下区间默认）
   - 仅有打包默认时 load_shell_settings 采用打包默认
   - 用户文件优先于打包默认；缺失键取内建缺省，未知键忽略
   - 坏 JSON 或非对象的用户文件被忽略并退回打包默认
@@ -143,3 +163,4 @@ tests:
   - 未激活时在激活对话框输入有效密钥后写入授权并打开主窗
   - 已激活时 launch_ui 不弹激活框，用给定 roi_path 打开主窗并返回事件循环退出码
   - python -m tools.preview_app 在包已到期时以退出码 1 结束
+  - CastCalibrationWindow 幕布按主屏纵横比；拖圆心 / 调俯视角与大小后「保存」写用户比例文件；源码下「写入打包默认」写 assets；换屏自适应；不截屏

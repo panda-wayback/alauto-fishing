@@ -58,19 +58,102 @@ class FakeAct:
         pass
 
 
+class FakeAutoCast:
+    def __init__(self):
+        self.active = False
+        self.remaining = 0
+        self._wait_lo = 3.0
+        self._wait_hi = 3.0
+        self._full_charge_s = 1.0
+
+    def start_batch(self, count: int) -> bool:
+        if self.active:
+            return False
+        self.active = True
+        self.remaining = max(1, min(20, int(count)))
+        return True
+
+    def cancel_batch(self) -> None:
+        self.active = False
+        self.remaining = 0
+
+    def set_full_charge_s(self, seconds: float) -> None:
+        self._full_charge_s = float(max(0.05, min(5.0, seconds)))
+
+
+class FakeCursorArm:
+    """测试用：不截屏、不起线程。"""
+
+    def __init__(
+        self, *, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None
+    ):
+        self._armed = False
+        self._enabled = False
+        self._on = on_armed_changed
+        self._on_frame = on_frame
+        self._last_frame = None
+        self.started = False
+
+    @property
+    def armed(self) -> bool:
+        return self._armed
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+    @property
+    def last_frame(self):
+        return self._last_frame
+
+    def start(self) -> None:
+        self.started = True
+
+    def stop(self, timeout: float = 2.0) -> None:
+        self.started = False
+        self._enabled = False
+        was = self._armed
+        self._armed = False
+        self._last_frame = None
+        if was and self._on is not None:
+            self._on(False)
+
+    def set_enabled(self, enabled: bool) -> None:
+        self._enabled = bool(enabled)
+        if not self._enabled:
+            self._last_frame = None
+            if self._armed:
+                self._armed = False
+                if self._on is not None:
+                    self._on(False)
+
+    def is_running(self) -> bool:
+        return self.started
+
+    def force_armed(self, armed: bool) -> None:
+        armed = bool(armed)
+        if self._armed == armed:
+            return
+        self._armed = armed
+        if self._on is not None:
+            self._on(armed)
+
+
 class FakePipeline:
     """替代 autofish.AutofishPipeline：只记录调用，不起截屏/控鼠线程。"""
 
     instances: list["FakePipeline"] = []
 
-    def __init__(self, *, capture_fps=45.0):
+    def __init__(self, *, capture_fps=45.0, **_kw):
         self.bus = AutofishBus()
         self.decide = FakeDecide()
         self.act = FakeAct()
+        self.auto_cast = FakeAutoCast()
         self.rois = []
         self.monitor_on = False
         self.decide_on = False
         self.act_on = False
+        self.auto_cast_on = False
         self.stopped = False
         FakePipeline.instances.append(self)
 
@@ -107,8 +190,29 @@ class FakePipeline:
     def stop_act(self):
         self.act_on = False
 
+    def start_auto_cast(self):
+        self.auto_cast_on = True
+
+    def stop_auto_cast(self):
+        self.auto_cast_on = False
+        self.auto_cast.cancel_batch()
+
+    def start_cast_batch(self, count):
+        return self.auto_cast.start_batch(count)
+
+    def cancel_cast_batch(self):
+        self.auto_cast.cancel_batch()
+
+    def set_cast_wait_range(self, lo_s, hi_s):
+        self.auto_cast._wait_lo = float(lo_s)
+        self.auto_cast._wait_hi = float(hi_s)
+
+    def set_cast_full_charge_s(self, seconds: float) -> None:
+        self.auto_cast.set_full_charge_s(seconds)
+
     def stop(self):
-        self.monitor_on = self.decide_on = self.act_on = False
+        self.monitor_on = self.decide_on = self.act_on = self.auto_cast_on = False
+        self.auto_cast.cancel_batch()
         self.stopped = True
 
 
@@ -153,8 +257,13 @@ def env(tmp_path, monkeypatch, app):
         ),
     )
     monkeypatch.setattr(preview_app, "AutofishPipeline", FakePipeline)
+    monkeypatch.setattr(preview_app, "CursorArmWatcher", FakeCursorArm)
     monkeypatch.setattr(preview_app, "os_left_down", lambda: False)
     monkeypatch.setattr(preview_app, "primary_screen_size", lambda: (1600, 1200))
+    monkeypatch.setattr(preview_app.CastHotkeyListener, "start", lambda self: None)
+    monkeypatch.setattr(preview_app.CastHotkeyListener, "stop", lambda self: None)
+    monkeypatch.setattr(preview_app.CastRightClickListener, "start", lambda self: None)
+    monkeypatch.setattr(preview_app.CastRightClickListener, "stop", lambda self: None)
 
     boxes = []
     for kind in ("warning", "information", "critical"):
@@ -232,6 +341,87 @@ def test_existing_roi_loaded_and_monitored(env):
     assert pipe.rois[-1] == roi
     assert pipe.monitor_on
     assert load_roi_source(env.roi) == "manual"
+    _close(win, env)
+
+
+def test_cast_hotkey_batch_and_wait_persist(env):
+    win = _make(env)
+    pipe = _pipe()
+    assert not pipe.auto_cast.active
+    assert not win.chk_c.isChecked()
+    win._on_cast_hotkey_start()
+    assert not pipe.auto_cast.active
+    win.chk_c.setChecked(True)
+    assert pipe.auto_cast_on
+    win._on_cast_hotkey_start()
+    assert pipe.auto_cast.active and pipe.auto_cast_on
+    assert pipe.auto_cast.remaining == 5
+    win._on_cast_hotkey_start()
+    assert pipe.auto_cast.remaining == 5
+    win.spin_cast_count.setValue(3)
+    win.bar_cast_wait.setRange(1.0, 4.0)
+    assert (pipe.auto_cast._wait_lo, pipe.auto_cast._wait_hi) == (1.0, 4.0)
+    win._persist_timer.stop()
+    win._persist_settings()
+    raw = _settings(env)
+    assert raw["cast_count"] == 3
+    assert raw["cast_wait_lo_s"] == pytest.approx(1.0)
+    assert raw["cast_wait_hi_s"] == pytest.approx(4.0)
+    assert raw["auto_cast_enabled"] is True
+    win._on_cast_hotkey_stop()
+    assert not pipe.auto_cast.active and pipe.auto_cast.remaining == 0
+    _close(win, env)
+
+
+def test_toggle_c_gates_cast_and_right_click(env):
+    win = _make(env)
+    pipe = _pipe()
+    assert not win.chk_c.isChecked()
+    assert not pipe.auto_cast_on
+    win.chk_c.setChecked(True)
+    assert pipe.auto_cast_on
+    assert win._cursor_arm is not None and win._cursor_arm.enabled
+    assert not win.lbl_arm_preview.isHidden()
+    win._cursor_arm.force_armed(True)
+    assert "可开抛" in win.lbl_cast.text()
+    assert "抛杆认漂" not in win.log.toPlainText()
+    win._on_cast_right_click()
+    assert pipe.auto_cast.active
+    win._on_cast_right_click()
+    assert not pipe.auto_cast.active
+    win.chk_c.setChecked(False)
+    assert not pipe.auto_cast_on
+    assert win.lbl_arm_preview.isHidden()
+    assert _settings(env)["auto_cast_enabled"] is False
+    _close(win, env)
+
+
+def test_restore_c_on_from_settings(env):
+    save_shell_settings(ShellSettings(auto_cast_enabled=True))
+    win = _make(env)
+    pipe = _pipe()
+    assert win.chk_c.isChecked()
+    assert pipe.auto_cast_on
+    _close(win, env)
+
+
+def test_persist_cast_batch_settings_restore_on_start(env):
+    save_shell_settings(
+        ShellSettings(
+            cast_count=7,
+            cast_start_hotkey="F7",
+            cast_stop_hotkey="F10",
+            cast_wait_lo_s=3.0,
+            cast_wait_hi_s=6.0,
+        )
+    )
+    win = _make(env)
+    pipe = _pipe()
+    assert win.spin_cast_count.value() == 7
+    assert win._settings.cast_start_hotkey == "F7"
+    assert win._settings.cast_stop_hotkey == "F10"
+    assert not pipe.auto_cast.active
+    assert (pipe.auto_cast._wait_lo, pipe.auto_cast._wait_hi) == (3.0, 6.0)
     _close(win, env)
 
 
@@ -413,6 +603,7 @@ def test_restore_defaults_resets_settings_and_roi(env, monkeypatch):
     assert not ref.exists()
     assert win.chk_a.isChecked() is False
     assert win.chk_b.isChecked() is True
+    assert win.chk_c.isChecked() is False
     assert win.range_axis.ranges()[0] == pytest.approx(71.2)
     assert win.sld_press_interval.value() == 0
     assert win.bar_delay.range() == pytest.approx((0.3, 1.5))

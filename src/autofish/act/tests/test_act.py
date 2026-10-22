@@ -8,6 +8,8 @@ from autofish.act import ActWorker, MouseActuator
 from autofish.events.bus import AutofishBus
 from autofish.events.topics import (
     ActionIntentEvent,
+    CastPhase,
+    CastPhaseEvent,
     CastSessionEvent,
     CastSessionState,
     FishingState,
@@ -63,6 +65,10 @@ def set_state(bus, state):
 
 def set_cast(bus, state):
     bus.publish_cast_session(CastSessionEvent(state=state, ts=time.time()))
+
+
+def set_cast_phase(bus, phase, detail=""):
+    bus.publish_cast_phase(CastPhaseEvent(phase=phase, ts=time.time(), detail=detail))
 
 
 def set_interval(bus, seconds):
@@ -312,3 +318,36 @@ def test_worker_stop_releases_and_unsubscribes(rig):
     intent(bus, True)
     worker.poll()
     assert worker.pressed is False and presses() == ["press"]
+
+
+def test_worker_yields_while_cast_charging(rig):
+    bus, worker = rig
+    set_state(bus, FishingState.FISHING)
+    worker.start()
+    intent(bus, True)
+    assert worker.pressed is True
+    set_cast_phase(bus, CastPhase.CHARGING)
+    assert worker.pressed is False
+    worker.poll()
+    assert worker.pressed is False
+
+
+def test_worker_resumes_after_charging_ends(rig):
+    bus, worker = rig
+    set_state(bus, FishingState.FISHING)
+    worker.start()
+    intent(bus, True)
+    set_cast_phase(bus, CastPhase.CHARGING)
+    assert worker.pressed is False
+    set_cast_phase(bus, CastPhase.DONE)
+    assert worker.pressed is True
+    assert worker.yielding is False
+
+
+def test_worker_does_not_press_when_charging_at_start(rig):
+    bus, worker = rig
+    set_cast_phase(bus, CastPhase.CHARGING)
+    set_state(bus, FishingState.FISHING)
+    worker.start()
+    intent(bus, True)
+    assert worker.pressed is False

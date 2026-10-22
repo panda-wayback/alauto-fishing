@@ -31,13 +31,19 @@ input:
     desc: 返回改角度 / 圆心比例 / 半径比例的新标定
   - name: autofish.cast_calibration.DEFAULT_CAST_CIRCLE_PATH
     type: pathlib.Path 常量 = common.paths.data_root() / "cast_circle.json"
-    desc: 默认存盘路径；下列函数 path=None 时使用
+    desc: 用户可写存盘路径；save_cast_circle(path=None) 写入此处
+  - name: autofish.cast_calibration.BUNDLED_CAST_CIRCLE_PATH
+    type: pathlib.Path 常量 = common.paths.assets_dir() / "cast_circle.json"
+    desc: 随包默认路径；打包装进软件；冻结只读
   - name: autofish.cast_calibration.save_cast_circle(circle, path=None)
     type: "circle: CastCircle; path: pathlib.Path | None"
-    desc: 写存盘（JSON，全部为比例与角度）
+    desc: 写存盘（JSON，全部为比例与角度）；path=None 写用户路径
+  - name: autofish.cast_calibration.save_bundled_cast_circle(circle)
+    type: "circle: CastCircle"
+    desc: 写入 BUNDLED_CAST_CIRCLE_PATH；冻结运行抛 RuntimeError
   - name: autofish.cast_calibration.load_cast_circle(path=None)
     type: "path: pathlib.Path | None"
-    desc: 读存盘；旧文件缺 radius_ratio 时取默认值
+    desc: 读存盘；path=None 时先用户 data/cast_circle.json，再 assets/cast_circle.json；旧文件缺 radius_ratio 时取默认值
 output:
   - name: CastCircle.anchor(...)
     type: tuple[float, float]
@@ -60,6 +66,9 @@ output:
   - name: save_cast_circle(circle, path=None)
     type: pathlib.Path
     desc: 实际写入路径；自动创建父目录；随后 load_cast_circle 可读回相等对象
+  - name: save_bundled_cast_circle(circle)
+    type: pathlib.Path
+    desc: 实际写入的打包默认路径
   - name: load_cast_circle(path=None)
     type: CastCircle
     desc: 存盘中的圆心比例、角度与半径比例
@@ -70,14 +79,17 @@ contract:
   - 90° 时透视强度为 0，参考环为正圆且同心环等距；角度越小，近大远小越强
   - 参考环用透视投影点列表示，不用 fitEllipse / drawEllipse 定义
   - JSON 键恰为 cx、cy、angle_deg、radius_ratio；旧文件可缺 radius_ratio
-  - 所有存盘函数 path=None 时使用 DEFAULT_CAST_CIRCLE_PATH
+  - save_cast_circle(path=None) 写 DEFAULT_CAST_CIRCLE_PATH；load_cast_circle(path=None) 优先用户文件，否则打包默认
+  - save_bundled_cast_circle 写 BUNDLED_CAST_CIRCLE_PATH；冻结运行抛 RuntimeError
 depends:
   - src/common
 errors:
   - code: ValueError
     desc: angle_deg 不在 (0,90]、radius_ratio ≤0，或屏幕尺寸非正
   - code: FileNotFoundError
-    desc: load_cast_circle 的存盘文件不存在
+    desc: load_cast_circle 在用户与打包默认路径均不存在
+  - code: RuntimeError
+    desc: save_bundled_cast_circle 在冻结运行时调用
   - code: json.JSONDecodeError / KeyError / TypeError / ValueError
     desc: 存盘不是合法 JSON、缺字段或字段不是有效数值
 tests:
@@ -89,4 +101,5 @@ tests:
   - target_power_ratio 圆心 0、环上各方向 1、环内不夹、环外与非有限值夹到 1，结果恒在 [0,1]
   - with_angle / with_anchor_ratio / with_radius_ratio 返回新对象且其余字段不变
   - save/load roundtrip（含旧文件缺 radius_ratio）、坏 JSON/缺字段/非数值/缺文件的错误行为
-  - path=None 时读写 DEFAULT_CAST_CIRCLE_PATH（测试中替换默认路径）
+  - path=None 时 save 写用户路径；load 用户缺失则读打包默认（测试中替换路径）
+  - save_bundled_cast_circle 写入打包默认；冻结时抛错

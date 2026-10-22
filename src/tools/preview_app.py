@@ -1,4 +1,4 @@
-"""调试壳（PySide6）：竖列可滚 + 底栏独立日志；设置可收起；无快捷键。"""
+"""调试壳（PySide6）：竖列可滚 + 底栏独立日志；抛杆用全局快捷键。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
 from PySide6.QtCore import QObject, QPoint, QTimer, Qt, Signal
+from PySide6.QtGui import QImage, QKeySequence, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
     QHBoxLayout,
@@ -53,9 +54,11 @@ from autofish.locate.roi import (
     primary_screen_size,
     save_roi,
 )
+from autofish.auto_cast.cursor_arm import CursorArmWatcher
 from autofish.pipeline import AutofishPipeline
 from autofish.events.topics import (
     ActionIntentEvent,
+    CastPhase,
     CastSessionState,
     FishingState,
     FrameEvent,
@@ -72,6 +75,7 @@ from tools.shell_config import (
     save_shell_settings,
 )
 from tools.shell_theme import (
+    BORDER,
     DANGER,
     SUCCESS,
     TEXT_FAINT,
@@ -91,11 +95,23 @@ from tools.sound_panel import FirstClickTriggerPanel
 from tools.backtest_panel import AudioBacktestPanel
 from tools.main_page import build_main_page
 from tools.calibrate_page import build_calibrate_page
+from tools.cast_page import build_cast_page
+from tools.cast_hotkeys import CastHotkeyListener, normalize_hotkey
+from tools.cast_right_click import CastRightClickListener
 from tools.more_page import build_more_page
 
 IDLE = "idle"
 SELECT = "select"
 READY = "ready"
+
+_CAST_PHASE_LABEL = {
+    CastPhase.DISABLED: "关",
+    CastPhase.WAIT: "等待",
+    CastPhase.AIM: "瞄准",
+    CastPhase.CHARGING: "蓄力",
+    CastPhase.DONE: "完成",
+    CastPhase.ABORT: "中止",
+}
 
 
 class BusBridge(QObject):
@@ -104,6 +120,26 @@ class BusBridge(QObject):
     frame = Signal(object)
     pos = Signal(object)
     intent = Signal(object)
+
+
+class HotkeyBridge(QObject):
+    """全局热键监听线程 → UI 线程。"""
+
+    start_cast = Signal()
+    stop_cast = Signal()
+
+
+class RightClickBridge(QObject):
+    """右键监听线程 → UI 线程。"""
+
+    pressed = Signal()
+
+
+class ArmBridge(QObject):
+    """认漂观察者线程 → UI 线程。"""
+
+    armed_changed = Signal(bool)
+    frame = Signal(object, bool)  # rgb ndarray, armed
 
 
 def _hold_word(on: bool | None) -> str:
@@ -137,6 +173,7 @@ class PreviewApp(QMainWindow):
         self._pipe: AutofishPipeline | None = None
         self._holding: bool | None = None
         self._last_cast_session: CastSessionState | None = None
+        self._last_cast_phase: CastPhase | None = None
         self._had_bobber: bool | None = None
         self._intent_reason = ""
         self._last_detect_ms: float = 0.0
@@ -147,6 +184,7 @@ class PreviewApp(QMainWindow):
         self._mouse_mismatch_logged = False
         self._logs: deque[str] = deque(maxlen=200)
         self._cal_logs: deque[str] = deque(maxlen=200)
+        self._cast_logs: deque[str] = deque(maxlen=200)
         self._sound_panel: FirstClickTriggerPanel | None = None
         self._backtest_panel: AudioBacktestPanel | None = None
         self._bar_ref_saved = False
@@ -154,10 +192,29 @@ class PreviewApp(QMainWindow):
         # 框选期间暂停 Act：停监控后 FSM 可能卡在 FISHING，Windows 上
         # pynput 合成左键按住会导致「确认框选」点不动。
         self._act_paused_for_select = False
+        self._cast_paused_for_select = False
+        self._cast_paused_remaining = 0
         self._bridge = BusBridge()
         self._bridge.frame.connect(self._on_frame_ui)
         self._bridge.pos.connect(self._on_pos_ui)
         self._bridge.intent.connect(self._on_intent_ui)
+        self._hotkey_bridge = HotkeyBridge()
+        self._hotkey_bridge.start_cast.connect(self._on_cast_hotkey_start)
+        self._hotkey_bridge.stop_cast.connect(self._on_cast_hotkey_stop)
+        self._cast_hotkeys = CastHotkeyListener(
+            on_start=lambda: self._hotkey_bridge.start_cast.emit(),
+            on_stop=lambda: self._hotkey_bridge.stop_cast.emit(),
+        )
+        self._rclick_bridge = RightClickBridge()
+        self._rclick_bridge.pressed.connect(self._on_cast_right_click)
+        self._cast_right_click = CastRightClickListener(
+            on_press=lambda: self._rclick_bridge.pressed.emit(),
+        )
+        self._arm_bridge = ArmBridge()
+        self._arm_bridge.armed_changed.connect(self._on_cursor_armed_changed)
+        self._arm_bridge.frame.connect(self._on_cursor_arm_frame)
+        self._cursor_arm: CursorArmWatcher | None = None
+        self._last_armed: bool | None = None
 
         self._compact = False
         self._full_geo = None
@@ -165,12 +222,13 @@ class PreviewApp(QMainWindow):
         self._apply_saved_window_geometry()
         self._reload_roi()
         self._sync_buttons()
-        # 恢复持久化 A/B；有 ROI 则常开 Capture/Detect
+        # 恢复持久化 A/B/C；有 ROI 则常开 Capture/Detect
         self._restore_ab_from_settings()
         if self.roi is not None:
             self._ensure_monitor_on()
             self.lbl_hint.setText("ROI 就绪 · 监控中")
             self._cal_log("启动 · Capture/Detect 常开")
+        self._refresh_cast_label()
         self._refresh_hud_steady()
         if start_compact:
             self._set_compact_mode(True, from_startup=True)
@@ -188,6 +246,8 @@ class PreviewApp(QMainWindow):
         self._perm_timer.timeout.connect(self._refresh_permissions)
         self._perm_timer.start(2000)
         self._refresh_permissions()
+        self._apply_cast_hotkeys_from_settings()
+        self._cast_hotkeys.start()
         QTimer.singleShot(0, self._apply_no_minimize)
 
     def _apply_no_minimize(self) -> None:
@@ -220,6 +280,7 @@ class PreviewApp(QMainWindow):
         nav_items = (
             ("主控", "日常开关与状态"),
             ("拉漂配置", "自动拉漂配置 · ROI / 条界 / 策略"),
+            ("抛杆配置", "次数 · 快捷键 · 满蓄 · 等待"),
             ("开钓配置", "声音开钓配置 · 设备 / 模板 / 阈值"),
             ("回测", "长录音与命中回测"),
             ("更多", "权限与置顶"),
@@ -239,6 +300,7 @@ class PreviewApp(QMainWindow):
 
         self.stack.addWidget(build_main_page(self))
         self.stack.addWidget(build_calibrate_page(self))
+        self.stack.addWidget(build_cast_page(self))
 
         # —— 声音开钓配置 ——
         page_sound = QWidget()
@@ -289,6 +351,7 @@ class PreviewApp(QMainWindow):
     def _on_tick(self) -> None:
         self._refresh_mouse()
         self._refresh_session_label()
+        self._refresh_cast_label()
 
     def _refresh_session_label(self) -> None:
         pipe = self._pipe
@@ -319,6 +382,84 @@ class PreviewApp(QMainWindow):
         self._last_cast_session = cs
         self._refresh_hud_steady()
 
+    def _refresh_cast_label(self) -> None:
+        pipe = self._pipe
+        c_on = bool(getattr(self, "chk_c", None) is not None and self.chk_c.isChecked())
+        if not c_on:
+            self.lbl_cast.setText("抛杆门闩：模块关")
+            self._set_arm_preview_visible(False)
+            if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
+                self._last_cast_phase = CastPhase.DISABLED
+            self._refresh_hud_steady()
+            return
+        self._set_arm_preview_visible(True)
+        if pipe is None or not pipe.auto_cast.active:
+            armed = bool(
+                self._cursor_arm is not None and self._cursor_arm.armed
+            )
+            arm_txt = "可开抛" if armed else "未认漂"
+            sk = self._settings.cast_start_hotkey
+            ek = self._settings.cast_stop_hotkey
+            self.lbl_cast.setText(
+                f"抛杆门闩：{arm_txt} · 右键/{sk} 开始 · 右键/{ek} 结束"
+            )
+            self._paint_arm_border(armed)
+            if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
+                self._last_cast_phase = CastPhase.DISABLED
+            self._refresh_hud_steady()
+            return
+        snap = pipe.bus.snapshot()
+        phase = snap.cast_phase
+        label = _CAST_PHASE_LABEL.get(phase, phase.value)
+        detail = f" · {snap.cast_phase_detail}" if snap.cast_phase_detail else ""
+        rem = pipe.auto_cast.remaining
+        self.lbl_cast.setText(f"抛杆：{label}{detail} · 剩 {rem}")
+        armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
+        self._paint_arm_border(armed)
+        prev = self._last_cast_phase
+        if prev is not None and phase != prev:
+            detail = snap.cast_phase_detail or ""
+            self._main_log(
+                f"抛杆 {prev.value} → {phase.value}"
+                + (f" · {detail}" if detail else "")
+                + f" · 剩 {rem}"
+            )
+            self._log_cast_phase(phase, detail, rem=rem)
+        self._last_cast_phase = phase
+        self._refresh_hud_steady()
+
+    def _log_cast_phase(self, phase: CastPhase, detail: str, *, rem: int) -> None:
+        """抛杆配置页：写清第几次、按下多久、拉漂后等待。"""
+        d = (detail or "").strip()
+        if phase == CastPhase.AIM:
+            self._cast_log(f"瞄准 {d} · 剩 {rem}".strip())
+        elif phase == CastPhase.CHARGING:
+            self._cast_log(f"蓄力按下 {d} · 剩 {rem}".strip())
+        elif phase == CastPhase.DONE:
+            hold = ""
+            pipe = self._pipe
+            if pipe is not None and pipe.auto_cast.last_hold_s is not None:
+                hold = f" · 已按 {pipe.auto_cast.last_hold_s:.2f}s"
+            self._cast_log(f"松杆完成 {d}{hold} · 剩 {rem}".strip())
+        elif phase == CastPhase.WAIT:
+            if d.startswith("settle"):
+                self._cast_log(f"开抛避让 · {d} · 剩 {rem}")
+            elif d.startswith("after_fish"):
+                self._cast_log(f"拉漂结束 · {d} · 剩 {rem}")
+            elif d.startswith("retry"):
+                self._cast_log(f"本杆失败 · {d} · 剩 {rem}")
+            else:
+                self._cast_log(f"等待 {d} · 剩 {rem}".strip())
+        elif phase == CastPhase.ABORT:
+            self._cast_log(f"中止 {d} · 剩 {rem}".strip())
+        elif phase == CastPhase.DISABLED:
+            if d == "batch_done":
+                self._cast_log("本轮次数用尽")
+            elif d == "cancelled":
+                self._cast_log("已结束抛杆任务")
+            elif d:
+                self._cast_log(f"结束 · {d}")
+
     def _main_log(self, msg: str) -> None:
         """主控状态日志（最新在上）。"""
         if getattr(self, "log", None) is not None:
@@ -328,6 +469,11 @@ class PreviewApp(QMainWindow):
         """自动拉漂配置页日志（最新在上）。"""
         if getattr(self, "cal_log", None) is not None:
             append_log(self._cal_logs, self.cal_log, msg)
+
+    def _cast_log(self, msg: str) -> None:
+        """抛杆配置页日志（最新在上）。"""
+        if getattr(self, "cast_log", None) is not None:
+            append_log(self._cast_logs, self.cast_log, msg)
 
     def _schedule_persist(self) -> None:
         """拖动数轴时防抖落盘，避免每像素写文件。"""
@@ -360,6 +506,7 @@ class PreviewApp(QMainWindow):
             window_h=int(wh),
             sound_enabled=bool(self.chk_a.isChecked()),
             auto_bobber_enabled=bool(self.chk_b.isChecked()),
+            auto_cast_enabled=bool(self.chk_c.isChecked()),
             stay_on_top=bool(self.chk_stay_on_top.isChecked()),
         )
 
@@ -412,19 +559,78 @@ class PreviewApp(QMainWindow):
             self.move(self.x() + dx, self.y() + dy)
 
     def _restore_ab_from_settings(self) -> None:
-        """启动时恢复 A/B 勾选并应用。"""
+        """启动时恢复 A/B/C 勾选并应用。"""
         s = self._settings
         want_b = bool(s.auto_bobber_enabled)
         want_a = bool(s.sound_enabled)
+        want_c = bool(s.auto_cast_enabled)
         # 先把勾选摆到目标态，再应用逻辑——避免 B 落盘时把 A 偏好写成 false
         self._block_checks(True)
         self.chk_b.setChecked(want_b)
         self.chk_a.setChecked(want_a)
+        self.chk_c.setChecked(want_c)
         self._block_checks(False)
         self._on_b_toggled(want_b)
+        self._on_c_toggled(want_c)
+        # 工人 / 管线可能已建：再刷一次抛杆次数 / 等待 / 满蓄到控件与 pipe
+        self._apply_cast_batch_from_settings()
         if want_a:
             # 延后一拍：声音面板设备列表已就绪后再开会话
             QTimer.singleShot(0, self._restore_sound_enabled)
+
+    def _apply_cast_batch_from_settings(self) -> None:
+        s = self._settings
+        if getattr(self, "spin_cast_count", None) is not None:
+            self.spin_cast_count.blockSignals(True)
+            self.spin_cast_count.setValue(int(s.cast_count))
+            self.spin_cast_count.blockSignals(False)
+        self._apply_cast_hotkey_edits(s.cast_start_hotkey, s.cast_stop_hotkey)
+        self._apply_cast_wait_from_settings()
+        self._apply_cast_full_charge_from_settings()
+        self._apply_cast_hotkeys_from_settings()
+
+    def _apply_cast_wait_from_settings(self) -> None:
+        s = self._settings
+        if getattr(self, "bar_cast_wait", None) is not None:
+            self.bar_cast_wait.setRange(s.cast_wait_lo_s, s.cast_wait_hi_s, emit=False)
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.set_cast_wait_range(s.cast_wait_lo_s, s.cast_wait_hi_s)
+
+    def _apply_cast_full_charge_from_settings(self) -> None:
+        s = self._settings
+        spin = getattr(self, "spin_cast_full_charge", None)
+        if spin is not None:
+            spin.blockSignals(True)
+            spin.setValue(float(s.cast_full_charge_s))
+            spin.blockSignals(False)
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.set_cast_full_charge_s(s.cast_full_charge_s)
+
+    def _apply_cast_hotkey_edits(self, start: str, stop: str) -> None:
+        if getattr(self, "edit_cast_start", None) is None:
+            return
+        self.edit_cast_start.blockSignals(True)
+        self.edit_cast_stop.blockSignals(True)
+        self.edit_cast_start.setKeySequence(QKeySequence(start))
+        self.edit_cast_stop.setKeySequence(QKeySequence(stop))
+        self.edit_cast_start.blockSignals(False)
+        self.edit_cast_stop.blockSignals(False)
+
+    def _apply_cast_hotkeys_from_settings(self) -> None:
+        s = self._settings
+        self._cast_hotkeys.set_keys(s.cast_start_hotkey, s.cast_stop_hotkey)
+
+    @staticmethod
+    def _keyseq_to_hotkey(seq: QKeySequence, *, default: str) -> str:
+        if seq.isEmpty():
+            return normalize_hotkey(default, default=default)
+        text = seq.toString(QKeySequence.SequenceFormat.PortableText).strip()
+        if not text:
+            return normalize_hotkey(default, default=default)
+        key = text.split("+")[-1].strip().upper()
+        return normalize_hotkey(key, default=default)
 
     def _restore_sound_enabled(self) -> None:
         """按已勾选的 A 偏好尝试启动听声；失败不改勾选、不抹掉偏好。"""
@@ -578,7 +784,21 @@ class PreviewApp(QMainWindow):
             return
         a_on = bool(self.chk_a.isChecked())
         b_on = bool(self.chk_b.isChecked())
-        if not a_on and not b_on:
+        pipe = self._pipe
+        cast_on = bool(pipe is not None and pipe.auto_cast.active)
+        snap = None if pipe is None else pipe.bus.snapshot()
+        if cast_on and snap is not None:
+            cp = snap.cast_phase
+            if cp == CastPhase.CHARGING:
+                hud.set_steady("cast_charge")
+                return
+            if cp == CastPhase.AIM:
+                hud.set_steady("cast_aim")
+                return
+            if cp in (CastPhase.WAIT, CastPhase.DONE):
+                hud.set_steady("cast_wait")
+                return
+        if not a_on and not b_on and not cast_on:
             hud.set_steady("idle")
             return
         if self._had_bobber:
@@ -587,10 +807,7 @@ class PreviewApp(QMainWindow):
             else:
                 hud.set_steady("release")
             return
-        pipe = self._pipe
-        cs = CastSessionState.DISABLED
-        if pipe is not None:
-            cs = pipe.bus.snapshot().cast_session
+        cs = CastSessionState.DISABLED if snap is None else snap.cast_session
         if a_on:
             if cs == CastSessionState.WAIT_BOBBER:
                 hud.set_steady("wait_bobber")
@@ -602,6 +819,9 @@ class PreviewApp(QMainWindow):
                 hud.set_steady("listen")
             else:
                 hud.set_steady("listen")
+            return
+        if cast_on:
+            hud.set_steady("cast_wait")
             return
         hud.set_steady("idle")
 
@@ -680,7 +900,7 @@ class PreviewApp(QMainWindow):
         reply = QMessageBox.question(
             self,
             "恢复默认",
-            "将把拉漂、开钓和截图范围恢复为默认，并清空手动条界与参考图。\n"
+            "将把抛杆、拉漂、开钓和截图范围恢复为默认，并清空手动条界与参考图。\n"
             "模板、录音和授权会保留。\n\n"
             "继续？",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
@@ -739,14 +959,20 @@ class PreviewApp(QMainWindow):
         self._block_checks(True)
         self.chk_b.setChecked(bool(defaults.auto_bobber_enabled))
         self.chk_a.setChecked(bool(defaults.sound_enabled))
+        self.chk_c.setChecked(bool(defaults.auto_cast_enabled))
         self._block_checks(False)
         self._on_b_toggled(bool(defaults.auto_bobber_enabled))
+        self._on_c_toggled(bool(defaults.auto_cast_enabled))
         if defaults.sound_enabled:
             self._activate_sound_session(persist=False)
         else:
             self._on_a_toggled(False)
         self._restore_default_roi()
         self._publish_press_interval()
+        self._apply_cast_batch_from_settings()
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.cancel_cast_batch()
 
         self._persist_timer.stop()
         clean = load_default_shell_settings()
@@ -754,11 +980,13 @@ class PreviewApp(QMainWindow):
             clean,
             auto_bobber_enabled=bool(self.chk_b.isChecked()),
             sound_enabled=bool(self.chk_a.isChecked()),
+            auto_cast_enabled=bool(self.chk_c.isChecked()),
             stay_on_top=bool(self.chk_stay_on_top.isChecked()),
         )
         save_shell_settings(self._settings)
         self.lbl_hint.setText("已恢复默认")
         self._main_log("已恢复默认")
+        self._refresh_cast_label()
 
     def _reset_window_after_restore(self, stay_on_top: bool) -> None:
         """退出紧凑态，就地回到默认窗口尺寸。"""
@@ -980,7 +1208,13 @@ class PreviewApp(QMainWindow):
 
     def _ensure_pipe(self) -> AutofishPipeline:
         if self._pipe is None:
-            pipe = AutofishPipeline(capture_fps=30.0)
+            s = self._settings
+            pipe = AutofishPipeline(
+                capture_fps=30.0,
+                cast_wait_lo_s=s.cast_wait_lo_s,
+                cast_wait_hi_s=s.cast_wait_hi_s,
+                cast_full_charge_s=s.cast_full_charge_s,
+            )
             pipe.subscribe(Topic.FRAME, self._on_frame_bus)
             pipe.subscribe(Topic.POS, self._on_pos_bus)
             pipe.subscribe(Topic.ACTION_INTENT, self._on_intent_bus)
@@ -1197,8 +1431,128 @@ class PreviewApp(QMainWindow):
         self.btn_roi_default.setEnabled(not selecting)
 
     def _block_checks(self, block: bool) -> None:
-        for chk in (self.chk_b, self.chk_a):
+        for chk in (self.chk_b, self.chk_a, self.chk_c):
             chk.blockSignals(block)
+
+    def _on_c_toggled(self, checked: bool) -> None:
+        """自动抛杆 = 工人待命 + 光标旁认漂 + 右键 / F8·F9。"""
+        if checked:
+            pipe = self._ensure_pipe()
+            self._apply_cast_wait_from_settings()
+            self._apply_cast_full_charge_from_settings()
+            if not pipe.auto_cast_on:
+                pipe.start_auto_cast()
+            self._start_cursor_arm()
+            self._cast_right_click.start()
+            self._main_log("自动抛杆 ON · 认漂后右键开始 / 再右键结束")
+            self._cast_log("自动抛杆模块开")
+        else:
+            pipe = self._pipe
+            if pipe is not None:
+                pipe.cancel_cast_batch()
+                if pipe.auto_cast_on:
+                    pipe.stop_auto_cast()
+            self._stop_cursor_arm()
+            self._cast_right_click.stop()
+            self._cast_paused_for_select = False
+            self._cast_paused_remaining = 0
+            self._main_log("自动抛杆 OFF")
+            self._cast_log("自动抛杆模块关")
+        self._refresh_cast_label()
+        self._refresh_hud_steady()
+        self._persist_settings()
+
+    def _start_cursor_arm(self) -> None:
+        if self._cursor_arm is None:
+            self._cursor_arm = CursorArmWatcher(
+                interval_s=0.3,
+                size=100,
+                on_armed_changed=lambda armed: self._arm_bridge.armed_changed.emit(
+                    bool(armed)
+                ),
+                on_frame=lambda rgb, armed: self._arm_bridge.frame.emit(rgb, bool(armed)),
+            )
+        self._cursor_arm.start()
+        self._cursor_arm.set_enabled(True)
+        self._set_arm_preview_visible(True)
+
+    def _stop_cursor_arm(self) -> None:
+        if self._cursor_arm is None:
+            self._set_arm_preview_visible(False)
+            return
+        self._cursor_arm.set_enabled(False)
+        self._cursor_arm.stop()
+        self._last_armed = None
+        self._set_arm_preview_visible(False)
+
+    def _set_arm_preview_visible(self, visible: bool) -> None:
+        prev = getattr(self, "lbl_arm_preview", None)
+        if prev is None:
+            return
+        if visible:
+            prev.show()
+        else:
+            prev.clear()
+            prev.hide()
+
+    def _paint_arm_border(self, armed: bool) -> None:
+        prev = getattr(self, "lbl_arm_preview", None)
+        if prev is None or not prev.isVisible():
+            return
+        color = SUCCESS if armed else BORDER
+        prev.setStyleSheet(
+            f"background:{BORDER}; border:2px solid {color}; border-radius:4px;"
+        )
+
+    def _on_cursor_arm_frame(self, rgb: object, armed: bool) -> None:
+        if not self.chk_c.isChecked():
+            return
+        prev = getattr(self, "lbl_arm_preview", None)
+        if prev is None:
+            return
+        arr = np.asarray(rgb)
+        if arr.ndim != 3 or arr.shape[2] < 3:
+            return
+        h, w = int(arr.shape[0]), int(arr.shape[1])
+        # 系统光标 RGBA：画在深底上，透明处露底
+        if arr.shape[2] >= 4:
+            rgba = np.ascontiguousarray(arr[..., :4], dtype=np.uint8)
+            qimg = QImage(rgba.data, w, h, 4 * w, QImage.Format.Format_RGBA8888).copy()
+        else:
+            rgb8 = np.ascontiguousarray(arr[..., :3], dtype=np.uint8)
+            qimg = QImage(rgb8.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
+        pix = QPixmap.fromImage(qimg).scaled(
+            prev.width(),
+            prev.height(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        prev.setPixmap(pix)
+        self._paint_arm_border(bool(armed))
+
+    def _on_cursor_armed_changed(self, armed: bool) -> None:
+        """只刷新门闩文案与边框，不写状态日志（避免刷屏）。"""
+        armed = bool(armed)
+        if self._last_armed is not None and self._last_armed == armed:
+            return
+        self._last_armed = armed
+        if not self.chk_c.isChecked():
+            return
+        self._paint_arm_border(armed)
+        self._refresh_cast_label()
+
+    def _on_cast_right_click(self) -> None:
+        """右键：可开抛且空闲 → 开始；任务中 → 结束；否则不抢游戏。"""
+        if not self.chk_c.isChecked():
+            return
+        pipe = self._pipe
+        if pipe is not None and pipe.auto_cast.active:
+            self._on_cast_hotkey_stop()
+            return
+        armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
+        if not armed:
+            return
+        self._on_cast_hotkey_start()
 
     def _on_b_toggled(self, checked: bool) -> None:
         """自动拉漂 = Decide + Act。"""
@@ -1324,7 +1678,7 @@ class PreviewApp(QMainWindow):
         intent = self._holding
         snap = None if pipe is None else pipe.bus.snapshot()
         may_pull = False
-        if snap is not None:
+        if snap is not None and snap.cast_phase != CastPhase.CHARGING:
             if snap.cast_session == CastSessionState.DISABLED:
                 may_pull = snap.fishing_state == FishingState.FISHING
             else:
@@ -1420,19 +1774,47 @@ class PreviewApp(QMainWindow):
             pipe.stop_act()
             self._act_paused_for_select = True
             self._cal_log("框选中 · 已暂停控鼠")
+        self._pause_cast_for_select()
         # 已暂停则保持标志，避免重入把恢复机会清掉
+
+    def _pause_cast_for_select(self) -> None:
+        pipe = self._pipe
+        if pipe is not None and pipe.auto_cast.active:
+            self._cast_paused_remaining = max(1, int(pipe.auto_cast.remaining))
+            pipe.cancel_cast_batch()
+            self._cast_paused_for_select = True
+            self._cast_log("框选中 · 已暂停抛杆任务")
+            self._refresh_cast_label()
 
     def _resume_input_after_select(self) -> None:
         """框选结束：若进入前开着自动拉漂，则恢复 Act。"""
         if not self._act_paused_for_select:
+            self._resume_cast_after_select()
             return
         self._act_paused_for_select = False
         if not self.chk_b.isChecked():
+            self._resume_cast_after_select()
             return
         pipe = self._ensure_pipe()
         if not pipe.act_on:
             pipe.start_act()
             self._cal_log("框选结束 · 已恢复控鼠")
+        self._resume_cast_after_select()
+
+    def _resume_cast_after_select(self) -> None:
+        if not self._cast_paused_for_select:
+            return
+        rem = self._cast_paused_remaining
+        self._cast_paused_for_select = False
+        self._cast_paused_remaining = 0
+        if rem <= 0 or not self.chk_c.isChecked():
+            return
+        pipe = self._ensure_pipe()
+        if not pipe.auto_cast_on:
+            pipe.start_auto_cast()
+        if pipe.start_cast_batch(rem):
+            self._cast_log(f"框选结束 · 已恢复抛杆 · 剩 {rem}")
+            self._refresh_cast_label()
 
     def _capture_fullscreen(self) -> None:
         self._pause_input_for_select()
@@ -1507,7 +1889,7 @@ class PreviewApp(QMainWindow):
         self._resume_input_after_select()
 
     def _ensure_monitor_on(self) -> None:
-        """有 ROI 则常开 Capture+Detect。"""
+        """有 ROI 则常开 Capture+Detect（不启抛杆工人；抛杆由 C 勾选控制）。"""
         if self.roi is None:
             return
         pipe = self._ensure_pipe()
@@ -1516,6 +1898,9 @@ class PreviewApp(QMainWindow):
         if not pipe.monitor_on:
             pipe.start_monitor()
             self._cal_log("Capture+Detect 常开")
+        # 等待 / 满蓄可先写入工人，即使 C 未开
+        self._apply_cast_wait_from_settings()
+        self._apply_cast_full_charge_from_settings()
         self.lbl_hint.setText("监控中")
 
     def _cancel_selection(self) -> None:
@@ -1528,7 +1913,81 @@ class PreviewApp(QMainWindow):
             self._ensure_monitor_on()
         self._resume_input_after_select()
 
+    def _on_cast_hotkey_start(self) -> None:
+        if not self.chk_c.isChecked():
+            return
+        pipe = self._ensure_pipe()
+        self._apply_cast_wait_from_settings()
+        self._apply_cast_full_charge_from_settings()
+        if not pipe.auto_cast_on:
+            pipe.start_auto_cast()
+        n = int(self._settings.cast_count)
+        if not pipe.start_cast_batch(n):
+            self._cast_log("抛杆任务进行中 · 忽略开始")
+        else:
+            lo, hi = self._settings.cast_wait_lo_s, self._settings.cast_wait_hi_s
+            self._cast_log(f"开始抛杆 · {n} 次 · 等待 {lo:.1f}～{hi:.1f}s")
+            self._main_log(f"抛杆开始 · {n} 次")
+        self._refresh_cast_label()
+
+    def _on_cast_hotkey_stop(self) -> None:
+        if not self.chk_c.isChecked():
+            return
+        pipe = self._pipe
+        if pipe is None or not pipe.auto_cast.active:
+            return
+        pipe.cancel_cast_batch()
+        self._cast_paused_for_select = False
+        self._cast_paused_remaining = 0
+        self._cast_log("已结束抛杆任务")
+        self._main_log("抛杆结束")
+        self._refresh_cast_label()
+
+    def _on_cast_count_changed(self, value: int) -> None:
+        n = int(value)
+        self._patch_settings(cast_count=n)
+        self._cast_log(f"本轮次数 {n}")
+
+    def _on_cast_start_hotkey_changed(self, seq: QKeySequence) -> None:
+        key = self._keyseq_to_hotkey(seq, default=self._settings.cast_start_hotkey)
+        stop = self._settings.cast_stop_hotkey
+        if key == stop:
+            stop = "F9" if key == "F8" else "F8"
+        self._patch_settings(cast_start_hotkey=key, cast_stop_hotkey=stop)
+        self._apply_cast_hotkey_edits(key, stop)
+        self._apply_cast_hotkeys_from_settings()
+        self._cast_log(f"开始键 {key}")
+        self._refresh_cast_label()
+
+    def _on_cast_stop_hotkey_changed(self, seq: QKeySequence) -> None:
+        key = self._keyseq_to_hotkey(seq, default=self._settings.cast_stop_hotkey)
+        start = self._settings.cast_start_hotkey
+        if key == start:
+            start = "F8" if key == "F9" else "F9"
+        self._patch_settings(cast_start_hotkey=start, cast_stop_hotkey=key)
+        self._apply_cast_hotkey_edits(start, key)
+        self._apply_cast_hotkeys_from_settings()
+        self._cast_log(f"结束键 {key}")
+        self._refresh_cast_label()
+
+    def _on_cast_wait_changed(self, lo: float, hi: float) -> None:
+        self._patch_settings(cast_wait_lo_s=float(lo), cast_wait_hi_s=float(hi))
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.set_cast_wait_range(lo, hi)
+        self._cast_log(f"等待区间 {lo:.1f}～{hi:.1f}s")
+
+    def _on_cast_full_charge_changed(self, value: float) -> None:
+        self._patch_settings(cast_full_charge_s=float(value))
+        pipe = self._pipe
+        if pipe is not None:
+            pipe.set_cast_full_charge_s(float(value))
+        self._cast_log(f"满蓄秒数 {float(value):.2f}s")
+
     def closeEvent(self, event) -> None:  # noqa: N802
+        self._cast_hotkeys.stop()
+        self._cast_right_click.stop()
+        self._stop_cursor_arm()
         if self._persist_timer.isActive():
             self._persist_timer.stop()
         self._persist_settings()

@@ -26,9 +26,11 @@ from autofish.cast_calibration import (
     DEFAULT_CAST_CIRCLE_PATH,
     CastCircle,
     load_cast_circle,
+    save_bundled_cast_circle,
     save_cast_circle,
 )
 from autofish.locate.roi import primary_screen_size
+from tools.shell_config import is_frozen_app
 from tools.shell_theme import global_qss
 
 DEFAULT_ANGLE = 30.0
@@ -174,18 +176,26 @@ class CastCalibrationWindow(QWidget):
         self.btn_save = QPushButton("保存")
         self.btn_save.setObjectName("btnPrimary")
         self.btn_save.clicked.connect(self._save)
+        row2.addWidget(self.btn_save)
+        if not is_frozen_app():
+            self.btn_bundle = QPushButton("写入打包默认")
+            self.btn_bundle.setObjectName("btnGhost")
+            self.btn_bundle.setToolTip("写入 assets/cast_circle.json，随后打包会带进软件")
+            self.btn_bundle.clicked.connect(self._save_bundled)
+            row2.addWidget(self.btn_bundle)
         self.btn_close = QPushButton("关闭")
         self.btn_close.setObjectName("btnGhost")
         self.btn_close.clicked.connect(self.close)
-        row2.addWidget(self.btn_save)
         row2.addWidget(self.btn_close)
         layout.addLayout(row2)
         self._refresh_values()
 
     def _load_circle(self) -> CastCircle:
         try:
+            if self.circle_path == DEFAULT_CAST_CIRCLE_PATH:
+                return load_cast_circle()
             return load_cast_circle(self.circle_path)
-        except (OSError, ValueError, KeyError, TypeError):
+        except (OSError, ValueError, KeyError, TypeError, FileNotFoundError):
             return CastCircle(0.5, 0.62, DEFAULT_ANGLE)
 
     def _on_canvas_changed(self, circle: CastCircle) -> None:
@@ -224,6 +234,15 @@ class CastCalibrationWindow(QWidget):
         save_cast_circle(self.circle, self.circle_path)
         self.saved_circle = self.circle
         self.setWindowTitle(f"已保存：{self.circle_path}")
+
+    def _save_bundled(self) -> None:
+        try:
+            path = save_bundled_cast_circle(self.circle)
+        except RuntimeError as exc:
+            self.setWindowTitle(str(exc))
+            return
+        self.saved_circle = self.circle
+        self.setWindowTitle(f"已写入打包默认：{path}")
 
 
 def launch_cast_calibration(

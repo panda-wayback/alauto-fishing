@@ -4,7 +4,7 @@ modules: []
 input:
   # ---- 主题与状态枚举（autofish.events.topics）----
   - name: autofish.events.topics.Topic
-    type: "str 枚举：ROI=\"roi\" / FRAME=\"frame\" / POS=\"pos\" / FISHING_STATE=\"fishing_state\" / CAST_SESSION=\"cast_session\" / ACTION_INTENT=\"action_intent\" / PRESS_INTERVAL=\"press_interval\""
+    type: "str 枚举：ROI=\"roi\" / FRAME=\"frame\" / POS=\"pos\" / FISHING_STATE=\"fishing_state\" / CAST_SESSION=\"cast_session\" / CAST_PHASE=\"cast_phase\" / ACTION_INTENT=\"action_intent\" / PRESS_INTERVAL=\"press_interval\""
     desc: autofish 总线主题闭集
   - name: autofish.events.topics.FishingState
     type: "str 枚举：IDLE / FISHING / LOST（值为小写同名）"
@@ -12,6 +12,9 @@ input:
   - name: autofish.events.topics.CastSessionState
     type: "str 枚举：DISABLED / WAIT / FIRST_CLICK / WAIT_BOBBER / FISHING（值为小写同名）"
     desc: 声音开钓会话态；DISABLED 表示声音开钓关闭
+  - name: autofish.events.topics.CastPhase
+    type: "str 枚举：DISABLED / WAIT / AIM / CHARGING / DONE / ABORT（值为小写同名）"
+    desc: 自动抛杆阶段（C）；CHARGING 时 A / B 让鼠
   # ---- 事件载荷（autofish.events.topics，均为 frozen dataclass）----
   - name: autofish.events.topics.BobberHit(pos, x, y, pixel_count, bar_left=0.0, bar_top=0.0, bar_width=0.0, bar_height=0.0, score=0.0, detect_ms=0.0)
     type: "pos: float（漂在条内 0～100）; x, y: float（帧坐标）; pixel_count: int; bar_*: float（条框，帧坐标；bar_width=0 表示无条）; score, detect_ms: float"
@@ -34,6 +37,9 @@ input:
   - name: autofish.events.topics.CastSessionEvent(state, ts, detail="", splash=None)
     type: "state: CastSessionState; ts: float; detail: str; splash: SplashHit | None"
     desc: 开钓会话态变化
+  - name: autofish.events.topics.CastPhaseEvent(phase, ts, detail="", target=None, power=None)
+    type: "phase: CastPhase; ts: float; detail: str; target/power: float | None"
+    desc: 自动抛杆阶段变化；target 为本轮目标力度、power 为蓄力完成时记录的比例（按时长松杆时可与 target 相同，可空）
   - name: autofish.events.topics.ActionIntentEvent(holding, ts, reason="", pos=None)
     type: "holding: bool（True=要按住，False=要松开）; ts: float; reason: str; pos: float | None"
     desc: 决策意图
@@ -68,6 +74,9 @@ input:
   - name: AutofishBus.publish_cast_session(event)
     type: CastSessionEvent
     desc: 发布开钓会话态到 Topic.CAST_SESSION
+  - name: AutofishBus.publish_cast_phase(event)
+    type: CastPhaseEvent
+    desc: 发布自动抛杆阶段到 Topic.CAST_PHASE（同 phase 且同 detail 去重）
   - name: AutofishBus.publish_action_intent(event)
     type: ActionIntentEvent
     desc: 发布按住 / 松开意图到 Topic.ACTION_INTENT
@@ -95,7 +104,7 @@ input:
     desc: 查询线程是否仍在运行
 output:
   - name: AutofishBus.snapshot()
-    type: "AutofishSnapshot（可变 dataclass 副本）：roi: Roi | None=None, roi_version: int=0, roi_score: float=0.0, roi_source: str=\"\", frame: None, frame_ts: float=0.0, pos: float | None=None, hit: BobberHit | None=None, pos_ts: float=0.0, pos_frame_seq: int=0, fishing_state=FishingState.IDLE, fishing_detail: str=\"\", state_ts=0.0, cast_session=CastSessionState.DISABLED, cast_detail=\"\", cast_splash: SplashHit | None=None, cast_ts=0.0, holding: bool | None=None, intent_reason=\"\", intent_ts=0.0, press_interval_s: float=0.0"
+    type: "AutofishSnapshot（可变 dataclass 副本）：roi: Roi | None=None, roi_version: int=0, roi_score: float=0.0, roi_source: str=\"\", frame: None, frame_ts: float=0.0, pos: float | None=None, hit: BobberHit | None=None, pos_ts: float=0.0, pos_frame_seq: int=0, fishing_state=FishingState.IDLE, fishing_detail: str=\"\", state_ts=0.0, cast_session=CastSessionState.DISABLED, cast_detail=\"\", cast_splash: SplashHit | None=None, cast_ts=0.0, cast_phase=CastPhase.DISABLED, cast_phase_detail: str=\"\", holding: bool | None=None, intent_reason=\"\", intent_ts=0.0, press_interval_s: float=0.0"
     desc: 各主题最近一次被接受的事件聚合；frame 恒为 None（画面须订阅 Frame / Pos 取得）
   - name: AutofishBus.current_roi()
     type: "tuple[Roi | None, int]"
@@ -115,6 +124,7 @@ contract:
   - reset_pos_seq 将快照 pos / hit 置 None、读数帧序归 0，之后较小帧序的 Pos 可再次被接受；不推送事件
   - publish_fishing_state：state 与 detail 都与快照相同则不更新快照、不推送
   - publish_cast_session：state、detail、splash 都与快照相同则不更新快照、不推送
+  - publish_cast_phase：phase 与 detail 都与快照相同则不更新快照、不推送
   - publish_action_intent 不去重，每次都更新快照 holding / intent_reason / intent_ts 并推送
   - publish_press_interval 把 interval_s 夹到 [0, 0.3] 后写入快照并推送夹取后的事件
   - clear_roi 发布 roi=None、version=当前版本+1、source=参数值 的 RoiEvent
@@ -134,6 +144,7 @@ tests:
   - ROI 换版本后，旧版本的 Frame 与 Pos 被丢弃，新版本的被接受
   - publish_pos 丢弃比已接受帧序更旧的读数，相等帧序接受；reset_pos_seq 清读数后小帧序重新可接受
   - publish_fishing_state / publish_cast_session 对完全相同的状态去重，detail 变化则推送
+  - publish_cast_phase 对相同 phase 与 detail 去重，detail 变化则推送
   - publish_action_intent 每次都推送并更新快照 holding / reason
   - publish_press_interval 把间隔夹到 [0, 0.3]，推送与快照均为夹取值
   - clear_roi 发布 roi=None、版本 +1、带 source 的事件

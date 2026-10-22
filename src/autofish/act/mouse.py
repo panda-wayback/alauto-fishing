@@ -10,6 +10,15 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 pynput：pip install pynput") from exc
 
 
+def os_cursor_position() -> tuple[float, float] | None:
+    """读系统鼠标当前主屏逻辑点坐标；失败返回 None。"""
+    try:
+        x, y = Controller().position
+        return float(x), float(y)
+    except Exception:
+        return None
+
+
 def os_left_down() -> bool | None:
     """读系统左键是否按下；失败返回 None。"""
     if sys.platform == "win32":

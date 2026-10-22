@@ -17,8 +17,11 @@ input:
   - name: 订阅 Topic.CAST_SESSION
     type: "CastSessionEvent(state: CastSessionState)"
     desc: 开钓会话态；离开 FISHING 时立即松开
+  - name: 订阅 Topic.CAST_PHASE
+    type: "CastPhaseEvent(phase: CastPhase)"
+    desc: 自动抛杆阶段；CHARGING 时立刻松键让位，离开 CHARGING 时按快照意图接管
   - name: 读取 AutofishBus.snapshot()
-    type: "AutofishSnapshot（使用 holding / fishing_state / cast_session / press_interval_s）"
+    type: "AutofishSnapshot（使用 holding / fishing_state / cast_session / cast_phase / press_interval_s）"
     desc: 判定是否可控鼠、poll 时的当前意图；press_interval_s 为两次程序按下的最短间隔（由 AutofishBus.publish_press_interval 写入）
   - name: autofish.act.MouseActuator()
     type: 无参构造
@@ -32,6 +35,9 @@ input:
   - name: autofish.act.mouse.os_left_down()
     type: 无参
     desc: 读系统左键当前是否按下
+  - name: autofish.act.mouse.os_cursor_position()
+    type: 无参
+    desc: 读系统鼠标当前逻辑点坐标
 output:
   - name: 系统鼠标左键按下 / 松开
     type: 系统事件
@@ -51,9 +57,12 @@ output:
   - name: os_left_down()
     type: "bool | None"
     desc: 系统左键是否按下；读取失败返回 None
+  - name: os_cursor_position()
+    type: "(x: float, y: float) | None"
+    desc: 系统光标逻辑点；读取失败返回 None
 contract:
   - 只跟随意图，不做决策；落点为当前光标
-  - "可控鼠条件：会话 DISABLED（A 关）时鱼漂状态为 FISHING；会话非 DISABLED（A 开）时会话为 FISHING"
+  - "可控鼠条件：cast_phase 为 CHARGING 时不可控鼠；会话 DISABLED（A 关）时鱼漂状态为 FISHING；会话非 DISABLED（A 开）时会话为 FISHING"
   - 不满足可控鼠条件时不按下；若本程序正按着则立即松开（只松本程序按下的键）
   - 收到会话进入非 FISHING（含 FIRST_CLICK）立即松开；收到会话 DISABLED 且鱼漂非 FISHING 也立即松开
   - 两次程序按下间隔至少 press_interval；被挡住的按下由之后的 poll 在间隔满后补上；松开立即执行不受间隔约束

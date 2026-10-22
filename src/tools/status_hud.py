@@ -29,6 +29,9 @@ _PHASE_STYLE: dict[str, tuple[str, str]] = {
     "pull": ("拉漂", ACCENT),
     "release": ("松漂", SUCCESS),
     "game_end": ("结束游戏", DANGER),
+    "cast_wait": ("抛杆等待", TEXT_MUTED),
+    "cast_aim": ("瞄准", WARN),
+    "cast_charge": ("蓄力", ACCENT),
 }
 
 _FLASH_MS = 1200

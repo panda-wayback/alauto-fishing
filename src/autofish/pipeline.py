@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 from autofish.act.worker import ActWorker
+from autofish.auto_cast import AutoCastWorker
 from autofish.events.bus import AutofishBus, AutofishSnapshot
 from autofish.capture import warmup as warmup_capture
 from autofish.capture.worker import CaptureWorker
@@ -24,6 +25,9 @@ class AutofishPipeline:
         self,
         *,
         capture_fps: float = 45.0,
+        cast_wait_lo_s: float = 3.0,
+        cast_wait_hi_s: float = 3.0,
+        cast_full_charge_s: float = 1.0,
     ) -> None:
         self.bus = AutofishBus()
         self.fsm = FishingStateMachine(self.bus)
@@ -31,10 +35,17 @@ class AutofishPipeline:
         self.detector = DetectorWorker(self.bus)
         self.decide = DecideWorker(self.bus)
         self.act = ActWorker(self.bus)
+        self.auto_cast = AutoCastWorker(
+            self.bus,
+            wait_lo_s=cast_wait_lo_s,
+            wait_hi_s=cast_wait_hi_s,
+            full_charge_s=cast_full_charge_s,
+        )
         self._roi_version = 0
         self._monitor_on = False
         self._decide_on = False
         self._act_on = False
+        self._auto_cast_on = False
         self._warmed = False
 
     @property
@@ -48,6 +59,10 @@ class AutofishPipeline:
     @property
     def act_on(self) -> bool:
         return self._act_on
+
+    @property
+    def auto_cast_on(self) -> bool:
+        return self._auto_cast_on
 
     def subscribe(self, topic: Topic, callback) -> None:
         self.bus.subscribe(topic, callback)
@@ -133,7 +148,36 @@ class AutofishPipeline:
         self.act.stop()
         self._act_on = False
 
+    def start_auto_cast(self) -> None:
+        """启自动抛杆工人线程（默认空闲；开抛用 start_cast_batch）。"""
+        if self._auto_cast_on:
+            return
+        self.auto_cast.start()
+        self._auto_cast_on = True
+
+    def stop_auto_cast(self) -> None:
+        if not self._auto_cast_on:
+            return
+        self.auto_cast.cancel_batch()
+        self.auto_cast.stop()
+        self._auto_cast_on = False
+
+    def start_cast_batch(self, count: int) -> bool:
+        """开始一轮有限次数抛杆（转交 AutoCastWorker.start_batch）。"""
+        return self.auto_cast.start_batch(count)
+
+    def cancel_cast_batch(self) -> None:
+        """立刻结束当前抛杆任务（转交 AutoCastWorker.cancel_batch）。"""
+        self.auto_cast.cancel_batch()
+
+    def set_cast_wait_range(self, lo_s: float, hi_s: float) -> None:
+        self.auto_cast.set_wait_range(lo_s, hi_s)
+
+    def set_cast_full_charge_s(self, seconds: float) -> None:
+        self.auto_cast.set_full_charge_s(seconds)
+
     def stop(self) -> None:
+        self.stop_auto_cast()
         self.stop_act()
         self.stop_decide()
         self.stop_monitor()
