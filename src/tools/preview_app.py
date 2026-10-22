@@ -1256,9 +1256,7 @@ class PreviewApp(QMainWindow):
                 except Exception as det_exc:  # noqa: BLE001
                     self._cal_log(f"参考图条界识别失败：{det_exc}")
             self.bar_canvas.set_program_bar(box)
-            # 恢复条内搜索，但不带跟点（跟点由直播帧重建）
-            if box is not None and load_bar_mark(self.roi_path) is None:
-                apply_program_bar(box)
+            # 参考图/meta 只用于显示蓝框；程序锁必须由直播帧定界，禁止注入过期条界
         except Exception as exc:  # noqa: BLE001
             self._cal_log(f"参考图载入失败：{exc}")
 

@@ -151,6 +151,20 @@ def test_program_lock_survives_miss():
     assert det.program_bar == bar and det.bar_locked is True
 
 
+def test_program_lock_clears_after_sustained_miss():
+    from autofish.detect.bobber_anchor import _BAR_LOCK_AUTO_CLEAR_FRAMES
+
+    det = BobberAnchorDetector()
+    assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))
+    assert det.bar_locked is True
+    blank = np.zeros((698, 800, 3), np.uint8)
+    for _ in range(_BAR_LOCK_AUTO_CLEAR_FRAMES):
+        det.detect(blank)
+    assert det.program_bar is None and det.bar_locked is False
+    hit = assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))
+    assert hit.bar_width > 0
+
+
 def test_apply_manual_bar_overrides_bar_and_pos(global_detector):
     rgb = load_rgb(SAMPLE["file"])
     auto = assert_full_hit(detect(rgb))
