@@ -64,7 +64,7 @@ def global_qss() -> str:
         letter-spacing: 1px;
     }}
     QLabel#castRemain {{
-        font-size: 28px;
+        font-size: 26px;
         font-weight: 700;
         color: {ACCENT};
     }}

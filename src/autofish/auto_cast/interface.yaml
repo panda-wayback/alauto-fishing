@@ -4,7 +4,7 @@ modules:
   - path: cursor_arm
     function: 光标旁小窗低频认水面漂，对外暴露「可开抛」门闩
 input:
-  - name: autofish.auto_cast.AutoCastWorker(bus, *, wait_lo_s=3.0, wait_hi_s=3.0, full_charge_s=1.0, hold_jitter_s=0.2, start_settle_s=1.0)
+  - name: autofish.auto_cast.AutoCastWorker(bus, *, wait_lo_s=3.0, wait_hi_s=3.0, full_charge_s=1.0, hold_jitter_s=0.1, start_settle_s=1.0)
     type: "bus: AutofishBus；wait_*: 拉漂结束后再抛等待；full_charge_s；hold_jitter_s；start_settle_s: 开抛后首杆前短等（默认 1s，避开右键抢键）"
     desc: 新建自动抛杆工人；构造不订阅、不截屏、不按键；默认空闲（无任务）；标定在每轮 AIM 时从默认存盘读取
   - name: AutoCastWorker.start() / AutoCastWorker.stop(timeout=2.0) / AutoCastWorker.is_running()
@@ -43,7 +43,7 @@ contract:
   - 只在 CHARGING 控鼠；WAIT / AIM / DONE / ABORT / DISABLED 不按住鼠标；stop / cancel_batch 若本程序按着必松开
   - 无任务或未进入 CHARGING 时不发布控鼠动作，对 A 听声第一下与 B 拉漂零影响；CHARGING 阶段由执行段与声音开钓据 Topic.CAST_PHASE 让位
   - 不订阅 ACTION_INTENT、不发布 POS / ACTION_INTENT；只发布 Topic.CAST_PHASE 与操作系统鼠标
-  - 等待在 [wait_lo_s, wait_hi_s] 内均匀抽样；默认 3～3 秒；full_charge_s 默认 1.0；hold_jitter_s 默认 0.2
+  - 等待在 [wait_lo_s, wait_hi_s] 内均匀抽样；默认 3～3 秒；full_charge_s 默认 1.0；hold_jitter_s 默认 0.1
 depends:
   - src/autofish/events
   - src/autofish/locate

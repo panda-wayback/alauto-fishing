@@ -38,7 +38,7 @@ _TICK_S = 0.01
 _MIN_FULL_CHARGE_S = 0.05
 _MAX_FULL_CHARGE_S = 5.0
 _MIN_HOLD_S = 0.02  # target=0 时仍保证一次可感知按下
-_DEFAULT_HOLD_JITTER_S = 0.2
+_DEFAULT_HOLD_JITTER_S = 0.1
 _DEFAULT_START_SETTLE_S = 1.0  # 开抛后短等，避开右键与蓄力抢键
 
 

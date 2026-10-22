@@ -81,7 +81,7 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     bar_title.addWidget(host.lbl_bar_hint, 1)
     host.btn_bar_refresh = QPushButton("刷新参考图")
     host.btn_bar_refresh.setToolTip(
-        "点击后等待下一次鱼漂识别成功，用该帧更新条界参考图"
+        "先清除下方旧参考图，再等待下一次鱼漂识别成功后用该帧更新"
     )
     host.btn_bar_refresh.clicked.connect(host._refresh_bar_ref)
     bar_title.addWidget(host.btn_bar_refresh)
@@ -96,7 +96,7 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     vis.addWidget(host.bar_canvas)
     cal_l.addWidget(vision)
     
-    strat = QGroupBox("拉漂策略")
+    strat = QGroupBox("拉线策略")
     strat_l = QVBoxLayout(strat)
     row_pol = QHBoxLayout()
     host.btn_apply_policy = QPushButton("应用策略")

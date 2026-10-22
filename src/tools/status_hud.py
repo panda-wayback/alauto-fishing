@@ -68,7 +68,7 @@ class StatusHudPanel(QWidget):
         metrics.setSpacing(2)
         metrics.setContentsMargins(0, 0, 0, 0)
         self.lbl_pos = self._row(metrics, "POS")
-        self.lbl_cast = self._row(metrics, "抛杆")
+        self.lbl_cast = self._row(metrics, "抛竿")
         self.lbl_mouse = self._row(metrics, "鼠标")
         body.addLayout(metrics, 1)
 

@@ -17,19 +17,19 @@ input:
   - name: tools.preview_app.PreviewApp(roi_path=DEFAULT_ROI_PATH)
     type: "roi_path: Path；须已存在 QApplication"
     desc: 构造调试壳主窗（QMainWindow），不经门禁；roi_path 为 ROI / 条界 / 条界参考图（同目录 bar_ref.png）存盘位置
-  - name: UI 操作：主控勾选「自动拉漂」(B)
+  - name: UI 操作：主控勾选「自动拉线」(B)
     type: "PreviewApp.chk_b: QCheckBox 勾选 / 取消"
     desc: 开关 Decide + Act
-  - name: UI 操作：主控勾选「声音开钓」(A)
+  - name: UI 操作：主控勾选「自动起勾」(A)
     type: "PreviewApp.chk_a: QCheckBox 勾选 / 取消"
     desc: 开关听水花开钓会话机（first_click_trigger）
-  - name: UI 操作：主控勾选「自动抛杆」(C)
+  - name: UI 操作：主控勾选「自动抛竿」(C)
     type: "PreviewApp.chk_c: QCheckBox 勾选 / 取消"
-    desc: 开关自动抛杆模块（工人待命 + 光标认漂 + 右键 / F8·F9 + 光标小预览）；默认关
+    desc: 开关自动抛竿模块（工人待命 + 光标认漂 + 右键 / F8·F9 + 光标小预览）；默认关
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: "PreviewApp.btn_float 点击；紧凑态文字为「主界面」的按钮点击"
     desc: 同一主窗在完整态与紧凑态之间切换
-  - name: UI 操作：拉漂配置页（框选 ROI、条界、策略数轴、按下间隔、恢复默认框）/ 开钓配置页（设备、模板、阈值、开钓第一下区间）/ 更多页（置顶、恢复默认、写入打包默认）
+  - name: UI 操作：自动拉线页（框选 ROI、条界、策略数轴、按下间隔、恢复默认框）/ 自动起勾页（设备、模板、阈值、开钓第一下区间）/ 更多页（置顶、恢复默认、写入打包默认）
     type: Qt 控件交互
     desc: 调整 autofish 参数；均写入下述持久化。恢复默认见 load_default_shell_settings
   - name: tools.shell_config.ShellSettings
@@ -72,15 +72,15 @@ output:
   - name: launch_cast_calibration(...)
     type: int
     desc: 正常关闭返回事件循环退出码
-  - name: UI 操作：主控勾选「自动拉漂」(B)
+  - name: UI 操作：主控勾选「自动拉线」(B)
     type: 对 autofish.AutofishPipeline 的调用 + 设置落盘
     desc: 勾选 = set_decide_ranges(策略数轴区间) 后 start_decide + start_act（并确保监控开）；取消 = stop_act + stop_decide（监控不停）；auto_bobber_enabled 写入用户设置
-  - name: UI 操作：主控勾选「声音开钓」(A)
+  - name: UI 操作：主控勾选「自动起勾」(A)
     type: 对 first_click_trigger 的调用 + 设置落盘
     desc: 勾选 = 按所选设备开监听并 set_session_enabled(True)，会话事件经流水线总线发布；取消 = set_session_enabled(False)；sound_enabled 写入用户设置
-  - name: UI 操作：主控勾选「自动抛杆」(C)
+  - name: UI 操作：主控勾选「自动抛竿」(C)
     type: 对 autofish.AutofishPipeline / cursor_arm / 右键监听的调用 + 设置落盘
-    desc: 勾选 = start_auto_cast + CursorArmWatcher 启用 + 右键监听 + 显示光标旁小预览（绿/灰边框）；取消 = cancel_cast_batch + stop_auto_cast + 停认漂与右键并隐藏预览；auto_cast_enabled 写入用户设置（默认 false）；认漂翻转不写主控/抛杆日志
+    desc: 勾选 = start_auto_cast + CursorArmWatcher 启用 + 右键监听 + 显示光标旁小预览（绿/灰边框）；取消 = cancel_cast_batch + stop_auto_cast + 停认漂与右键并隐藏预览；auto_cast_enabled 写入用户设置（默认 false）；认漂翻转不写主控/抛竿日志
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: 主窗显示态 + 设置落盘
     desc: 紧凑态为无边框小仪表盘（阶段 + POS / 抛杆剩余 / 鼠标 + 透明度滑条 + 主界面），窗体整体半透明可调并置顶；compact_mode / hud_opacity 与几何立即写入用户设置
@@ -106,7 +106,7 @@ contract:
   - 一窗两态：完整态与紧凑态是同一个 PreviewApp 窗口的两种显示，不另开独立窗口；完整→紧凑就地缩小（保留左上角），紧凑→完整就地恢复先前尺寸（保留左上角）
   - 仅当启动时已是紧凑态，才把窗口放到上次紧凑拖动落点（hud_x/hud_y），且夹到某块屏幕可用区内
   - 有 ROI 时 Capture + Detect 常开；与 A/B/C 勾选无关；无 ROI 存盘时启动即在 roi_path 写入主屏居中 1/4×1/4 默认 ROI（source=default）并开监控
-  - C = 自动抛杆：勾选后启工人待命 + 光标低频认漂；主控「自动抛杆」卡显示剩余次数大字、状态与光标小预览（与 POS 卡分离）；可开抛且空闲时右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务中右键 cancel；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；认漂翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
+  - C = 自动抛竿：勾选后启工人待命 + 光标低频认漂；主控「抛竿」卡显示剩余次数大字、状态与光标小预览（与 POS 卡分离）；可开抛且空闲时右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务中右键 cancel；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；认漂翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
   - B = Decide + Act：勾选时策略区间非法（上下限颠倒，或松开下限 − 按住上限 < 1）则弹警告并自动取消勾选，不启动 Decide/Act
   - A = 会话机：勾选即偏好；启动失败（无音频设备 / 无模板 / 监听未运行）时保留勾选并落盘 sound_enabled=true，只在提示与日志中报告
   - 启动时先恢复 A/B/C 勾选再应用；B/C 立即应用，A 在事件循环下一拍尝试启动

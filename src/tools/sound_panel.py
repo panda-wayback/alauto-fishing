@@ -190,7 +190,7 @@ class FirstClickTriggerPanel(QWidget):
         """回测长录音前：未监听则按当前设备开监听。"""
         device, loopback = self._selected_device()
         if device is None:
-            raise RuntimeError("没有可用音频设备：请先到「声音开钓配置」页选择设备")
+            raise RuntimeError("没有可用音频设备：请先到「自动起勾」页选择设备")
         if self._trigger is None or not self._trigger.is_running():
             self._start_listen(device, loopback=loopback)
         assert self._trigger is not None
@@ -229,11 +229,11 @@ class FirstClickTriggerPanel(QWidget):
                 else:
                     raise RuntimeError("没有模板：请到「回测」页从选区入库")
             self._trigger.set_session_enabled(True)
-            self._log("声音开钓 ON · 会话 WAIT")
+            self._log("自动起勾 ON · 会话 WAIT")
         else:
             if self._trigger is not None:
                 self._trigger.set_session_enabled(False)
-            self._log("声音开钓 OFF")
+            self._log("自动起勾 OFF")
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)

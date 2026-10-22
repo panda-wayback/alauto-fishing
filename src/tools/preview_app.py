@@ -275,16 +275,16 @@ class PreviewApp(QMainWindow):
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(10)
 
-        # 导航：主控 | 自动拉漂配置 | 声音开钓配置 | 回测 | 更多
+        # 导航：主控 | 自动拉线 | 自动抛竿 | 自动起勾 | 回测 | 更多
         nav = QHBoxLayout()
         nav.setSpacing(2)
         self._nav_btns: list[QPushButton] = []
         self.stack = QStackedWidget()
         nav_items = (
             ("主控", "日常开关与状态"),
-            ("拉漂配置", "自动拉漂配置 · ROI / 条界 / 策略"),
-            ("抛杆配置", "次数 · 快捷键 · 满蓄 · 等待"),
-            ("开钓配置", "声音开钓配置 · 设备 / 模板 / 阈值 / 第一下"),
+            ("自动拉线", "ROI / 条界 / 策略"),
+            ("自动抛竿", "次数 · 快捷键 · 满蓄 · 等待"),
+            ("自动起勾", "设备 / 模板 / 阈值 / 第一下"),
             ("回测", "长录音与命中回测"),
             ("更多", "权限与置顶"),
         )
@@ -405,8 +405,11 @@ class PreviewApp(QMainWindow):
             return
         rem.setText(text)
         color = ACCENT if active else TEXT_FAINT
-        # 剩/共 字稍多，略缩小
-        size = 22 if "/" in text else 28
+        # 区间 / 剩共 字多，略缩小以免裁切
+        if "/" in text or "～" in text:
+            size = 20
+        else:
+            size = 26
         rem.setStyleSheet(f"font-size:{size}px; font-weight:700; color:{color};")
         cap_lbl = getattr(self, "lbl_cast_remain_cap", None)
         if cap_lbl is not None:
@@ -1254,17 +1257,21 @@ class PreviewApp(QMainWindow):
         self._bar_ref_saved = True
 
     def _refresh_bar_ref(self) -> None:
-        """不立即截空图：挂起等待，下一帧有漂再落参考图。"""
+        """先清掉旧参考图，再挂起等待；下一帧有漂再落新图（不用无漂空图）。"""
         if self._bar_ref_wait_bobber:
             self._bar_ref_wait_bobber = False
             self.btn_bar_refresh.setText("刷新参考图")
             self._cal_log("已取消等待参考图")
             self.lbl_hint.setText("已取消等待参考图")
             return
+        clear_bar_ref(self.roi_path)
+        self._bar_ref_saved = False
+        self.bar_canvas.set_rgb(None)
+        self.bar_canvas.set_program_bar(None)
         self._bar_ref_wait_bobber = True
         self.btn_bar_refresh.setText("等待鱼漂…")
-        self._cal_log("刷新参考图：等待下一次鱼漂识别")
-        self.lbl_hint.setText("等待鱼漂出现后自动更新参考图")
+        self._cal_log("已清除旧参考图 · 等待下一次鱼漂识别")
+        self.lbl_hint.setText("旧图已清 · 等待鱼漂后更新参考图")
 
     def _maybe_commit_bar_ref_wait(self, event: PosEvent) -> None:
         if not self._bar_ref_wait_bobber:
@@ -1555,8 +1562,8 @@ class PreviewApp(QMainWindow):
                 pipe.start_auto_cast()
             self._start_cursor_arm()
             self._cast_right_click.start()
-            self._main_log("自动抛杆 ON · 认漂后右键开始 / 再右键结束")
-            self._cast_log("自动抛杆模块开")
+            self._main_log("自动抛竿 ON · 认漂后右键开始 / 再右键结束")
+            self._cast_log("自动抛竿模块开")
         else:
             pipe = self._pipe
             if pipe is not None:
@@ -1567,8 +1574,8 @@ class PreviewApp(QMainWindow):
             self._cast_right_click.stop()
             self._cast_paused_for_select = False
             self._cast_paused_remaining = 0
-            self._main_log("自动抛杆 OFF")
-            self._cast_log("自动抛杆模块关")
+            self._main_log("自动抛竿 OFF")
+            self._cast_log("自动抛竿模块关")
         self._refresh_cast_label()
         self._refresh_hud_steady()
         self._persist_settings()
@@ -1684,7 +1691,7 @@ class PreviewApp(QMainWindow):
                 None if self.hit is None else self.hit.pos
             )
             low, high = self._current_policy_thresholds()
-            self._main_log(f"自动拉漂 ON · 配置 <{low:.1f}按 / >{high:.1f}松")
+            self._main_log(f"自动拉线 ON · 配置 <{low:.1f}按 / >{high:.1f}松")
         else:
             if pipe.act_on:
                 pipe.stop_act()
@@ -1692,7 +1699,7 @@ class PreviewApp(QMainWindow):
                 pipe.stop_decide()
             self._holding = None
             self._refresh_strategy()
-            self._main_log("自动拉漂 OFF")
+            self._main_log("自动拉线 OFF")
         self._refresh_mouse()
         self._refresh_hud_steady()
         self._persist_settings()
@@ -1702,8 +1709,8 @@ class PreviewApp(QMainWindow):
         if not checked:
             if self._sound_panel is not None:
                 self._sound_panel.set_session_enabled(False)
-            self.lbl_hint.setText("声音开钓已关")
-            self._main_log("声音开钓 OFF")
+            self.lbl_hint.setText("自动起勾已关")
+            self._main_log("自动起勾 OFF")
             self._refresh_hud_steady()
             self._persist_settings()
             return
@@ -1713,8 +1720,8 @@ class PreviewApp(QMainWindow):
         """尝试开监听+会话。成功 True；失败保留勾选，只提示。"""
         pipe = self._ensure_pipe()
         if self._sound_panel is None:
-            self.lbl_hint.setText("声音开钓失败：面板未就绪")
-            self._main_log("声音开钓失败：面板未就绪")
+            self.lbl_hint.setText("自动起勾失败：面板未就绪")
+            self._main_log("自动起勾失败：面板未就绪")
             self._refresh_hud_steady()
             if persist:
                 self._persist_settings()
@@ -1726,15 +1733,15 @@ class PreviewApp(QMainWindow):
             if t is None or not t.has_template or not t.is_running():
                 self._sound_panel.set_session_enabled(False)
                 self.lbl_hint.setText(
-                    "声音开钓未就绪：请到「开钓配置」确认设备与模板后重试"
+                    "自动起勾未就绪：请到「自动起勾」页确认设备与模板后重试"
                 )
-                self._main_log("声音开钓未就绪 · 已保留勾选")
+                self._main_log("自动起勾未就绪 · 已保留勾选")
                 self._refresh_hud_steady()
                 if persist:
                     self._persist_settings()
                 return False
-            self.lbl_hint.setText("声音开钓中")
-            self._main_log("声音开钓 ON")
+            self.lbl_hint.setText("自动起勾中")
+            self._main_log("自动起勾 ON")
             self._refresh_hud_steady()
             if persist:
                 self._persist_settings()
@@ -1744,8 +1751,8 @@ class PreviewApp(QMainWindow):
                 self._sound_panel.set_session_enabled(False)
             except Exception:  # noqa: BLE001
                 pass
-            self.lbl_hint.setText(f"声音开钓失败：{exc}")
-            self._main_log(f"声音开钓失败：{exc} · 已保留勾选")
+            self.lbl_hint.setText(f"自动起勾失败：{exc}")
+            self._main_log(f"自动起勾失败：{exc} · 已保留勾选")
             self._refresh_hud_steady()
             if persist:
                 self._persist_settings()

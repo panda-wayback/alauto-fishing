@@ -43,8 +43,8 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     lay.setSpacing(8)
 
     tip = QLabel(
-        "主控勾选「自动抛杆」(C) 后：光标旁认出水面漂再右键开始 / 再右键结束；"
-        "F8 / F9 备用。蓄力：目标比例 × 满蓄秒数，再加约 ±0.2 秒抖动后松开。"
+        "主控勾选「自动抛竿」后：光标旁认出水面漂再右键开始 / 再右键结束；"
+        "F8 / F9 备用。蓄力：目标比例 × 满蓄秒数，再加约 ±0.1 秒抖动后松开。"
         "下一杆须等拉漂结束后再等待（默认 3 秒）。标定请用 make cast-calib。"
     )
     tip.setWordWrap(True)
@@ -131,7 +131,7 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     log_l = QVBoxLayout(log_wrap)
     log_l.setContentsMargins(0, 8, 0, 0)
     log_l.setSpacing(4)
-    log_title = QLabel("抛杆配置日志")
+    log_title = QLabel("自动抛竿日志")
     log_title.setObjectName("sectionTitle")
     log_l.addWidget(log_title)
     host.cast_log = QPlainTextEdit()

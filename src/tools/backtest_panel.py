@@ -84,7 +84,7 @@ class AudioBacktestPanel(QWidget):
 
         row_sess = QHBoxLayout()
         self.btn_sess_rec = QPushButton("开始长录音")
-        self.btn_sess_rec.setToolTip("需先在「声音开钓配置」页监听（未监听会自动尝试开启）")
+        self.btn_sess_rec.setToolTip("需先在「自动起勾」页监听（未监听会自动尝试开启）")
         self.btn_sess_rec.clicked.connect(self._on_session_rec_clicked)
         row_sess.addWidget(self.btn_sess_rec)
         row_sess.addWidget(QLabel("会话"))

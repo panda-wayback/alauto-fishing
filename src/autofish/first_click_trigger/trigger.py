@@ -654,7 +654,7 @@ class FirstClickTrigger(WorkerBase):
                 return
             if self._cast_charging():
                 # C 蓄力中：忽略本次水声，留在 WAIT 等下一轮
-                self._emit_log("自动抛杆蓄力中 · 让鼠不点第一下")
+                self._emit_log("自动抛竿蓄力中 · 让鼠不点第一下")
                 return
             thr = float(self._matcher.threshold)
             delay_s = random.uniform(self._delay_lo_s, self._delay_hi_s)

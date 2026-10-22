@@ -79,7 +79,7 @@ def build_more_page(host: "PreviewApp") -> QWidget:
     restore = QGroupBox("恢复默认")
     restore_l = QVBoxLayout(restore)
     hint_restore = QLabel(
-        "把拉漂、开钓和截图范围恢复为默认，并清空手动条界；"
+        "把拉线、起勾、抛竿和截图范围恢复为默认，并清空手动条界；"
         "不删除模板、录音和授权"
     )
     hint_restore.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
