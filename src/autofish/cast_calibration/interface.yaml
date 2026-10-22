@@ -1,0 +1,92 @@
+name: cast_calibration
+function: 透视贴地环（Perspective Projective Circle）分辨率无关标定值、力度比例换算与存盘读写
+modules: []
+input:
+  - name: autofish.cast_calibration.CastCircle(cx, cy, angle_deg, radius_ratio=0.35)
+    type: "cx, cy: 人物圆心相对屏幕宽/高的比例（0~1）；angle_deg: 俯视角度 (0, 90]；radius_ratio: 基准半径相对屏幕短边的比例（>0）"
+    desc: 构造不可变透视贴地环标定；全部分辨率无关，换屏自适应；它不是普通椭圆
+  - name: CastCircle.from_pixels(px, py, radius_px, screen_w, screen_h, angle_deg)
+    type: "像素坐标 + 屏幕尺寸 → CastCircle"
+    desc: 由某一屏幕上的像素值构造比例标定
+  - name: CastCircle.anchor(screen_w, screen_h)
+    type: "screen_w/h: int（主屏逻辑宽高，>0）；返回 (x, y): tuple[float, float]"
+    desc: 该屏幕上的人物圆心逻辑点
+  - name: CastCircle.radius_for(screen_w, screen_h)
+    type: "screen_w/h: int；返回 float"
+    desc: 该屏幕上的基准半径逻辑点（radius_ratio × 短边）
+  - name: CastCircle.project(rho, phi, screen_w, screen_h)
+    type: "rho: 世界半径比例；phi: 方位角；屏幕宽高；返回 (x, y)"
+    desc: 把世界圆上一点投影成指定屏幕坐标
+  - name: CastCircle.reference_polygon(rho, screen_w, screen_h, segments=128)
+    type: "rho: 世界半径比例；segments: 采样数；返回点列表"
+    desc: 生成一个透视同心参考环的多边形
+  - name: CastCircle.normalized_radius(x, y, screen_w, screen_h)
+    type: "x, y: float（鼠标主屏逻辑点）；screen_w/h: int；返回 float ≥ 0"
+    desc: 鼠标点对应的世界抛杆力度比例（0 在人物、1 在外环、环外 >1）
+  - name: CastCircle.target_power_ratio(x, y, screen_w, screen_h)
+    type: "x, y: float（鼠标主屏逻辑点）；screen_w/h: int；返回 float ∈ [0, 1]"
+    desc: 抛杆目标力度比例：人物点 0、环上 1、环外（含反推发散）夹到 1
+  - name: CastCircle.with_angle(angle_deg) / with_anchor_ratio(cx, cy) / with_radius_ratio(radius_ratio)
+    type: "float"
+    desc: 返回改角度 / 圆心比例 / 半径比例的新标定
+  - name: autofish.cast_calibration.DEFAULT_CAST_CIRCLE_PATH
+    type: pathlib.Path 常量 = common.paths.data_root() / "cast_circle.json"
+    desc: 默认存盘路径；下列函数 path=None 时使用
+  - name: autofish.cast_calibration.save_cast_circle(circle, path=None)
+    type: "circle: CastCircle; path: pathlib.Path | None"
+    desc: 写存盘（JSON，全部为比例与角度）
+  - name: autofish.cast_calibration.load_cast_circle(path=None)
+    type: "path: pathlib.Path | None"
+    desc: 读存盘；旧文件缺 radius_ratio 时取默认值
+output:
+  - name: CastCircle.anchor(...)
+    type: tuple[float, float]
+    desc: (cx × screen_w, cy × screen_h)
+  - name: CastCircle.radius_for(...)
+    type: float
+    desc: radius_ratio × min(screen_w, screen_h)
+  - name: CastCircle.project(...)
+    type: tuple[float, float]
+    desc: 单点透视后的屏幕点；俯视角度越平，下侧放大、上侧压缩
+  - name: CastCircle.reference_polygon(...)
+    type: list[tuple[float, float]]
+    desc: 透视参考环；同心世界圆投影后不等距（上密下疏）
+  - name: CastCircle.normalized_radius(...)
+    type: float
+    desc: 人物点 0、外环 1、环外 >1；按同一透视公式反推世界比例
+  - name: CastCircle.target_power_ratio(...)
+    type: float
+    desc: normalized_radius 夹到 [0,1] 的结果；非有限值（反推发散）记 1.0
+  - name: save_cast_circle(circle, path=None)
+    type: pathlib.Path
+    desc: 实际写入路径；自动创建父目录；随后 load_cast_circle 可读回相等对象
+  - name: load_cast_circle(path=None)
+    type: CastCircle
+    desc: 存盘中的圆心比例、角度与半径比例
+contract:
+  - 只做值对象、透视换算与 JSON 存盘；不截屏、不识图、不创建 Qt 界面、不操作鼠标
+  - CastCircle 不可变；angle_deg 必须在 (0, 90]；cx/cy/radius_ratio 为比例，radius_ratio 必须 >0；屏幕尺寸必须 >0
+  - 标定值与分辨率无关：anchor/radius_for/project 在不同屏幕尺寸上按该屏宽高与短边自适应
+  - 90° 时透视强度为 0，参考环为正圆且同心环等距；角度越小，近大远小越强
+  - 参考环用透视投影点列表示，不用 fitEllipse / drawEllipse 定义
+  - JSON 键恰为 cx、cy、angle_deg、radius_ratio；旧文件可缺 radius_ratio
+  - 所有存盘函数 path=None 时使用 DEFAULT_CAST_CIRCLE_PATH
+depends:
+  - src/common
+errors:
+  - code: ValueError
+    desc: angle_deg 不在 (0,90]、radius_ratio ≤0，或屏幕尺寸非正
+  - code: FileNotFoundError
+    desc: load_cast_circle 的存盘文件不存在
+  - code: json.JSONDecodeError / KeyError / TypeError / ValueError
+    desc: 存盘不是合法 JSON、缺字段或字段不是有效数值
+tests:
+  - angle_deg 越界、radius_ratio 非正抛 ValueError，实例不可修改
+  - from_pixels 与 anchor/radius_for 在两种屏幕尺寸上得到等比例结果（自适应）
+  - 90° 投影为正圆；小角度下下方半径大于上方半径（近大远小）
+  - reference_polygon 同心环非等距（上密下疏）；normalized_radius 对投影点反推回原 rho
+  - normalized_radius 圆心返回 0、外环返回 1、环外大于 1
+  - target_power_ratio 圆心 0、环上各方向 1、环内不夹、环外与非有限值夹到 1，结果恒在 [0,1]
+  - with_angle / with_anchor_ratio / with_radius_ratio 返回新对象且其余字段不变
+  - save/load roundtrip（含旧文件缺 radius_ratio）、坏 JSON/缺字段/非数值/缺文件的错误行为
+  - path=None 时读写 DEFAULT_CAST_CIRCLE_PATH（测试中替换默认路径）
