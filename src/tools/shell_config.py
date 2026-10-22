@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import random
 import sys
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -29,6 +30,32 @@ def _clamp_pair(
     return a, b
 
 
+def _clamp_int_pair(
+    lo: int | float,
+    hi: int | float,
+    *,
+    min_v: int = 1,
+    max_v: int = 20,
+) -> tuple[int, int]:
+    a = int(max(min_v, min(max_v, int(lo))))
+    b = int(max(min_v, min(max_v, int(hi))))
+    if b < a:
+        a, b = b, a
+    return a, b
+
+
+def format_cast_count_range(lo: int, hi: int) -> str:
+    """待命展示：同值写单数，否则写 lo～hi。"""
+    a, b = _clamp_int_pair(lo, hi)
+    return str(a) if a == b else f"{a}～{b}"
+
+
+def sample_cast_batch_count(lo: int, hi: int) -> int:
+    """开局抽样本轮总次数（含端点）。"""
+    a, b = _clamp_int_pair(lo, hi)
+    return random.randint(a, b)
+
+
 @dataclass
 class ShellSettings:
     sound_threshold: float = 0.70
@@ -41,12 +68,14 @@ class ShellSettings:
     compact_mode: bool = False
     hud_x: int = -1
     hud_y: int = -1
+    hud_opacity: float = 0.88  # 浮窗整体透明度 0.45～1.0
     # 主控勾选
     sound_enabled: bool = False
     auto_bobber_enabled: bool = True
     auto_cast_enabled: bool = False
-    # 自动抛杆：次数、快捷键、收竿后随机等待区间（秒）
-    cast_count: int = 5
+    # 自动抛杆：次数区间（开局抽样）、快捷键、收竿后随机等待区间（秒）
+    cast_count_lo: int = 5
+    cast_count_hi: int = 5
     cast_start_hotkey: str = "F8"
     cast_stop_hotkey: str = "F9"
     cast_wait_lo_s: float = 3.0
@@ -91,11 +120,21 @@ def _parse_settings_file(path: Path) -> ShellSettings | None:
         return None
     if not isinstance(data, dict):
         return None
+    raw = dict(data)
+    # 旧键 cast_count → cast_count_lo/hi
+    if "cast_count_lo" not in raw or "cast_count_hi" not in raw:
+        legacy = raw.get("cast_count", 5)
+        try:
+            n = int(legacy)
+        except (TypeError, ValueError):
+            n = 5
+        raw.setdefault("cast_count_lo", n)
+        raw.setdefault("cast_count_hi", n)
     base = ShellSettings()
     out = ShellSettings()
     for k in asdict(base):
-        if k in data:
-            setattr(out, k, data[k])
+        if k in raw:
+            setattr(out, k, raw[k])
     return _normalize_settings(out)
 
 
@@ -107,10 +146,13 @@ def _normalize_settings(out: ShellSettings) -> ShellSettings:
     out.compact_mode = bool(out.compact_mode)
     out.hud_x = int(out.hud_x)
     out.hud_y = int(out.hud_y)
+    out.hud_opacity = float(max(0.45, min(1.0, float(out.hud_opacity))))
     out.sound_enabled = bool(out.sound_enabled)
     out.auto_bobber_enabled = bool(out.auto_bobber_enabled)
     out.auto_cast_enabled = bool(out.auto_cast_enabled)
-    out.cast_count = int(max(1, min(20, int(out.cast_count))))
+    out.cast_count_lo, out.cast_count_hi = _clamp_int_pair(
+        out.cast_count_lo, out.cast_count_hi
+    )
     out.cast_start_hotkey = normalize_hotkey(out.cast_start_hotkey, default="F8")
     out.cast_stop_hotkey = normalize_hotkey(out.cast_stop_hotkey, default="F9")
     if out.cast_start_hotkey == out.cast_stop_hotkey:

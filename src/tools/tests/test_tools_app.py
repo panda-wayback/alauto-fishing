@@ -62,6 +62,7 @@ class FakeAutoCast:
     def __init__(self):
         self.active = False
         self.remaining = 0
+        self.batch_total = 0
         self._wait_lo = 3.0
         self._wait_hi = 3.0
         self._full_charge_s = 1.0
@@ -70,12 +71,15 @@ class FakeAutoCast:
         if self.active:
             return False
         self.active = True
-        self.remaining = max(1, min(20, int(count)))
+        n = max(1, min(20, int(count)))
+        self.remaining = n
+        self.batch_total = n
         return True
 
     def cancel_batch(self) -> None:
         self.active = False
         self.remaining = 0
+        self.batch_total = 0
 
     def set_full_charge_s(self, seconds: float) -> None:
         self._full_charge_s = float(max(0.05, min(5.0, seconds)))
@@ -358,13 +362,14 @@ def test_cast_hotkey_batch_and_wait_persist(env):
     assert pipe.auto_cast.remaining == 5
     win._on_cast_hotkey_start()
     assert pipe.auto_cast.remaining == 5
-    win.spin_cast_count.setValue(3)
+    win.bar_cast_count.setRange(2.0, 4.0)
     win.bar_cast_wait.setRange(1.0, 4.0)
     assert (pipe.auto_cast._wait_lo, pipe.auto_cast._wait_hi) == (1.0, 4.0)
     win._persist_timer.stop()
     win._persist_settings()
     raw = _settings(env)
-    assert raw["cast_count"] == 3
+    assert raw["cast_count_lo"] == 2
+    assert raw["cast_count_hi"] == 4
     assert raw["cast_wait_lo_s"] == pytest.approx(1.0)
     assert raw["cast_wait_hi_s"] == pytest.approx(4.0)
     assert raw["auto_cast_enabled"] is True
@@ -383,15 +388,18 @@ def test_toggle_c_gates_cast_and_right_click(env):
     assert win._cursor_arm is not None and win._cursor_arm.enabled
     assert not win.lbl_arm_preview.isHidden()
     win._cursor_arm.force_armed(True)
-    assert "可开抛" in win.lbl_cast.text()
+    assert win.lbl_cast.text() == "就绪"
+    assert win.lbl_cast_remain.text() == "5"
     assert "抛杆认漂" not in win.log.toPlainText()
     win._on_cast_right_click()
     assert pipe.auto_cast.active
+    assert win.lbl_cast_remain.text() == "5/5"
     win._on_cast_right_click()
     assert not pipe.auto_cast.active
     win.chk_c.setChecked(False)
     assert not pipe.auto_cast_on
     assert win.lbl_arm_preview.isHidden()
+    assert win.lbl_cast_remain.text() == "—"
     assert _settings(env)["auto_cast_enabled"] is False
     _close(win, env)
 
@@ -408,7 +416,8 @@ def test_restore_c_on_from_settings(env):
 def test_persist_cast_batch_settings_restore_on_start(env):
     save_shell_settings(
         ShellSettings(
-            cast_count=7,
+            cast_count_lo=3,
+            cast_count_hi=7,
             cast_start_hotkey="F7",
             cast_stop_hotkey="F10",
             cast_wait_lo_s=3.0,
@@ -417,7 +426,7 @@ def test_persist_cast_batch_settings_restore_on_start(env):
     )
     win = _make(env)
     pipe = _pipe()
-    assert win.spin_cast_count.value() == 7
+    assert win.bar_cast_count.range() == pytest.approx((3.0, 7.0))
     assert win._settings.cast_start_hotkey == "F7"
     assert win._settings.cast_stop_hotkey == "F10"
     assert not pipe.auto_cast.active
@@ -457,6 +466,24 @@ def test_restore_b_off_from_settings(env):
     assert not win.chk_b.isChecked()
     assert not pipe.decide_on and not pipe.act_on
     assert pipe.monitor_on
+    _close(win, env)
+
+
+def test_compact_hud_shows_cast_remain(env):
+    win = _make(env)
+    pipe = _pipe()
+    win.chk_c.setChecked(True)
+    win._cursor_arm.force_armed(True)
+    win._on_cast_hotkey_start()
+    assert pipe.auto_cast.active
+    win._set_compact_mode(True)
+    assert win._compact
+    assert "5/5" in win._hud.lbl_cast.text()
+    win._hud.sld_opacity.setValue(70)
+    assert win.windowOpacity() == pytest.approx(0.70, abs=0.02)
+    assert _settings(env)["hud_opacity"] == pytest.approx(0.70, abs=0.02)
+    win._set_compact_mode(False)
+    assert win.windowOpacity() == pytest.approx(1.0)
     _close(win, env)
 
 

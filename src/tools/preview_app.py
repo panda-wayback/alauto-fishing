@@ -69,12 +69,15 @@ from autofish.events.topics import (
 from common import permissions as perms
 from tools.shell_config import (
     ShellSettings,
+    format_cast_count_range,
     load_default_shell_settings,
     load_shell_settings,
+    sample_cast_batch_count,
     save_bundled_shell_settings,
     save_shell_settings,
 )
 from tools.shell_theme import (
+    ACCENT,
     BORDER,
     DANGER,
     SUCCESS,
@@ -281,7 +284,7 @@ class PreviewApp(QMainWindow):
             ("主控", "日常开关与状态"),
             ("拉漂配置", "自动拉漂配置 · ROI / 条界 / 策略"),
             ("抛杆配置", "次数 · 快捷键 · 满蓄 · 等待"),
-            ("开钓配置", "声音开钓配置 · 设备 / 模板 / 阈值"),
+            ("开钓配置", "声音开钓配置 · 设备 / 模板 / 阈值 / 第一下"),
             ("回测", "长录音与命中回测"),
             ("更多", "权限与置顶"),
         )
@@ -306,21 +309,31 @@ class PreviewApp(QMainWindow):
         page_sound = QWidget()
         sound_l = QVBoxLayout(page_sound)
         sound_l.setContentsMargins(0, 0, 0, 0)
-        self._sound_panel = FirstClickTriggerPanel(self)
+        self._sound_panel = FirstClickTriggerPanel(
+            self,
+            click_delay=(
+                self._settings.click_delay_lo_s,
+                self._settings.click_delay_hi_s,
+            ),
+            click_hold=(
+                self._settings.click_hold_lo_s,
+                self._settings.click_hold_hi_s,
+            ),
+            click_after=(
+                self._settings.click_after_lo_s,
+                self._settings.click_after_hi_s,
+            ),
+        )
+        self.bar_delay = self._sound_panel.bar_delay
+        self.bar_hold = self._sound_panel.bar_hold
+        self.bar_after = self._sound_panel.bar_after
         self._sound_panel.set_preferred_device_name(self._settings.audio_device_name)
         self._sound_panel.set_threshold_value(
             self._settings.sound_threshold, emit=False
         )
-        self._sound_panel.set_click_timing(
-            self._settings.click_delay_lo_s,
-            self._settings.click_delay_hi_s,
-            self._settings.click_hold_lo_s,
-            self._settings.click_hold_hi_s,
-            self._settings.click_after_lo_s,
-            self._settings.click_after_hi_s,
-        )
         self._sound_panel.on_threshold_changed(self._on_sound_threshold_persist)
         self._sound_panel.on_device_changed(self._on_sound_device_persist)
+        self._sound_panel.on_click_timing_changed(self._on_click_timing_changed)
         sound_l.addWidget(self._sound_panel)
         self.stack.addWidget(page_sound)
 
@@ -339,6 +352,8 @@ class PreviewApp(QMainWindow):
 
         self._hud = StatusHudPanel()
         self._hud.expand_requested.connect(lambda: self._set_compact_mode(False))
+        self._hud.opacity_changed.connect(self._on_hud_opacity_changed)
+        self._hud.set_opacity_value(float(self._settings.hud_opacity))
         self.mode_stack.addWidget(self._hud)
 
     def _goto_page(self, idx: int) -> None:
@@ -356,14 +371,14 @@ class PreviewApp(QMainWindow):
     def _refresh_session_label(self) -> None:
         pipe = self._pipe
         if pipe is None:
-            self.lbl_session.setText("会话：—")
+            self.lbl_session.setText("")
             return
         snap = pipe.bus.snapshot()
         cs = snap.cast_session
         if cs == CastSessionState.DISABLED:
-            self.lbl_session.setText("会话：关")
+            self.lbl_session.setText("")
         else:
-            self.lbl_session.setText(f"会话：{cs.value}")
+            self.lbl_session.setText(cs.value)
         prev = self._last_cast_session
         if prev is not None and cs != prev:
             if cs == CastSessionState.FIRST_CLICK:
@@ -382,11 +397,36 @@ class PreviewApp(QMainWindow):
         self._last_cast_session = cs
         self._refresh_hud_steady()
 
+    def _set_cast_remain(
+        self, text: str, *, active: bool = False, cap: str = "次数"
+    ) -> None:
+        rem = getattr(self, "lbl_cast_remain", None)
+        if rem is None:
+            return
+        rem.setText(text)
+        color = ACCENT if active else TEXT_FAINT
+        # 剩/共 字稍多，略缩小
+        size = 22 if "/" in text else 28
+        rem.setStyleSheet(f"font-size:{size}px; font-weight:700; color:{color};")
+        cap_lbl = getattr(self, "lbl_cast_remain_cap", None)
+        if cap_lbl is not None:
+            cap_lbl.setText(cap)
+
     def _refresh_cast_label(self) -> None:
         pipe = self._pipe
         c_on = bool(getattr(self, "chk_c", None) is not None and self.chk_c.isChecked())
+        sk = self._settings.cast_start_hotkey
+        ek = self._settings.cast_stop_hotkey
+        cfg_txt = format_cast_count_range(
+            self._settings.cast_count_lo, self._settings.cast_count_hi
+        )
         if not c_on:
-            self.lbl_cast.setText("抛杆门闩：模块关")
+            self.lbl_cast.setText("关")
+            self.lbl_cast.setStyleSheet(
+                f"font-size:18px; font-weight:700; color:{TEXT_MUTED};"
+            )
+            self.lbl_cast_hint.setText("")
+            self._set_cast_remain("—", active=False, cap="次数")
             self._set_arm_preview_visible(False)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
                 self._last_cast_phase = CastPhase.DISABLED
@@ -397,12 +437,13 @@ class PreviewApp(QMainWindow):
             armed = bool(
                 self._cursor_arm is not None and self._cursor_arm.armed
             )
-            arm_txt = "可开抛" if armed else "未认漂"
-            sk = self._settings.cast_start_hotkey
-            ek = self._settings.cast_stop_hotkey
-            self.lbl_cast.setText(
-                f"抛杆门闩：{arm_txt} · 右键/{sk} 开始 · 右键/{ek} 结束"
+            arm_txt = "就绪" if armed else "等待"
+            self.lbl_cast.setText(arm_txt)
+            self.lbl_cast.setStyleSheet(
+                f"font-size:18px; font-weight:700; color:{SUCCESS if armed else WARN};"
             )
+            self.lbl_cast_hint.setText(f"{sk} 开 · {ek} 停")
+            self._set_cast_remain(cfg_txt, active=False, cap="次数")
             self._paint_arm_border(armed)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
                 self._last_cast_phase = CastPhase.DISABLED
@@ -411,18 +452,23 @@ class PreviewApp(QMainWindow):
         snap = pipe.bus.snapshot()
         phase = snap.cast_phase
         label = _CAST_PHASE_LABEL.get(phase, phase.value)
-        detail = f" · {snap.cast_phase_detail}" if snap.cast_phase_detail else ""
+        detail = snap.cast_phase_detail or ""
         rem = pipe.auto_cast.remaining
-        self.lbl_cast.setText(f"抛杆：{label}{detail} · 剩 {rem}")
+        total = max(rem, int(pipe.auto_cast.batch_total) or 1)
+        self.lbl_cast.setText(label)
+        self.lbl_cast.setStyleSheet(
+            f"font-size:18px; font-weight:700; color:{ACCENT};"
+        )
+        self.lbl_cast_hint.setText(f"{ek} 停")
+        self._set_cast_remain(f"{rem}/{total}", active=True, cap="剩/共")
         armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
         self._paint_arm_border(armed)
         prev = self._last_cast_phase
         if prev is not None and phase != prev:
-            detail = snap.cast_phase_detail or ""
             self._main_log(
                 f"抛杆 {prev.value} → {phase.value}"
                 + (f" · {detail}" if detail else "")
-                + f" · 剩 {rem}"
+                + f" · 剩 {rem}/{total}"
             )
             self._log_cast_phase(phase, detail, rem=rem)
         self._last_cast_phase = phase
@@ -580,10 +626,10 @@ class PreviewApp(QMainWindow):
 
     def _apply_cast_batch_from_settings(self) -> None:
         s = self._settings
-        if getattr(self, "spin_cast_count", None) is not None:
-            self.spin_cast_count.blockSignals(True)
-            self.spin_cast_count.setValue(int(s.cast_count))
-            self.spin_cast_count.blockSignals(False)
+        if getattr(self, "bar_cast_count", None) is not None:
+            self.bar_cast_count.setRange(
+                float(s.cast_count_lo), float(s.cast_count_hi), emit=False
+            )
         self._apply_cast_hotkey_edits(s.cast_start_hotkey, s.cast_stop_hotkey)
         self._apply_cast_wait_from_settings()
         self._apply_cast_full_charge_from_settings()
@@ -645,7 +691,6 @@ class PreviewApp(QMainWindow):
         self._patch_settings(audio_device_name=str(name or ""))
 
     def _on_click_timing_changed(self, *_args) -> None:
-        self._apply_click_timing_from_ui()
         d_lo, d_hi = self.bar_delay.range()
         h_lo, h_hi = self.bar_hold.range()
         a_lo, a_hi = self.bar_after.range()
@@ -657,15 +702,6 @@ class PreviewApp(QMainWindow):
             click_after_lo_s=a_lo,
             click_after_hi_s=a_hi,
         )
-
-    def _apply_click_timing_from_ui(self) -> None:
-        d_lo, d_hi = self.bar_delay.range()
-        h_lo, h_hi = self.bar_hold.range()
-        a_lo, a_hi = self.bar_after.range()
-        if self._sound_panel is not None:
-            self._sound_panel.set_click_timing(
-                d_lo, d_hi, h_lo, h_hi, a_lo, a_hi
-            )
 
     def _on_ranges_changed(self, plo: float, phi: float, rlo: float, rhi: float) -> None:
         self._patch_settings(
@@ -717,10 +753,15 @@ class PreviewApp(QMainWindow):
                 self._full_geo = self.geometry()
             self.mode_stack.setCurrentIndex(1)
             self._compact = True
-            self.setMinimumSize(200, 100)
-            # 就地缩小：保留左上角；仅「启动即紧凑」才用上次拖动落点
+            # 就地缩小：字号不变，窗体贴 content；仅「启动即紧凑」才用上次拖动落点
             anchor = self.geometry().topLeft()
-            self.resize(220, 120)
+            hud = getattr(self, "_hud", None)
+            if hud is not None:
+                w, h = hud.preferred_size()
+            else:
+                w, h = 176, 148
+            self.setMinimumSize(160, 120)
+            self.resize(w, h)
             if from_startup:
                 s = self._settings
                 if s.hud_x >= 0 and s.hud_y >= 0:
@@ -728,10 +769,12 @@ class PreviewApp(QMainWindow):
                         s.hud_x, s.hud_y, self.width(), self.height()
                     )
             self.move(anchor)
-            # 紧凑态强制置顶；macOS 再抬原生层级以便压过全屏游戏
+            # 紧凑：置顶 + 无边框；半透明用 setWindowOpacity（可调，不发虚）
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
             self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
             self.show()
+            self._apply_hud_opacity(float(self._settings.hud_opacity))
             self._refresh_hud_steady()
             QTimer.singleShot(0, self._apply_compact_overlay)
             QTimer.singleShot(0, self._apply_no_minimize)
@@ -749,12 +792,15 @@ class PreviewApp(QMainWindow):
             else:
                 self.resize(460, 800)
             self.move(anchor)
-            # 恢复用户置顶偏好
+            # 恢复完整窗框、不透明与用户置顶偏好
+            self.setWindowOpacity(1.0)
+            self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
             self.setWindowFlag(
                 Qt.WindowType.WindowStaysOnTopHint,
                 bool(self.chk_stay_on_top.isChecked()),
             )
             self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
+            self.setStyleSheet(global_qss())
             self.show()
             self.raise_()
             self.activateWindow()
@@ -762,6 +808,19 @@ class PreviewApp(QMainWindow):
             QTimer.singleShot(0, self._apply_no_minimize)
         if persist:
             self._persist_settings()
+
+    def _apply_hud_opacity(self, opacity: float) -> None:
+        op = max(0.45, min(1.0, float(opacity)))
+        self._settings = replace(self._settings, hud_opacity=op)
+        if self._compact:
+            self.setWindowOpacity(op)
+        hud = getattr(self, "_hud", None)
+        if hud is not None:
+            hud.set_opacity_value(op)
+
+    def _on_hud_opacity_changed(self, opacity: float) -> None:
+        self._apply_hud_opacity(opacity)
+        self._persist_settings()
 
     def _apply_compact_overlay(self) -> None:
         if not self._compact:
@@ -778,10 +837,64 @@ class PreviewApp(QMainWindow):
         )
         hide_miniaturize_button(self)
 
+    def _refresh_hud_metrics(self) -> None:
+        """紧凑态三行：POS / 抛杆剩余 / 鼠标。"""
+        hud = getattr(self, "_hud", None)
+        if hud is None or not getattr(self, "_compact", False):
+            return
+        pipe = self._pipe
+        if self.hit is None:
+            pos_s, pos_c = "—", DANGER
+        elif self.hit.bar_width <= 0:
+            pos_s, pos_c = "无条", WARN
+        else:
+            pos_s, pos_c = f"{self.hit.pos:.0f}", SUCCESS
+
+        c_on = bool(getattr(self, "chk_c", None) is not None and self.chk_c.isChecked())
+        cfg_txt = format_cast_count_range(
+            self._settings.cast_count_lo, self._settings.cast_count_hi
+        )
+        if not c_on:
+            cast_s, cast_c = "关", TEXT_FAINT
+        elif pipe is not None and pipe.auto_cast.active:
+            rem = pipe.auto_cast.remaining
+            total = max(rem, int(pipe.auto_cast.batch_total) or 1)
+            snap = pipe.bus.snapshot()
+            phase = _CAST_PHASE_LABEL.get(snap.cast_phase, snap.cast_phase.value)
+            cast_s, cast_c = f"{rem}/{total} · {phase}", ACCENT
+        else:
+            armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
+            ready = "就绪" if armed else "等待"
+            cast_s = f"{cfg_txt} · {ready}"
+            cast_c = SUCCESS if armed else WARN
+
+        intent = _hold_word(self._holding) if self._holding is not None else "—"
+        if pipe is not None and pipe.act_on:
+            if pipe.act.yielding:
+                prog = "让"
+            elif pipe.act.pressed:
+                prog = "按"
+            else:
+                prog = "松"
+        else:
+            prog = "关"
+        os_d = os_left_down()
+        sys_s = _hold_word(os_d)
+        mouse_s = f"{intent} / {prog} / {sys_s}"
+        hud.set_metrics(
+            pos=pos_s,
+            cast=cast_s,
+            mouse=mouse_s,
+            pos_color=pos_c,
+            cast_color=cast_c,
+            mouse_color=TEXT_MUTED,
+        )
+
     def _refresh_hud_steady(self) -> None:
         hud = getattr(self, "_hud", None)
         if hud is None:
             return
+        self._refresh_hud_metrics()
         a_on = bool(self.chk_a.isChecked())
         b_on = bool(self.chk_b.isChecked())
         pipe = self._pipe
@@ -1379,10 +1492,7 @@ class PreviewApp(QMainWindow):
             self._refresh_mouse()
             return
         low, high = self._current_policy_thresholds()
-        detail = f"· <{low:.1f}按 / >{high:.1f}松"
-        if reason:
-            detail += f" · {reason}"
-        self.lbl_strat_detail.setText(detail)
+        self.lbl_strat_detail.setText(f"<{low:.1f} 按  ·  >{high:.1f} 松")
         self._refresh_mouse()
 
     def _current_policy_thresholds(self) -> tuple[float, float]:
@@ -1394,22 +1504,23 @@ class PreviewApp(QMainWindow):
 
     def _refresh_pos(self) -> None:
         if self.hit is None:
-            self.lbl_pos.setText("POS: 无漂")
+            self.lbl_pos.setText("—")
             self.lbl_pos.setStyleSheet(
-                f"font-size:16px; font-weight:700; color:{DANGER};"
+                f"font-size:26px; font-weight:700; color:{DANGER};"
             )
         elif self.hit.bar_width <= 0:
-            self.lbl_pos.setText("POS: 有漂·无条")
+            self.lbl_pos.setText("无条")
             self.lbl_pos.setStyleSheet(
-                f"font-size:16px; font-weight:700; color:{WARN};"
+                f"font-size:26px; font-weight:700; color:{WARN};"
             )
         else:
-            self.lbl_pos.setText(f"POS: {self.hit.pos:.1f}")
+            self.lbl_pos.setText(f"{self.hit.pos:.1f}")
             self.lbl_pos.setStyleSheet(
-                f"font-size:16px; font-weight:700; color:{SUCCESS};"
+                f"font-size:26px; font-weight:700; color:{SUCCESS};"
             )
         ms = getattr(self, "_last_detect_ms", 0.0)
-        self.lbl_perf.setText(f"{ms:.0f}ms")
+        self.lbl_perf.setText(f"{ms:.0f} ms" if ms > 0 else "")
+        self._refresh_hud_metrics()
 
     def _refresh_monitor(self) -> None:
         if self.phase == SELECT and self.screen_grab is not None:
@@ -1667,6 +1778,10 @@ class PreviewApp(QMainWindow):
             self._refresh_strategy(pos, self._intent_reason)
         return True
 
+    def _paint_mouse_metric(self, lbl: QLabel, text: str, color: str) -> None:
+        lbl.setText(text)
+        lbl.setStyleSheet(f"font-size:15px; font-weight:700; color:{color};")
+
     def _refresh_mouse(self) -> None:
         pipe = self._pipe
         act_on = pipe is not None and pipe.act_on
@@ -1686,20 +1801,31 @@ class PreviewApp(QMainWindow):
         free = act_on and not may_pull and not yielding
 
         if not act_on:
-            prog_s = "未启用"
+            prog_s, prog_c = "关", TEXT_FAINT
         elif yielding:
-            prog_s = "让位"
+            prog_s, prog_c = "让", WARN
         elif free:
-            prog_s = "自由"
+            prog_s, prog_c = "闲", TEXT_FAINT
         else:
             prog_s = _hold_word(prog)
+            prog_c = WARN if prog else SUCCESS
 
-        parts = [
-            f"意图 {_hold_word(intent) if intent is not None else '—'}",
-            f"程序 {prog_s}",
-            f"系统 {_hold_word(os_down)}",
-        ]
-        self.lbl_mouse.setText(" · ".join(parts))
+        intent_s = _hold_word(intent) if intent is not None else "—"
+        intent_c = WARN if intent else TEXT_MUTED
+        sys_s = _hold_word(os_down)
+        sys_c = WARN if os_down else TEXT_MUTED
+
+        intent_lbl = getattr(self, "lbl_mouse_intent", None)
+        prog_lbl = getattr(self, "lbl_mouse_prog", None)
+        sys_lbl = getattr(self, "lbl_mouse_sys", None)
+        if intent_lbl is not None and prog_lbl is not None and sys_lbl is not None:
+            self._paint_mouse_metric(intent_lbl, intent_s, intent_c)
+            self._paint_mouse_metric(prog_lbl, prog_s, prog_c)
+            self._paint_mouse_metric(sys_lbl, sys_s, sys_c)
+        else:
+            self.lbl_mouse.setText(
+                f"意图 {intent_s} · 程序 {prog_s} · 系统 {sys_s}"
+            )
 
         issues: list[str] = []
         controlling = act_on and not free and not yielding
@@ -1719,53 +1845,29 @@ class PreviewApp(QMainWindow):
             issues.append("程序≠系统")
         if os_down is None:
             if sys.platform == "darwin":
-                issues.append("系统态不可读（检查辅助功能权限）")
+                issues.append("系统态不可读")
             elif sys.platform == "win32":
-                # Windows 无「辅助功能」开关；旧包才会长期 None
-                issues.append("系统态不可读（请用最新 Windows 包，或检查杀软）")
+                issues.append("系统态不可读")
             else:
                 issues.append("系统态不可读")
 
         if issues:
-            self.lbl_mouse.setStyleSheet(
-                f"font-size:14px; font-weight:600; color:{DANGER};"
-            )
-            self.lbl_mouse_diag.setText("异常：" + " / ".join(issues))
-            self.lbl_mouse_diag.setStyleSheet(f"color:{DANGER};")
+            self.lbl_mouse_diag.setText(" · ".join(issues))
+            self.lbl_mouse_diag.show()
             if not self._mouse_mismatch_logged:
                 self._mouse_mismatch_logged = True
                 self._cal_log(
                     "鼠标异常 "
                     + " / ".join(issues)
-                    + f" · 意图={_hold_word(intent)}"
+                    + f" · 意图={intent_s}"
                     + f" 程序={prog_s}"
-                    + f" 系统={_hold_word(os_down)}"
+                    + f" 系统={sys_s}"
                 )
         else:
-            if yielding:
-                color = WARN
-            elif free:
-                color = TEXT_FAINT
-            elif act_on and prog:
-                color = WARN
-            elif act_on:
-                color = SUCCESS
-            else:
-                color = TEXT_FAINT
-            self.lbl_mouse.setStyleSheet(
-                f"font-size:14px; font-weight:600; color:{color};"
-            )
-            if not act_on:
-                diag = "操作未启用 · 仍监视系统左键"
-            elif yielding:
-                diag = "系统优先 · 等你松开鼠标后程序再接管"
-            elif free:
-                diag = "自由态 · 非钓鱼态，不碰你的鼠标"
-            else:
-                diag = "控鼠中 · 钓鱼态，按策略按/松"
-            self.lbl_mouse_diag.setText(diag)
-            self.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
+            self.lbl_mouse_diag.hide()
+            self.lbl_mouse_diag.clear()
             self._mouse_mismatch_logged = False
+        self._refresh_hud_metrics()
 
     def _pause_input_for_select(self) -> None:
         """框选期间停 Act 并松键（Windows 合成左键按住会吞掉确认点击）。"""
@@ -1921,12 +2023,18 @@ class PreviewApp(QMainWindow):
         self._apply_cast_full_charge_from_settings()
         if not pipe.auto_cast_on:
             pipe.start_auto_cast()
-        n = int(self._settings.cast_count)
+        n = sample_cast_batch_count(
+            self._settings.cast_count_lo, self._settings.cast_count_hi
+        )
         if not pipe.start_cast_batch(n):
             self._cast_log("抛杆任务进行中 · 忽略开始")
         else:
+            clo, chi = self._settings.cast_count_lo, self._settings.cast_count_hi
             lo, hi = self._settings.cast_wait_lo_s, self._settings.cast_wait_hi_s
-            self._cast_log(f"开始抛杆 · {n} 次 · 等待 {lo:.1f}～{hi:.1f}s")
+            self._cast_log(
+                f"开始抛杆 · {n} 次（配置 {format_cast_count_range(clo, chi)}）"
+                f" · 等待 {lo:.1f}～{hi:.1f}s"
+            )
             self._main_log(f"抛杆开始 · {n} 次")
         self._refresh_cast_label()
 
@@ -1943,10 +2051,11 @@ class PreviewApp(QMainWindow):
         self._main_log("抛杆结束")
         self._refresh_cast_label()
 
-    def _on_cast_count_changed(self, value: int) -> None:
-        n = int(value)
-        self._patch_settings(cast_count=n)
-        self._cast_log(f"本轮次数 {n}")
+    def _on_cast_count_changed(self, lo: float, hi: float) -> None:
+        a, b = int(round(lo)), int(round(hi))
+        self._patch_settings(cast_count_lo=a, cast_count_hi=b)
+        self._cast_log(f"次数区间 {format_cast_count_range(a, b)}")
+        self._refresh_cast_label()
 
     def _on_cast_start_hotkey_changed(self, seq: QKeySequence) -> None:
         key = self._keyseq_to_hotkey(seq, default=self._settings.cast_start_hotkey)

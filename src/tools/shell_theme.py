@@ -44,9 +44,29 @@ def global_qss() -> str:
         color: {TEXT_MUTED};
     }}
     QFrame#readout {{
+        background: transparent;
+        border: none;
+    }}
+    QFrame#statusCard {{
         background: {SURFACE};
         border: 1px solid {BORDER_SOFT};
+        border-radius: 10px;
+    }}
+    QFrame#metricCell {{
+        background: {SURFACE_2};
+        border: 1px solid {BORDER_SOFT};
         border-radius: 8px;
+    }}
+    QLabel#statusCardTitle {{
+        color: {TEXT_FAINT};
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }}
+    QLabel#castRemain {{
+        font-size: 28px;
+        font-weight: 700;
+        color: {ACCENT};
     }}
     QPlainTextEdit {{
         background: {LOG_BG};

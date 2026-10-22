@@ -42,10 +42,11 @@ def test_defaults_without_files(dirs):
     assert s.sound_threshold == pytest.approx(0.70)
     assert (s.press_lo, s.press_hi, s.release_lo, s.release_hi) == (70.6, 74.4, 76.6, 79.2)
     assert s.compact_mode is False
+    assert s.hud_opacity == pytest.approx(0.88)
     assert (s.click_delay_lo_s, s.click_delay_hi_s) == (0.3, 1.5)
     assert (s.click_hold_lo_s, s.click_hold_hi_s) == (0.7, 1.5)
     assert (s.click_after_lo_s, s.click_after_hi_s) == (0.2, 0.8)
-    assert s.cast_count == 5
+    assert (s.cast_count_lo, s.cast_count_hi) == (5, 5)
     assert s.cast_start_hotkey == "F8"
     assert s.cast_stop_hotkey == "F9"
     assert (s.cast_wait_lo_s, s.cast_wait_hi_s) == (3.0, 3.0)
@@ -86,13 +87,29 @@ def test_auto_cast_enabled_roundtrip(dirs):
     data, _ = dirs
     _write(
         data / "shell_settings.json",
-        {"auto_cast_enabled": True, "cast_count": 9, "cast_start_hotkey": "f6"},
+        {
+            "auto_cast_enabled": True,
+            "cast_count_lo": 3,
+            "cast_count_hi": 9,
+            "cast_start_hotkey": "f6",
+        },
     )
     s = load_shell_settings()
     assert s.auto_cast_enabled is True
-    assert s.cast_count == 9
+    assert (s.cast_count_lo, s.cast_count_hi) == (3, 9)
     assert s.cast_start_hotkey == "F6"
     assert s.cast_stop_hotkey == "F9"
+
+
+def test_legacy_cast_count_migrates_to_range(dirs):
+    data, _ = dirs
+    _write(
+        data / "shell_settings.json",
+        {"cast_count": 9, "cast_start_hotkey": "f6"},
+    )
+    s = load_shell_settings()
+    assert (s.cast_count_lo, s.cast_count_hi) == (9, 9)
+    assert s.cast_start_hotkey == "F6"
 
 
 def test_out_of_range_values_are_normalized(dirs):
@@ -110,7 +127,8 @@ def test_out_of_range_values_are_normalized(dirs):
             "click_after_hi_s": 9.0,
             "compact_mode": 1,
             "hud_x": 12.7,
-            "cast_count": 99,
+            "cast_count_lo": 99,
+            "cast_count_hi": 0,
             "cast_start_hotkey": "nope",
             "cast_wait_lo_s": 40.0,
             "cast_wait_hi_s": -1.0,
@@ -126,7 +144,7 @@ def test_out_of_range_values_are_normalized(dirs):
     assert s.click_after_lo_s == 5.0 and s.click_after_hi_s == 5.0
     assert s.compact_mode is True
     assert s.hud_x == 12
-    assert s.cast_count == 20
+    assert (s.cast_count_lo, s.cast_count_hi) == (1, 20)
     assert s.cast_start_hotkey == "F8"
     assert (s.cast_wait_lo_s, s.cast_wait_hi_s) == (0.0, 30.0)
     assert s.cast_full_charge_s == pytest.approx(0.05)

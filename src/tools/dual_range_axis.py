@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPen
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
@@ -21,6 +21,18 @@ _MIN = 0.0
 _MAX = 100.0
 _DEFAULT_GAP = 1.0
 _STEP = 0.1  # 一位小数
+
+# 标题 / 轨道 / 刻度分层，避免拖块与数字被挤裁
+_BAR_TITLE_TOP = 4.0
+_BAR_TITLE_H = 18.0
+_BAR_TRACK_Y = 28.0
+_BAR_TRACK_H = 16.0
+_BAR_TICK_GAP = 4.0
+_BAR_TICK_H = 16.0
+_BAR_PAD_BOTTOM = 6.0
+_BAR_HEIGHT = int(
+    _BAR_TRACK_Y + _BAR_TRACK_H + _BAR_TICK_GAP + _BAR_TICK_H + _BAR_PAD_BOTTOM
+)
 
 
 def _q(v: float) -> float:
@@ -52,11 +64,17 @@ class DualRangeAxis(QWidget):
         self._drag: str | None = None
         self._drag_origin = 0.0
         self._drag_snapshot: tuple[float, float, float, float] | None = None
-        self.setMinimumHeight(56)
+        self.setMinimumHeight(_BAR_HEIGHT)
         self.setMinimumWidth(280)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self._normalize()
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(320, _BAR_HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(280, _BAR_HEIGHT)
 
     def ranges(self) -> tuple[float, float, float, float]:
         return self._plo, self._phi, self._rlo, self._rhi
@@ -112,7 +130,7 @@ class DualRangeAxis(QWidget):
         )
 
     def _track(self) -> QRectF:
-        return QRectF(12, 22, max(1.0, self.width() - 24), 14)
+        return QRectF(12, _BAR_TRACK_Y, max(1.0, self.width() - 24), _BAR_TRACK_H)
 
     def _x_of(self, v: float) -> float:
         track = self._track()
@@ -127,6 +145,9 @@ class DualRangeAxis(QWidget):
         return max(_MIN, min(_MAX, _MIN + t * (_MAX - _MIN)))
 
     def _handle_at(self, pos: QPointF) -> str | None:
+        track = self._track()
+        y0 = track.top() - 6
+        y1 = track.bottom() + 6
         hits: list[tuple[float, str]] = []
         for name, v in (
             ("plo", self._plo),
@@ -136,7 +157,7 @@ class DualRangeAxis(QWidget):
         ):
             hx = self._x_of(v)
             dist = abs(pos.x() - hx)
-            if dist <= 10 and 8 <= pos.y() <= 48:
+            if dist <= 10 and y0 <= pos.y() <= y1:
                 hits.append((dist, name))
         if hits:
             hits.sort()
@@ -144,7 +165,7 @@ class DualRangeAxis(QWidget):
         # 整段
         x = pos.x()
         y = pos.y()
-        if 18 <= y <= 42:
+        if track.top() - 2 <= y <= track.bottom() + 2:
             if self._x_of(self._plo) <= x <= self._x_of(self._phi):
                 return "press_body"
             if self._x_of(self._rlo) <= x <= self._x_of(self._rhi):
@@ -197,9 +218,17 @@ class DualRangeAxis(QWidget):
         p.setPen(QColor(TEXT_MUTED))
         for tick in (0, 25, 50, 75, 100):
             x = self._x_of(tick)
-            p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 6))
+            p.drawLine(
+                QPointF(x, track.bottom() + 2),
+                QPointF(x, track.bottom() + _BAR_TICK_GAP),
+            )
             p.drawText(
-                QRectF(x - 14, track.bottom() + 6, 28, 14),
+                QRectF(
+                    x - 14,
+                    track.bottom() + _BAR_TICK_GAP,
+                    28,
+                    _BAR_TICK_H,
+                ),
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
                 str(tick),
             )
@@ -223,7 +252,7 @@ class DualRangeAxis(QWidget):
             f"松开 U({self._rlo:.1f}～{self._rhi:.1f})"
         )
         p.drawText(
-            QRectF(12, 2, self.width() - 24, 18),
+            QRectF(12, _BAR_TITLE_TOP, self.width() - 24, _BAR_TITLE_H),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             label,
         )
@@ -309,7 +338,7 @@ class DualRangeAxis(QWidget):
 
 
 class SingleRangeBar(QWidget):
-    """单段可拖区间（如等待/长按秒数）；精度 0.1。"""
+    """单段可拖区间（等待秒数 / 抛几次等）；step 默认 0.1，次数用 1。"""
 
     rangeChanged = Signal(float, float)
 
@@ -323,6 +352,7 @@ class SingleRangeBar(QWidget):
         unit: str = "s",
         title: str = "",
         min_span: float = 0.1,
+        step: float = 0.1,
     ) -> None:
         super().__init__(parent)
         self._vmin = float(vmin)
@@ -330,15 +360,22 @@ class SingleRangeBar(QWidget):
         self._unit = unit
         self._title = title
         self._min_span = float(min_span)
+        self._step = float(step) if float(step) > 0 else _STEP
         self._lo, self._hi = float(value[0]), float(value[1])
         self._drag: str | None = None
         self._drag_origin = 0.0
         self._drag_snapshot: tuple[float, float] | None = None
-        self.setMinimumHeight(52)
+        self.setMinimumHeight(_BAR_HEIGHT)
         self.setMinimumWidth(200)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self._normalize()
+
+    def sizeHint(self) -> QSize:  # noqa: N802
+        return QSize(280, _BAR_HEIGHT)
+
+    def minimumSizeHint(self) -> QSize:  # noqa: N802
+        return QSize(200, _BAR_HEIGHT)
 
     def range(self) -> tuple[float, float]:
         return self._lo, self._hi
@@ -351,7 +388,12 @@ class SingleRangeBar(QWidget):
             self.rangeChanged.emit(*self.range())
 
     def _q(self, v: float) -> float:
-        return round(float(v) / _STEP) * _STEP
+        return round(float(v) / self._step) * self._step
+
+    def _fmt(self, v: float) -> str:
+        if self._step >= 1.0 - 1e-9:
+            return str(int(round(v)))
+        return f"{v:.1f}"
 
     def _normalize(self) -> None:
         lo = max(self._vmin, min(self._vmax, self._q(self._lo)))
@@ -365,7 +407,7 @@ class SingleRangeBar(QWidget):
         self._lo, self._hi = self._q(lo), self._q(hi)
 
     def _track(self) -> QRectF:
-        return QRectF(12, 22, max(1.0, self.width() - 24), 14)
+        return QRectF(12, _BAR_TRACK_Y, max(1.0, self.width() - 24), _BAR_TRACK_H)
 
     def _x_of(self, v: float) -> float:
         track = self._track()
@@ -384,15 +426,18 @@ class SingleRangeBar(QWidget):
         )
 
     def _handle_at(self, pos: QPointF) -> str | None:
+        track = self._track()
+        y0 = track.top() - 6
+        y1 = track.bottom() + 6
         hits: list[tuple[float, str]] = []
         for name, v in (("lo", self._lo), ("hi", self._hi)):
             dist = abs(pos.x() - self._x_of(v))
-            if dist <= 10 and 8 <= pos.y() <= 48:
+            if dist <= 10 and y0 <= pos.y() <= y1:
                 hits.append((dist, name))
         if hits:
             hits.sort()
             return hits[0][1]
-        if 18 <= pos.y() <= 42:
+        if track.top() - 2 <= pos.y() <= track.bottom() + 2:
             if self._x_of(self._lo) <= pos.x() <= self._x_of(self._hi):
                 return "body"
         return None
@@ -427,11 +472,19 @@ class SingleRangeBar(QWidget):
         ticks.append(self._vmax)
         for tick in ticks:
             x = self._x_of(tick)
-            p.drawLine(QPointF(x, track.bottom() + 2), QPointF(x, track.bottom() + 6))
+            p.drawLine(
+                QPointF(x, track.bottom() + 2),
+                QPointF(x, track.bottom() + _BAR_TICK_GAP),
+            )
             p.drawText(
-                QRectF(x - 16, track.bottom() + 6, 32, 14),
+                QRectF(
+                    x - 16,
+                    track.bottom() + _BAR_TICK_GAP,
+                    32,
+                    _BAR_TICK_H,
+                ),
                 Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop,
-                f"{tick:.1f}",
+                self._fmt(tick),
             )
         for v in (self._lo, self._hi):
             cx = self._x_of(v)
@@ -441,9 +494,9 @@ class SingleRangeBar(QWidget):
             p.drawEllipse(QPointF(cx, cy), 6.5, 6.5)
         p.setPen(QColor(TEXT_MUTED))
         prefix = f"{self._title} " if self._title else ""
-        label = f"{prefix}{self._lo:.1f}～{self._hi:.1f}{self._unit}"
+        label = f"{prefix}{self._fmt(self._lo)}～{self._fmt(self._hi)}{self._unit}"
         p.drawText(
-            QRectF(12, 2, self.width() - 24, 18),
+            QRectF(12, _BAR_TITLE_TOP, self.width() - 24, _BAR_TITLE_H),
             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
             label,
         )

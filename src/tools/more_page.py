@@ -1,4 +1,4 @@
-"""更多页：权限、开钓第一下区间、恢复默认、打包默认。"""
+"""更多页：权限、恢复默认、打包默认。"""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.dual_range_axis import SingleRangeBar
 from tools.shell_config import is_frozen_app
 from tools.shell_theme import TEXT_MUTED
 
@@ -27,7 +26,6 @@ if TYPE_CHECKING:
 
 
 def build_more_page(host: "PreviewApp") -> QWidget:
-    s = host._settings
     # —— 更多：权限 ——
     page_more = QWidget()
     more_scroll = QScrollArea()
@@ -77,46 +75,6 @@ def build_more_page(host: "PreviewApp") -> QWidget:
         lbl_pkg = QLabel(f"本安装包到期 {pkg_on.isoformat()}")
         validity_l.addWidget(lbl_pkg)
         more_l.addWidget(validity)
-
-    click = QGroupBox("开钓第一下")
-    click_l = QVBoxLayout(click)
-    hint_click = QLabel(
-        "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
-    )
-    hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-    hint_click.setWordWrap(True)
-    click_l.addWidget(hint_click)
-    host.bar_delay = SingleRangeBar(
-        title="等待",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_delay_lo_s), float(s.click_delay_hi_s)),
-        unit="s",
-        min_span=0.1,
-    )
-    host.bar_delay.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_delay)
-    host.bar_hold = SingleRangeBar(
-        title="长按",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_hold_lo_s), float(s.click_hold_hi_s)),
-        unit="s",
-        min_span=0.1,
-    )
-    host.bar_hold.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_hold)
-    host.bar_after = SingleRangeBar(
-        title="松开后",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_after_lo_s), float(s.click_after_hi_s)),
-        unit="s",
-        min_span=0.1,
-    )
-    host.bar_after.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_after)
-    more_l.addWidget(click)
 
     restore = QGroupBox("恢复默认")
     restore_l = QVBoxLayout(restore)

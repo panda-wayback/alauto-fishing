@@ -1,4 +1,4 @@
-"""自动抛杆配置页：次数、快捷键、满蓄秒数、收竿等待区间、本页日志。"""
+"""自动抛杆配置页：次数区间、快捷键、满蓄秒数、收竿等待区间、本页日志。"""
 
 from __future__ import annotations
 
@@ -14,7 +14,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QScrollArea,
-    QSpinBox,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -55,15 +54,21 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     batch = QGroupBox("本轮抛杆")
     batch_l = QVBoxLayout(batch)
     batch_l.setSpacing(8)
-    row_n = QHBoxLayout()
-    row_n.addWidget(QLabel("抛几次"))
-    host.spin_cast_count = QSpinBox()
-    host.spin_cast_count.setRange(1, 20)
-    host.spin_cast_count.setValue(int(host._settings.cast_count))
-    host.spin_cast_count.valueChanged.connect(host._on_cast_count_changed)
-    row_n.addWidget(host.spin_cast_count)
-    row_n.addStretch(1)
-    batch_l.addLayout(row_n)
+    batch_l.addWidget(
+        QLabel("抛几次 · 1～20 · 每次开始时在区间内随机出本轮总次数")
+    )
+    s = host._settings
+    host.bar_cast_count = SingleRangeBar(
+        vmin=1.0,
+        vmax=20.0,
+        value=(float(s.cast_count_lo), float(s.cast_count_hi)),
+        unit="次",
+        title="次数",
+        min_span=0.0,
+        step=1.0,
+    )
+    host.bar_cast_count.rangeChanged.connect(host._on_cast_count_changed)
+    batch_l.addWidget(host.bar_cast_count)
 
     row_full = QHBoxLayout()
     row_full.addWidget(QLabel("满蓄秒数"))
@@ -104,8 +109,8 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
 
     wait = QGroupBox("拉漂成功后再抛 · 等待")
     wait_l = QVBoxLayout(wait)
+    wait_l.setSpacing(8)
     wait_l.addWidget(QLabel("上下限（秒）· 夹到 0～30 · 拉漂结束后抽样等待再抛下一杆"))
-    s = host._settings
     host.bar_cast_wait = SingleRangeBar(
         vmin=0.0,
         vmax=30.0,

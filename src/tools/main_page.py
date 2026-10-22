@@ -1,4 +1,4 @@
-"""主控页：A/B 开关、读数、状态日志。"""
+"""主控页：A/B/C 开关、仪表盘三卡、状态日志。"""
 
 from __future__ import annotations
 
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QSizePolicy,
     QSplitter,
     QVBoxLayout,
     QWidget,
@@ -42,18 +43,44 @@ _STYLE_WARN = (
 )
 
 
+def _make_card() -> tuple[QFrame, QVBoxLayout]:
+    card = QFrame()
+    card.setObjectName("statusCard")
+    lay = QVBoxLayout(card)
+    lay.setContentsMargins(14, 12, 14, 12)
+    lay.setSpacing(8)
+    return card, lay
+
+
+def _metric_cell(title: str) -> tuple[QFrame, QLabel]:
+    cell = QFrame()
+    cell.setObjectName("metricCell")
+    cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    v = QVBoxLayout(cell)
+    v.setContentsMargins(8, 6, 8, 6)
+    v.setSpacing(2)
+    val = QLabel("—")
+    val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    val.setStyleSheet(f"font-size:15px; font-weight:700; color:{TEXT_MUTED};")
+    cap = QLabel(title)
+    cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    cap.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
+    v.addWidget(val)
+    v.addWidget(cap)
+    return cell, val
+
+
 def build_main_page(host: "PreviewApp") -> QWidget:
     from common.license import load_license
     from datetime import datetime
 
-    # —— 主控 ——
     page_main = QWidget()
     main_root = QVBoxLayout(page_main)
     main_root.setContentsMargins(0, 0, 0, 0)
     main_root.setSpacing(0)
     main_split = QSplitter(Qt.Orientation.Vertical)
     main_split.setChildrenCollapsible(False)
-    
+
     main_top = QWidget()
     main_l = QVBoxLayout(main_top)
     main_l.setContentsMargins(0, 0, 0, 0)
@@ -86,7 +113,6 @@ def build_main_page(host: "PreviewApp") -> QWidget:
         host.lbl_license.setText(
             f"授权剩余 {days} 天 {hours:02d}:{mins:02d}:{sec:02d}"
         )
-        # 不足 3 天提醒
         host.lbl_license.setStyleSheet(_STYLE_WARN if secs <= 3 * 86400 else _STYLE_OK)
 
     host._refresh_license_banner = _refresh_license_banner
@@ -113,10 +139,7 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.chk_c = QCheckBox("自动抛杆")
     host.chk_c.setObjectName("switchRow")
     host.chk_c.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.chk_c.setToolTip(
-        "开：光标旁认漂后右键开始 / 再右键结束；F8 / F9 备用。"
-        "关：不认漂、不响应右键与快捷键。"
-    )
+    host.chk_c.setToolTip("开：光标成漂形后右键开停；F8 / F9 备用。关：整模块停。")
     host.chk_c.toggled.connect(host._on_c_toggled)
     sw.addWidget(host.chk_c)
     host.btn_float = QPushButton("浮窗")
@@ -126,71 +149,129 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.btn_float.clicked.connect(lambda: host._set_compact_mode(True))
     sw.addWidget(host.btn_float)
     main_l.addWidget(switches)
-    
+
     readout = QFrame()
     readout.setObjectName("readout")
     ro = QVBoxLayout(readout)
-    ro.setContentsMargins(12, 10, 12, 10)
-    ro.setSpacing(4)
-    row1 = QHBoxLayout()
-    row1.setSpacing(8)
-    host.lbl_pos = QLabel("POS: 无漂")
-    host.lbl_pos.setStyleSheet(
-        f"font-size:16px; font-weight:700; color:{DANGER};"
-    )
-    row1.addWidget(host.lbl_pos)
-    host.lbl_strat_detail = QLabel("")
-    host.lbl_strat_detail.setStyleSheet(
-        f"font-size:12px; color:{TEXT_MUTED};"
-    )
-    row1.addWidget(host.lbl_strat_detail, 1)
+    ro.setContentsMargins(0, 0, 0, 0)
+    ro.setSpacing(8)
+
+    # —— POS ——
+    pos_card, pos_l = _make_card()
+    pos_head = QHBoxLayout()
+    pos_head.setSpacing(8)
+    pos_title = QLabel("POS")
+    pos_title.setObjectName("statusCardTitle")
+    pos_head.addWidget(pos_title)
+    pos_head.addStretch(1)
     host.lbl_perf = QLabel("")
     host.lbl_perf.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-    row1.addWidget(host.lbl_perf)
-    ro.addLayout(row1)
-    host.lbl_session = QLabel("会话：—")
-    host.lbl_session.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
-    ro.addWidget(host.lbl_session)
+    pos_head.addWidget(host.lbl_perf)
+    pos_l.addLayout(pos_head)
+    pos_row = QHBoxLayout()
+    pos_row.setSpacing(12)
+    host.lbl_pos = QLabel("—")
+    host.lbl_pos.setStyleSheet(f"font-size:26px; font-weight:700; color:{DANGER};")
+    pos_row.addWidget(host.lbl_pos)
+    right = QVBoxLayout()
+    right.setSpacing(2)
+    host.lbl_strat_detail = QLabel("")
+    host.lbl_strat_detail.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
+    right.addWidget(host.lbl_strat_detail)
+    host.lbl_session = QLabel("")
+    host.lbl_session.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
+    right.addWidget(host.lbl_session)
+    right.addStretch(1)
+    pos_row.addLayout(right, 1)
+    pos_l.addLayout(pos_row)
+    ro.addWidget(pos_card)
+
+    # —— 抛杆 ——
+    cast_card, cast_l = _make_card()
+    cast_head = QHBoxLayout()
+    cast_title = QLabel("抛杆")
+    cast_title.setObjectName("statusCardTitle")
+    cast_head.addWidget(cast_title)
+    cast_head.addStretch(1)
+    host.lbl_cast_hint = QLabel("")
+    host.lbl_cast_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
+    cast_head.addWidget(host.lbl_cast_hint)
+    cast_l.addLayout(cast_head)
     cast_row = QHBoxLayout()
-    cast_row.setSpacing(10)
-    cast_txt = QVBoxLayout()
-    cast_txt.setSpacing(2)
-    host.lbl_cast = QLabel("抛杆门闩：—")
-    host.lbl_cast.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
-    cast_txt.addWidget(host.lbl_cast)
-    host.lbl_cast_hint = QLabel("与上方 POS（拉漂大框）无关")
-    host.lbl_cast_hint.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
-    cast_txt.addWidget(host.lbl_cast_hint)
-    cast_row.addLayout(cast_txt, 1)
-    host.lbl_arm_preview = QLabel()
-    host.lbl_arm_preview.setFixedSize(72, 72)
-    host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    host.lbl_arm_preview.setToolTip(
-        "系统当前光标外形（mss 截不到）· 鼠标请停在游戏上 · 绿框=可开抛 · 灰框=未认漂"
+    cast_row.setSpacing(14)
+    rem_wrap = QFrame()
+    rem_wrap.setObjectName("metricCell")
+    rem_wrap.setFixedWidth(72)
+    rem_v = QVBoxLayout(rem_wrap)
+    rem_v.setContentsMargins(6, 4, 6, 4)
+    rem_v.setSpacing(0)
+    host.lbl_cast_remain = QLabel("—")
+    host.lbl_cast_remain.setObjectName("castRemain")
+    host.lbl_cast_remain.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host.lbl_cast_remain.setToolTip("待命=配置次数；进行中=剩余/共")
+    rem_v.addWidget(host.lbl_cast_remain)
+    host.lbl_cast_remain_cap = QLabel("次数")
+    host.lbl_cast_remain_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host.lbl_cast_remain_cap.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
+    rem_v.addWidget(host.lbl_cast_remain_cap)
+    cast_row.addWidget(rem_wrap)
+    host.lbl_cast = QLabel("关")
+    host.lbl_cast.setStyleSheet(f"font-size:18px; font-weight:700; color:{TEXT_MUTED};")
+    host.lbl_cast.setAlignment(
+        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
     )
+    cast_row.addWidget(host.lbl_cast, 1)
+    host.lbl_arm_preview = QLabel()
+    host.lbl_arm_preview.setFixedSize(56, 56)
+    host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host.lbl_arm_preview.setToolTip("系统光标 · 绿=就绪 · 灰=等待")
     host.lbl_arm_preview.setStyleSheet(
-        f"background:{BORDER}; border:2px solid {BORDER}; border-radius:4px;"
+        f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
     )
     host.lbl_arm_preview.hide()
-    cast_row.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignTop)
-    ro.addLayout(cast_row)
-    host.lbl_mouse = QLabel("意图 — · 程序 — · 系统 —")
-    host.lbl_mouse.setStyleSheet(f"font-size:13px; font-weight:600; color:{TEXT_MUTED};")
-    ro.addWidget(host.lbl_mouse)
-    host.lbl_hint = QLabel("有 ROI 则持续监控；框选在「自动拉漂配置」")
-    host.lbl_hint.setObjectName("hint")
-    host.lbl_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-    ro.addWidget(host.lbl_hint)
+    cast_row.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
+    cast_l.addLayout(cast_row)
+    ro.addWidget(cast_card)
+
+    # —— 鼠标 ——
+    mouse_card, mouse_l = _make_card()
+    mouse_head = QHBoxLayout()
+    mouse_title = QLabel("鼠标")
+    mouse_title.setObjectName("statusCardTitle")
+    mouse_head.addWidget(mouse_title)
+    mouse_head.addStretch(1)
+    mouse_l.addLayout(mouse_head)
+    metrics = QHBoxLayout()
+    metrics.setSpacing(6)
+    intent_cell, host.lbl_mouse_intent = _metric_cell("意图")
+    prog_cell, host.lbl_mouse_prog = _metric_cell("程序")
+    sys_cell, host.lbl_mouse_sys = _metric_cell("系统")
+    metrics.addWidget(intent_cell)
+    metrics.addWidget(prog_cell)
+    metrics.addWidget(sys_cell)
+    mouse_l.addLayout(metrics)
+    # 兼容旧字段：单行汇总隐藏，诊断仅异常时显示
+    host.lbl_mouse = QLabel("")
+    host.lbl_mouse.hide()
+    host.lbl_mouse_diag = QLabel("")
+    host.lbl_mouse_diag.setStyleSheet(f"color:{DANGER}; font-size:11px;")
+    host.lbl_mouse_diag.setWordWrap(True)
+    host.lbl_mouse_diag.hide()
+    mouse_l.addWidget(host.lbl_mouse_diag)
     host.lbl_intent = QLabel("")
     host.lbl_intent.hide()
-    host.lbl_mouse_diag = QLabel("")
-    host.lbl_mouse_diag.setStyleSheet(f"color:{TEXT_MUTED};")
-    host.lbl_mouse_diag.setWordWrap(True)
-    ro.addWidget(host.lbl_mouse_diag)
+    ro.addWidget(mouse_card)
+
+    host.lbl_hint = QLabel("")
+    host.lbl_hint.setObjectName("hint")
+    host.lbl_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
+    host.lbl_hint.setWordWrap(True)
+    ro.addWidget(host.lbl_hint)
+
     main_l.addWidget(readout)
     main_l.addStretch(1)
     main_split.addWidget(main_top)
-    
+
     log_wrap = QWidget()
     log_l = QVBoxLayout(log_wrap)
     log_l.setContentsMargins(0, 8, 0, 0)
@@ -202,12 +283,12 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.log.setObjectName("mainLog")
     host.log.setReadOnly(True)
     host.log.setMinimumHeight(120)
-    host.log.setPlaceholderText("最新在上 · 游戏开始/结束 · A/B · 声音触发…")
+    host.log.setPlaceholderText("最新在上…")
     log_l.addWidget(host.log, 1)
     main_split.addWidget(log_wrap)
     main_split.setStretchFactor(0, 1)
     main_split.setStretchFactor(1, 2)
-    main_split.setSizes([180, 320])
+    main_split.setSizes([240, 280])
     main_root.addWidget(main_split)
 
     return page_main

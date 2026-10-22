@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Callable
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -29,6 +30,7 @@ from autofish.first_click_trigger.paths import (
     template_source_label,
 )
 from autofish.first_click_trigger.trigger import FirstClickTrigger
+from tools.dual_range_axis import SingleRangeBar
 from tools.shell_log import append_log
 from tools.shell_theme import DANGER, SUCCESS, TEXT_MUTED
 from tools.template_combo import fill_template_combo, sync_combo_to_path
@@ -39,11 +41,15 @@ if TYPE_CHECKING:
 
 
 class FirstClickTriggerPanel(QWidget):
-    """声音页：设备 / 监听 / 当前模板 / 阈值。会话启停由主控 A 驱动。"""
+    """声音页：设备 / 监听 / 当前模板 / 阈值 / 开钓第一下。会话启停由主控 A 驱动。"""
 
     def __init__(
         self,
         parent=None,
+        *,
+        click_delay: tuple[float, float] = (0.3, 1.5),
+        click_hold: tuple[float, float] = (0.7, 1.5),
+        click_after: tuple[float, float] = (0.2, 0.8),
     ) -> None:
         super().__init__(parent)
         self._bus: AutofishBus | None = None
@@ -53,13 +59,14 @@ class FirstClickTriggerPanel(QWidget):
         self._library_cbs: list[Callable[[], None]] = []
         self._threshold_cbs: list[Callable[[float], None]] = []
         self._device_cbs: list[Callable[[str], None]] = []
+        self._click_timing_cbs: list[Callable[[], None]] = []
         self._preferred_device_name = ""
-        self._delay_lo_s = 0.3
-        self._delay_hi_s = 1.5
-        self._hold_lo_s = 0.7
-        self._hold_hi_s = 1.5
-        self._after_lo_s = 0.2
-        self._after_hi_s = 0.8
+        self._delay_lo_s = float(click_delay[0])
+        self._delay_hi_s = float(click_delay[1])
+        self._hold_lo_s = float(click_hold[0])
+        self._hold_hi_s = float(click_hold[1])
+        self._after_lo_s = float(click_after[0])
+        self._after_hi_s = float(click_after[1])
 
         self._build_ui()
         self._refresh_devices()
@@ -85,6 +92,9 @@ class FirstClickTriggerPanel(QWidget):
 
     def on_device_changed(self, cb: Callable[[str], None]) -> None:
         self._device_cbs.append(cb)
+
+    def on_click_timing_changed(self, cb: Callable[[], None]) -> None:
+        self._click_timing_cbs.append(cb)
 
     def set_preferred_device_name(self, name: str) -> None:
         self._preferred_device_name = str(name or "").strip()
@@ -114,6 +124,17 @@ class FirstClickTriggerPanel(QWidget):
                 self._after_lo_s,
                 self._after_hi_s,
             )
+
+    def _on_click_bars_changed(self, *_args) -> None:
+        d_lo, d_hi = self.bar_delay.range()
+        h_lo, h_hi = self.bar_hold.range()
+        a_lo, a_hi = self.bar_after.range()
+        self.set_click_timing(d_lo, d_hi, h_lo, h_hi, a_lo, a_hi)
+        for cb in self._click_timing_cbs:
+            try:
+                cb()
+            except Exception:  # noqa: BLE001
+                pass
 
     def current_device_name(self) -> str:
         key, is_loopback = self._selected_device()
@@ -291,6 +312,47 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_count.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_thr.addWidget(self.lbl_count)
         layout.addLayout(row_thr)
+
+        click = QGroupBox("开钓第一下")
+        click_l = QVBoxLayout(click)
+        hint_click = QLabel(
+            "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
+        )
+        hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+        hint_click.setWordWrap(True)
+        click_l.addWidget(hint_click)
+        self.bar_delay = SingleRangeBar(
+            title="等待",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._delay_lo_s, self._delay_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_delay.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_delay)
+        self.bar_hold = SingleRangeBar(
+            title="长按",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._hold_lo_s, self._hold_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_hold.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_hold)
+        self.bar_after = SingleRangeBar(
+            title="松开后",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._after_lo_s, self._after_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_after.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_after)
+        layout.addWidget(click)
+
         hint = QLabel("下方为最近约 20s 实时波形；橙=命中。长录音/回测 →「回测」页")
         hint.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         layout.addWidget(hint)
