@@ -12,10 +12,13 @@ from tools.shell_theme import preview_canvas_qss
 
 
 def rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
+    """ndarray 像素 ↔ Qt 逻辑像素 1:1（避免 Retina DPR 把框选/叠层画偏）。"""
     rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
     h, w = rgb.shape[:2]
     qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-    return QPixmap.fromImage(qimg)
+    pm = QPixmap.fromImage(qimg)
+    pm.setDevicePixelRatio(1.0)
+    return pm
 
 
 def draw_rect(
@@ -136,7 +139,10 @@ class ImageCanvas(QLabel):
     def _layout_pixmap(self) -> None:
         if self._pixmap.isNull():
             return
-        pw, ph = self._pixmap.width(), self._pixmap.height()
+        if self._rgb is not None:
+            ph, pw = self._rgb.shape[:2]
+        else:
+            pw, ph = self._pixmap.width(), self._pixmap.height()
         cw, ch = max(1, self.width()), max(1, self.height())
         self._scale = min(cw / pw, ch / ph, 1.0)
         nw, nh = max(1, int(pw * self._scale)), max(1, int(ph * self._scale))
@@ -147,8 +153,12 @@ class ImageCanvas(QLabel):
         if self._pixmap.isNull():
             return
         p = QPainter(self)
-        nw = max(1, int(self._pixmap.width() * self._scale))
-        nh = max(1, int(self._pixmap.height() * self._scale))
+        if self._rgb is not None:
+            ph, pw = self._rgb.shape[:2]
+        else:
+            pw, ph = self._pixmap.width(), self._pixmap.height()
+        nw = max(1, int(pw * self._scale))
+        nh = max(1, int(ph * self._scale))
         target = QRect(self._offset.x(), self._offset.y(), nw, nh)
         p.drawPixmap(target, self._pixmap)
         if self._selecting and self._drag_start and self._drag_end:

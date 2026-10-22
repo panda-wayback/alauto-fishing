@@ -33,7 +33,7 @@ input:
     type: Qt 控件交互
     desc: 调整 autofish 参数；均写入下述持久化。刷新参考图会先清旧参考图、手动黄线与程序条界锁再等漂更新。恢复默认见 load_default_shell_settings
   - name: tools.shell_config.ShellSettings
-    type: "dataclass（可变）；字段与默认：… compact_mode=False, hud_x=-1, hud_y=-1, hud_opacity=0.88, … auto_cast_enabled=False, cast_count_lo=5, cast_count_hi=5, …"
+    type: "dataclass（可变）；字段与默认：… compact_mode=False, hud_x=-1, hud_y=-1, hud_opacity=0.88, … auto_cast_enabled=False, cast_count_lo=4, cast_count_hi=6, …"
     desc: 壳配置；字段即设置文件 JSON 的全部键（秒 / 百分点 / 像素）
   - name: tools.shell_config.load_shell_settings()
     type: 无参
@@ -112,7 +112,7 @@ contract:
   - 启动时先恢复 A/B/C 勾选再应用；B/C 立即应用，A 在事件循环下一拍尝试启动
   - 持久化：壳配置只写 tools.shell_config.settings_path()（data_root/shell_settings.json），键恰为 ShellSettings 全部字段；A/B/C 勾选、置顶、紧凑切换、窗口关闭立即落盘，阈值 / 设备 / 策略数轴 / 开钓第一下 / 抛杆次数区间与快捷键 / 满蓄 / 抛杆等待区间约 0.4 s 防抖后落盘
   - 当前模板选择写入 first_click_trigger 的 active.json；ROI、手动条界写入 roi_path，条界参考图写入 roi_path 同目录 bar_ref.png
-  - 规范化：sound_threshold 夹到 [0.15, 1.0]；press_interval_s 夹到 [0, 0.3]；cast_count_lo/hi 夹到 [1, 20]、颠倒时交换（读盘时若仅有旧键 cast_count 则两边同填）；cast_full_charge_s 夹到 [0.05, 5]；cast_*_hotkey 规范化为 F1～F12 或单字母，起止相同则拆开；cast_wait_* 夹到 [0, 30]、颠倒时交换；开钓第一下三组区间各自夹到 [0 或 0.05, 5.0]、颠倒时交换、跨度不足 0.05 s 时上调上限（顶到 5.0 为止）；布尔 / 整数 / 字符串字段强制转换类型
+  - 规范化：sound_threshold 夹到 [0.15, 1.0]；press_interval_s 夹到 [0, 0.3]；cast_count_lo/hi 夹到 [1, 10]、颠倒时交换（读盘时若仅有旧键 cast_count 则两边同填）；cast_full_charge_s 夹到 [0.05, 5]；cast_*_hotkey 规范化为 F1～F12 或单字母，起止相同则拆开；cast_wait_* 夹到 [0, 30]、颠倒时交换；开钓第一下三组区间各自夹到 [0 或 0.05, 5.0]、颠倒时交换、跨度不足 0.05 s 时上调上限（顶到 5.0 为止）；布尔 / 整数 / 字符串字段强制转换类型
   - 设置文件不存在、不是合法 JSON 或顶层不是对象时视为缺失，load_shell_settings 不抛异常
   - 门禁：包已到期（common.expire）时弹「已过期」提示、尝试删除安装目录并返回 1；未激活或授权已到期时弹激活对话框，取消或激活失败返回 1；两种情况都不创建主窗
   - 激活对话框接受有效密钥时经 common.license 写入授权，随即进入主窗

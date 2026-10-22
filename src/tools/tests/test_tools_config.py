@@ -46,7 +46,7 @@ def test_defaults_without_files(dirs):
     assert (s.click_delay_lo_s, s.click_delay_hi_s) == (0.3, 1.5)
     assert (s.click_hold_lo_s, s.click_hold_hi_s) == (0.7, 1.5)
     assert (s.click_after_lo_s, s.click_after_hi_s) == (0.2, 0.8)
-    assert (s.cast_count_lo, s.cast_count_hi) == (5, 5)
+    assert (s.cast_count_lo, s.cast_count_hi) == (4, 6)
     assert s.cast_start_hotkey == "F8"
     assert s.cast_stop_hotkey == "F9"
     assert (s.cast_wait_lo_s, s.cast_wait_hi_s) == (3.0, 3.0)
@@ -144,7 +144,7 @@ def test_out_of_range_values_are_normalized(dirs):
     assert s.click_after_lo_s == 5.0 and s.click_after_hi_s == 5.0
     assert s.compact_mode is True
     assert s.hud_x == 12
-    assert (s.cast_count_lo, s.cast_count_hi) == (1, 20)
+    assert (s.cast_count_lo, s.cast_count_hi) == (1, 10)
     assert s.cast_start_hotkey == "F8"
     assert (s.cast_wait_lo_s, s.cast_wait_hi_s) == (0.0, 30.0)
     assert s.cast_full_charge_s == pytest.approx(0.05)

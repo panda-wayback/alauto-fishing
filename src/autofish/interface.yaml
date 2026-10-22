@@ -43,7 +43,7 @@ input:
     type: 无参
     desc: 启停自动抛杆工人线程；start 后默认空闲；stop 先 cancel_batch 再停线程并松开鼠标
   - name: AutofishPipeline.start_cast_batch(count) / AutofishPipeline.cancel_cast_batch()
-    type: "count: int（夹到 1～20）/ 无参"
+    type: "count: int（夹到 1～10）/ 无参"
     desc: 开始 / 立刻结束有限次数抛杆任务（转交 AutoCastWorker.start_batch / cancel_batch）
   - name: AutofishPipeline.set_cast_wait_range(lo_s, hi_s)
     type: "lo_s, hi_s: float 秒"

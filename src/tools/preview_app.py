@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from autofish.act.mouse import os_left_down
-from autofish.detect.api import apply_manual_bar, get_detector
+from autofish.detect.api import apply_manual_bar, detect as detect_rgb, get_detector
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -1241,12 +1241,40 @@ class PreviewApp(QMainWindow):
                     rgb = cv2.resize(rgb, (fw, fh), interpolation=cv2.INTER_LINEAR)
             self.bar_canvas.set_rgb(rgb)
             self._bar_ref_saved = True
-            det = get_detector()
-            self.bar_canvas.set_program_bar(getattr(det, "program_bar", None))
+            # 对冻结参考图像素重识别 → 蓝框与图对齐，并恢复程序锁（重启后才能继续跟 pos）
+            # 禁止叠实时 program_bar（会与旧图像素错位）
+            box = None
+            try:
+                hit = detect_rgb(rgb)
+                box = self._bar_box_from_hit(hit)
+                if box is None:
+                    box = getattr(get_detector(), "program_bar", None)
+            except Exception as det_exc:  # noqa: BLE001
+                self._cal_log(f"参考图条界识别失败：{det_exc}")
+            self.bar_canvas.set_program_bar(box)
         except Exception as exc:  # noqa: BLE001
             self._cal_log(f"参考图载入失败：{exc}")
 
-    def _save_bar_ref(self, rgb: np.ndarray) -> None:
+    @staticmethod
+    def _bar_box_from_hit(hit: object | None) -> tuple[float, float, float, float] | None:
+        if hit is None:
+            return None
+        bw = float(getattr(hit, "bar_width", 0.0) or 0.0)
+        if bw <= 0:
+            return None
+        return (
+            float(hit.bar_left),
+            float(hit.bar_top),
+            bw,
+            float(hit.bar_height),
+        )
+
+    def _save_bar_ref(
+        self,
+        rgb: np.ndarray,
+        *,
+        bar_box: tuple[float, float, float, float] | None = None,
+    ) -> None:
         import cv2
 
         ref = bar_ref_path(self.roi_path)
@@ -1254,15 +1282,18 @@ class PreviewApp(QMainWindow):
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])
         cv2.imwrite(str(ref), bgr)
         self.bar_canvas.set_rgb(rgb)
+        # 蓝框必须与参考图像素同帧，避免实时锁叠到旧图上错位
+        self.bar_canvas.set_program_bar(bar_box)
         self._bar_ref_saved = True
 
-    def _clear_bar_marks_for_ref_refresh(self) -> None:
-        """刷新参考图兜底：旧手动黄线 / 程序锁一并清掉，避免错标记继续控拉线。"""
+    def _clear_bar_marks_for_ref_refresh(self, *, clear_program_lock: bool = True) -> None:
+        """刷新参考图兜底：清手动黄线；可选清程序锁（提交新图时保留本帧锁，否则 pos 会丢）。"""
         clear_bar_mark(self.roi_path)
         apply_manual_bar(None)
-        clear = getattr(get_detector(), "clear_bar_lock", None)
-        if callable(clear):
-            clear()
+        if clear_program_lock:
+            clear = getattr(get_detector(), "clear_bar_lock", None)
+            if callable(clear):
+                clear()
         self.bar_canvas.set_manual_bar(None)
         self.bar_canvas.set_program_bar(None)
 
@@ -1275,7 +1306,7 @@ class PreviewApp(QMainWindow):
             self.lbl_hint.setText("已取消等待参考图")
             return
         clear_bar_ref(self.roi_path)
-        self._clear_bar_marks_for_ref_refresh()
+        self._clear_bar_marks_for_ref_refresh(clear_program_lock=True)
         self._bar_ref_saved = False
         self.bar_canvas.set_rgb(None)
         self._bar_ref_wait_bobber = True
@@ -1288,12 +1319,12 @@ class PreviewApp(QMainWindow):
             return
         if event.hit is None or event.frame is None:
             return
-        # 落新图前再清一次标记，防止等待期间又被旧逻辑写回
-        self._clear_bar_marks_for_ref_refresh()
-        self._save_bar_ref(event.frame)
-        det = get_detector()
-        if hasattr(det, "program_bar"):
-            self.bar_canvas.set_program_bar(det.program_bar)
+        # 先取同帧条界；提交时只清手动黄线，保留程序锁以免刚锁上又被抹掉
+        box = self._bar_box_from_hit(event.hit)
+        if box is None:
+            box = getattr(get_detector(), "program_bar", None)
+        self._clear_bar_marks_for_ref_refresh(clear_program_lock=False)
+        self._save_bar_ref(event.frame, bar_box=box)
         self._bar_ref_wait_bobber = False
         self.btn_bar_refresh.setText("刷新参考图")
         self._cal_log("已刷新条界参考图（等漂命中）· 请重新拖黄线标左右界")
@@ -1429,26 +1460,29 @@ class PreviewApp(QMainWindow):
 
     def _update_bar_panel(self, event: PosEvent) -> None:
         det = get_detector()
-        prog = getattr(det, "program_bar", None)
-        if prog is not None:
-            self.bar_canvas.set_program_bar(prog)
-        elif (
-            event.hit is not None
-            and event.hit.bar_width > 0
-            and getattr(det, "manual_bar", None) is None
-        ):
-            h = event.hit
-            self.bar_canvas.set_program_bar(
-                (h.bar_left, h.bar_top, h.bar_width, h.bar_height)
-            )
-        # 有漂即出参考图（含有漂无条），便于手动标左右界
+        # 有漂即出参考图（含有漂无条），便于手动标左右界；蓝框与该帧同写
         if event.hit is not None and event.frame is not None and not self._bar_ref_saved:
-            self._save_bar_ref(event.frame)
+            self._save_bar_ref(
+                event.frame, bar_box=self._bar_box_from_hit(event.hit)
+            )
             if event.hit.bar_width <= 0:
                 self._cal_log("已出条界参考图（有漂·无条，可手动标左右）")
             else:
                 self._cal_log("已自动保存条界参考图")
         self._maybe_commit_bar_ref_wait(event)
+        # 参考图已存但尚无蓝框：用「本帧有条」的画面整体替换，保证蓝框与像素同帧
+        if (
+            self._bar_ref_saved
+            and self.bar_canvas.program_bar is None
+            and event.frame is not None
+            and event.hit is not None
+            and event.hit.bar_width > 0
+        ):
+            self._save_bar_ref(
+                event.frame, bar_box=self._bar_box_from_hit(event.hit)
+            )
+            self._cal_log("参考图已补蓝框（同帧条界）")
+        # 已有冻结参考图时，不用实时 program_bar 覆盖蓝框（会与旧图像素错位）
         man = getattr(det, "manual_bar", None)
         if man is not None:
             self.bar_canvas.set_manual_bar(man)

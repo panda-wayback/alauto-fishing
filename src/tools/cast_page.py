@@ -55,12 +55,12 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     batch_l = QVBoxLayout(batch)
     batch_l.setSpacing(8)
     batch_l.addWidget(
-        QLabel("抛几次 · 1～20 · 每次开始时在区间内随机出本轮总次数")
+        QLabel("抛几次 · 1～10 · 每次开始时在区间内随机出本轮总次数")
     )
     s = host._settings
     host.bar_cast_count = SingleRangeBar(
         vmin=1.0,
-        vmax=20.0,
+        vmax=10.0,
         value=(float(s.cast_count_lo), float(s.cast_count_hi)),
         unit="次",
         title="次数",

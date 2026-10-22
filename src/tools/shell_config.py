@@ -35,7 +35,7 @@ def _clamp_int_pair(
     hi: int | float,
     *,
     min_v: int = 1,
-    max_v: int = 20,
+    max_v: int = 10,
 ) -> tuple[int, int]:
     a = int(max(min_v, min(max_v, int(lo))))
     b = int(max(min_v, min(max_v, int(hi))))
@@ -74,8 +74,8 @@ class ShellSettings:
     auto_bobber_enabled: bool = True
     auto_cast_enabled: bool = False
     # 自动抛杆：次数区间（开局抽样）、快捷键、收竿后随机等待区间（秒）
-    cast_count_lo: int = 5
-    cast_count_hi: int = 5
+    cast_count_lo: int = 4
+    cast_count_hi: int = 6
     cast_start_hotkey: str = "F8"
     cast_stop_hotkey: str = "F9"
     cast_wait_lo_s: float = 3.0

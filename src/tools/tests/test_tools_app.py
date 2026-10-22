@@ -71,7 +71,7 @@ class FakeAutoCast:
         if self.active:
             return False
         self.active = True
-        n = max(1, min(20, int(count)))
+        n = max(1, min(10, int(count)))
         self.remaining = n
         self.batch_total = n
         return True
@@ -351,6 +351,7 @@ def test_existing_roi_loaded_and_monitored(env):
 def test_cast_hotkey_batch_and_wait_persist(env):
     win = _make(env)
     pipe = _pipe()
+    win.bar_cast_count.setRange(5.0, 5.0)  # 固定抽样，便于断言 remaining
     assert not pipe.auto_cast.active
     assert not win.chk_c.isChecked()
     win._on_cast_hotkey_start()
@@ -381,6 +382,7 @@ def test_cast_hotkey_batch_and_wait_persist(env):
 def test_toggle_c_gates_cast_and_right_click(env):
     win = _make(env)
     pipe = _pipe()
+    win.bar_cast_count.setRange(5.0, 5.0)  # 固定抽样，便于断言剩余次数文案
     assert not win.chk_c.isChecked()
     assert not pipe.auto_cast_on
     win.chk_c.setChecked(True)
@@ -472,6 +474,7 @@ def test_restore_b_off_from_settings(env):
 def test_compact_hud_shows_cast_remain(env):
     win = _make(env)
     pipe = _pipe()
+    win.bar_cast_count.setRange(5.0, 5.0)
     win.chk_c.setChecked(True)
     win._cursor_arm.force_armed(True)
     win._on_cast_hotkey_start()

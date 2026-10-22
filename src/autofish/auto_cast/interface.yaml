@@ -11,7 +11,7 @@ input:
     type: "无参 / timeout: float 秒 / 无参"
     desc: start 订阅鱼漂状态并起后台线程；stop 退订、取消任务、打断等待并确保松开本程序按下的鼠标
   - name: AutoCastWorker.start_batch(count)
-    type: "count: int（夹到 1～20）"
+    type: "count: int（夹到 1～10）"
     desc: 开始一轮有限次数抛杆；任务进行中再调则忽略并返回 False；成功开始返回 True；首杆先 start_settle_s（默认 1s）再 AIM
   - name: AutoCastWorker.cancel_batch()
     type: 无参
