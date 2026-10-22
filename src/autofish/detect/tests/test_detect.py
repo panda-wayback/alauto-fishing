@@ -122,6 +122,26 @@ def test_program_lock_set_after_full_hit_and_cleared():
     assert det.program_bar is None and det.bar_locked is False
 
 
+def test_seed_program_bar_locks_without_follow():
+    det = BobberAnchorDetector()
+    hit = assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))
+    box = (
+        float(hit.bar_left),
+        float(hit.bar_top),
+        float(hit.bar_width),
+        float(hit.bar_height),
+    )
+    det.clear_bar_lock()
+    det.seed_program_bar(box)
+    assert det.program_bar == pytest.approx(box)
+    assert det.bar_locked is True
+    assert det._follow_xy is None
+    hit2 = assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))
+    assert hit2.pos == pytest.approx(hit.pos, abs=3.0)
+    det.seed_program_bar(None)
+    assert det.program_bar is None and det.bar_locked is False
+
+
 def test_program_lock_survives_miss():
     det = BobberAnchorDetector()
     assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))

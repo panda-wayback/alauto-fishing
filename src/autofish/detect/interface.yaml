@@ -9,6 +9,9 @@ input:
   - name: autofish.detect.apply_manual_bar(box)
     type: "box: tuple[float, float, float, float] (left, top, width, height) 帧像素坐标 | None"
     desc: 给当前识别器注入手动条界；None 清除手动条界
+  - name: autofish.detect.apply_program_bar(box)
+    type: "box: tuple[float, float, float, float] (left, top, width, height) 帧像素坐标 | None"
+    desc: 给当前识别器注入程序条界（不带跟漂点，跟点由后续帧重建）；None 等同 clear_bar_lock
   - name: autofish.detect.get_detector()
     type: 无参
     desc: 取进程内当前识别器（首次调用时创建）
@@ -25,6 +28,9 @@ input:
   - name: BobberAnchorDetector.clear_bar_lock()
     type: 无参
     desc: 丢弃程序自动锁定的条界、跟漂点与漂尺度锁档（ROI 变更 / 重框时调用）；不清手动条界
+  - name: BobberAnchorDetector.seed_program_bar(box)
+    type: "box: (left, top, width, height) | None"
+    desc: 注入程序条界并清除跟漂点 / 漂尺度锁档；用条高估漂尺度提示；None 等同 clear_bar_lock
   # ---- 独立找漂（autofish.detect.FindBobber）----
   - name: autofish.detect.FindBobber(bobber_path=None, *, min_score=0.48, accept_min_score=0.55, accept_min_rank=0.55, accept_min_cream=0.05, accept_min_band=0.20, accept_min_plume=0.04, accept_min_margin=0.04, accept_solo_score=0.68)
     type: "bobber_path: str | pathlib.Path | None（None 用 assets/bobber_anchor/bobber.png）; 其余为接受门槛 float，默认值即基线配置"
@@ -97,7 +103,8 @@ contract:
   - 入图超出 800×800 时等比缩小后识别，输出坐标、条框、pixel_count 面积、BobberLoc 均映回原图像素；已在限内不缩放、不放大
   - 条界来源优先级：手动条界 > 程序锁定 > 未锁定时由漂两侧端帽自动定界（成功即写入程序锁）
   - 有手动条界或程序锁时只在条带邻域（底贴条底、仅向上留羽冠余量）内找漂，不再自动定界；漂不在条 X / Y 容差内时本帧为 None 或仅漂命中
-  - 程序锁与手动条界在 miss 时不自动清除；程序锁只由 clear_bar_lock 清除，手动条界只由 apply_manual_bar(None) / set_manual_bar(None) 清除
+  - 程序锁与手动条界在 miss 时不自动清除；程序锁只由 clear_bar_lock / seed_program_bar(None) / apply_program_bar(None) 清除，手动条界只由 apply_manual_bar(None) / set_manual_bar(None) 清除
+  - seed_program_bar / apply_program_bar 写入程序锁但不写入跟漂点（跟点由后续命中重建），避免把冻结参考图上的漂位带进直播
   - 条已锁定但丢漂后，恢复搜索隔帧进行（丢漂期间约一半帧不搜索直接 None）
   - 未锁条且自动定界失败时返回仅漂命中（不假装有条），且不写入程序锁
   - get_detector() / detect / apply_manual_bar 共享同一进程内有状态单例，非线程安全；独立实例请用 BobberAnchorDetector(...)

@@ -61,6 +61,8 @@ class FirstClickTriggerPanel(QWidget):
         self._device_cbs: list[Callable[[str], None]] = []
         self._click_timing_cbs: list[Callable[[], None]] = []
         self._preferred_device_name = ""
+        # 主控 A 的会话偏好；停监听会关会话态，但不丢此偏好，再开监听时恢复
+        self._session_wanted = False
         self._delay_lo_s = float(click_delay[0])
         self._delay_hi_s = float(click_delay[1])
         self._hold_lo_s = float(click_hold[0])
@@ -214,6 +216,7 @@ class FirstClickTriggerPanel(QWidget):
             self._apply_selected_template(path, log=False)
 
     def set_session_enabled(self, enabled: bool) -> None:
+        self._session_wanted = bool(enabled)
         if enabled:
             path = resolve_template_path()
             device, loopback = self._selected_device()
@@ -539,12 +542,12 @@ class FirstClickTriggerPanel(QWidget):
         loopback: bool | None = None,
     ) -> None:
         wave = None
-        session_on = False
+        # 用 A 偏好，不用旧 trigger 的 session_state：停监听后必为 disabled，
+        # 若据此判断则再开监听永远不会恢复会话 → 相似再高也不触发。
+        want_session = bool(self._session_wanted)
+        had_prev = self._trigger is not None
         if self._trigger is not None:
             wave = self._trigger.template_wave
-            from autofish.events.topics import CastSessionState
-
-            session_on = self._trigger.session_state != CastSessionState.DISABLED
             self._trigger.stop()
         threshold = self.sld_threshold.value() / 100.0
         self._trigger = FirstClickTrigger(
@@ -569,8 +572,10 @@ class FirstClickTriggerPanel(QWidget):
                 self._trigger.load_template(path)
                 self._set_template_label(path)
         self._trigger.start()
-        if session_on:
+        if want_session:
             self._trigger.set_session_enabled(True)
+            if had_prev:
+                self._log("已恢复自动起勾会话 · WAIT")
         self.btn_listen.setText("停止监听")
         self.cmb_device.setEnabled(False)
         self.live_wave.clear()
@@ -584,6 +589,7 @@ class FirstClickTriggerPanel(QWidget):
     def _stop_listen(self) -> None:
         if self._trigger is not None:
             try:
+                # 只关当前会话态；保留 _session_wanted（主控 A 仍勾选时，再开监听会恢复）
                 self._trigger.set_session_enabled(False)
             except Exception as exc:  # noqa: BLE001
                 self._log(f"关闭会话失败：{exc}")

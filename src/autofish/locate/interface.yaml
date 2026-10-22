@@ -53,9 +53,12 @@ input:
   - name: autofish.locate.bar_ref_path(roi_path=None)
     type: "roi_path: Path | None"
     desc: 取条界参考图路径
+  - name: autofish.locate.bar_ref_meta_path(roi_path=None)
+    type: "roi_path: Path | None"
+    desc: 取条界参考图程序蓝框元数据路径（同目录 bar_ref_meta.json）
   - name: autofish.locate.clear_bar_ref(roi_path=None)
     type: "roi_path: Path | None"
-    desc: 删除条界参考图
+    desc: 删除条界参考图及其 bar_ref_meta.json
 output:
   - name: Roi.as_mss()
     type: "dict {left, top, width, height: int}"
@@ -87,6 +90,9 @@ output:
   - name: autofish.locate.bar_ref_path(roi_path=None)
     type: pathlib.Path
     desc: roi_path 为 None 或等于 DEFAULT_ROI_PATH 时为 data_root()/bar_ref.png；否则为 roi_path 同目录下的 bar_ref.png
+  - name: autofish.locate.bar_ref_meta_path(roi_path=None)
+    type: pathlib.Path
+    desc: 与 bar_ref_path 同目录的 bar_ref_meta.json
 contract:
   - 本 Module 不截屏（primary_screen_size 只读显示器尺寸）、不识图、不点鼠标、不发布总线事件
   - Roi / BarMark 为不可变值对象（frozen dataclass），可作字典键与跨线程共享
@@ -100,7 +106,7 @@ contract:
   - load_bar_mark：文件不存在、无条界字段或条界非法（宽 < 8）时返回 None，不抛
   - BarMark.frame_width 仅在 > 0 时写入存盘；读回缺省为 0
   - clear_bar_mark 只删条界字段，ROI 与来源保持不变；文件不存在时静默
-  - clear_bar_ref 只在参考图存在时删除；不存在时静默
+  - clear_bar_ref 删除存在的参考图与 bar_ref_meta.json；缺失时静默
   - 所有存盘函数 path=None 时使用 DEFAULT_ROI_PATH（导入时按 data_root() 定值）
 depends:
   - src/common

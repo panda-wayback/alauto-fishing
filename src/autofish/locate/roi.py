@@ -201,7 +201,15 @@ def bar_ref_path(roi_path: Path | None = None) -> Path:
     return p.with_name("bar_ref.png")
 
 
+def bar_ref_meta_path(roi_path: Path | None = None) -> Path:
+    """条界参考图同目录的程序蓝框元数据（与像素同帧的 program_bar）。"""
+    return bar_ref_path(roi_path).with_name("bar_ref_meta.json")
+
+
 def clear_bar_ref(roi_path: Path | None = None) -> None:
     ref = bar_ref_path(roi_path)
     if ref.is_file():
         ref.unlink()
+    meta = bar_ref_meta_path(roi_path)
+    if meta.is_file():
+        meta.unlink()

@@ -4,6 +4,7 @@ import runpy
 import warnings
 from dataclasses import asdict
 from datetime import date, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -576,7 +577,7 @@ def _no(monkeypatch):
 
 
 def test_refresh_bar_ref_clears_marks_and_old_ref(env, monkeypatch):
-    """刷新参考图兜底：旧图 + 手动黄线 + 程序锁一并清掉，再进入等漂。"""
+    """刷新参考图：旧图 + 手动黄线清掉，保留程序锁，再进入等有条帧。"""
     save_roi(
         Roi(11, 22, 200, 100),
         env.roi,
@@ -611,7 +612,8 @@ def test_refresh_bar_ref_clears_marks_and_old_ref(env, monkeypatch):
     assert win._bar_ref_wait_bobber is True
     assert win.btn_bar_refresh.text() == "等待鱼漂…"
     assert cleared["manual"] >= 1
-    assert cleared["lock"] >= 1
+    assert cleared["lock"] == 0  # 刷新不再清程序锁，避免全图定界失败后永远无 pos
+    assert det.program_bar == (1.0, 2.0, 3.0, 4.0)
     assert det.manual_bar is None
     assert win.bar_canvas.manual_bar is None
     _close(win, env)
@@ -758,3 +760,88 @@ def test_python_m_exits_1_when_expired(env):
             runpy.run_module("tools.preview_app", run_name="__main__")
     assert exc.value.code == 1
     assert FakePipeline.instances == []
+
+
+def test_restart_listen_restores_session_when_a_wanted(env, monkeypatch):
+    """停监听后 session=disabled；若 A 偏好仍开，再开监听须恢复 WAIT（否则相似再高不触发）。"""
+    from autofish.events.topics import CastSessionState
+    from tools.sound_panel import FirstClickTriggerPanel
+
+    class _FakeTrig:
+        def __init__(self, *a, **k):
+            self._running = False
+            self._session = CastSessionState.DISABLED
+            self._session_enabled = False
+            self.template_wave = None
+            self.has_template = True
+
+        def is_running(self) -> bool:
+            return self._running
+
+        def start(self) -> None:
+            self._running = True
+
+        def stop(self) -> None:
+            self._running = False
+
+        def set_session_enabled(self, enabled: bool) -> None:
+            self._session_enabled = bool(enabled)
+            self._session = (
+                CastSessionState.WAIT if enabled else CastSessionState.DISABLED
+            )
+
+        @property
+        def session_state(self) -> CastSessionState:
+            return self._session
+
+        def set_click_timing(self, *a, **k) -> None:
+            pass
+
+        def set_template(self, wave) -> None:
+            self.template_wave = wave
+
+        def load_template(self, path) -> None:
+            pass
+
+        def drain_logs(self, channel=None):
+            return []
+
+        @property
+        def level_db(self) -> float:
+            return -60.0
+
+        @property
+        def last_score(self) -> float:
+            return 0.0
+
+        @property
+        def last_trigger_at(self) -> float:
+            return 0.0
+
+        @property
+        def trigger_count(self) -> int:
+            return 0
+
+    import tools.sound_panel as sound_panel
+
+    monkeypatch.setattr(sound_panel, "FirstClickTrigger", _FakeTrig)
+
+    panel = FirstClickTriggerPanel()
+    monkeypatch.setattr(panel, "_selected_device", lambda: (0, False))
+    monkeypatch.setattr(
+        sound_panel, "resolve_template_path", lambda: Path("/tmp/fake.npy")
+    )
+
+    panel.set_session_enabled(True)
+    assert panel._session_wanted is True
+    assert panel.trigger is not None
+    assert panel.trigger.session_state == CastSessionState.WAIT
+
+    panel._stop_listen()
+    assert panel._session_wanted is True  # A 偏好保留
+    assert panel.trigger.session_state == CastSessionState.DISABLED
+
+    panel._start_listen(0, loopback=False)
+    assert panel.trigger.session_state == CastSessionState.WAIT
+    assert panel.trigger.is_running()
+    panel.shutdown()

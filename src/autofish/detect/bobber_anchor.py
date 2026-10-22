@@ -165,6 +165,28 @@ class BobberAnchorDetector:
         self._recover_tick = 0
         self._finder.clear_locked_scale()
 
+    def seed_program_bar(
+        self, box: tuple[float, float, float, float] | None
+    ) -> None:
+        """注入程序条界，不带跟漂点（由后续直播帧重建）。
+
+        用于载入/刷新参考图后恢复条内搜索，避免全图色种定界失败时永远锁不上；
+        也避免把参考图上的跟点写进直播导致条内跟丢。
+        """
+        if box is None:
+            self.clear_bar_lock()
+            return
+        left, top, bw, bh = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        if bw < 8.0 or bh < 0.0:
+            return
+        bar = (left, top, bw, bh)
+        self._locked_bar = bar
+        self._program_bar = bar
+        self._follow_xy = None
+        self._follow_scale = self._scale_hint_from_bar(bar)
+        self._recover_tick = 0
+        self._finder.clear_locked_scale()
+
     def set_manual_bar(
         self, box: tuple[float, float, float, float] | None
     ) -> None:

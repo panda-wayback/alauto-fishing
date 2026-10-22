@@ -178,8 +178,13 @@ def test_bar_ref_path_and_clear(tmp_path):
     clear_bar_ref(p)  # 缺失静默
     ref.parent.mkdir(parents=True)
     ref.write_bytes(b"png")
+    from autofish.locate.roi import bar_ref_meta_path
+
+    meta = bar_ref_meta_path(p)
+    meta.write_text('{"program_bar":[1,2,3,4]}\n', encoding="utf-8")
     clear_bar_ref(p)
     assert not ref.exists()
+    assert not meta.exists()
 
 
 def test_default_path_used_when_path_is_none(tmp_path, monkeypatch):
