@@ -12,14 +12,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QKeySequenceEdit,
     QLabel,
-    QPlainTextEdit,
     QScrollArea,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
 from tools.dual_range_axis import SingleRangeBar
+from tools.shell_log import PageLogPopup
 from tools.shell_theme import TEXT_MUTED
 
 if TYPE_CHECKING:
@@ -28,11 +27,28 @@ if TYPE_CHECKING:
 
 def build_cast_page(host: "PreviewApp") -> QWidget:
     page = QWidget()
-    root = QVBoxLayout(page)
-    root.setContentsMargins(0, 0, 0, 0)
-    root.setSpacing(0)
-    split = QSplitter(Qt.Orientation.Vertical)
-    split.setChildrenCollapsible(False)
+    page_l = QVBoxLayout(page)
+    page_l.setContentsMargins(0, 0, 0, 0)
+    page_l.setSpacing(6)
+
+    host._cast_log_popup = PageLogPopup(
+        host,
+        "自动抛竿 · 日志",
+        object_name="mainLog",
+        placeholder="最新在上 · 第几次 · 按下秒数 · 拉漂后等待 · 快捷键…",
+    )
+    host.cast_log = host._cast_log_popup.editor
+    head = QHBoxLayout()
+    tip = QLabel(
+        "主控勾选「自动抛竿」后：光标旁认出水面漂再右键开始；任务中任意时刻右键立刻结束；"
+        "F8 / F9 备用。蓄力：目标比例 × 满蓄秒数，再加约 ±0.1 秒抖动后松开。"
+        "下一杆须等拉漂结束后再等待（默认 3 秒）。标定请用 make cast-calib。"
+    )
+    tip.setWordWrap(True)
+    tip.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+    head.addWidget(tip, 1)
+    head.addWidget(host._cast_log_popup.make_button(), 0)
+    page_l.addLayout(head)
 
     scroll = QScrollArea()
     scroll.setWidgetResizable(True)
@@ -41,15 +57,6 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     lay = QVBoxLayout(inner)
     lay.setContentsMargins(0, 0, 4, 0)
     lay.setSpacing(8)
-
-    tip = QLabel(
-        "主控勾选「自动抛竿」后：光标旁认出水面漂再右键开始；任务中任意时刻右键立刻结束；"
-        "F8 / F9 备用。蓄力：目标比例 × 满蓄秒数，再加约 ±0.1 秒抖动后松开。"
-        "下一杆须等拉漂结束后再等待（默认 3 秒）。标定请用 make cast-calib。"
-    )
-    tip.setWordWrap(True)
-    tip.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-    lay.addWidget(tip)
 
     batch = QGroupBox("本轮抛杆")
     batch_l = QVBoxLayout(batch)
@@ -125,26 +132,5 @@ def build_cast_page(host: "PreviewApp") -> QWidget:
     lay.addStretch(1)
 
     scroll.setWidget(inner)
-    split.addWidget(scroll)
-
-    log_wrap = QWidget()
-    log_l = QVBoxLayout(log_wrap)
-    log_l.setContentsMargins(0, 8, 0, 0)
-    log_l.setSpacing(4)
-    log_title = QLabel("自动抛竿日志")
-    log_title.setObjectName("sectionTitle")
-    log_l.addWidget(log_title)
-    host.cast_log = QPlainTextEdit()
-    host.cast_log.setObjectName("mainLog")
-    host.cast_log.setReadOnly(True)
-    host.cast_log.setMinimumHeight(100)
-    host.cast_log.setPlaceholderText(
-        "最新在上 · 第几次 · 按下秒数 · 拉漂后等待 · 快捷键…"
-    )
-    log_l.addWidget(host.cast_log, 1)
-    split.addWidget(log_wrap)
-    split.setStretchFactor(0, 3)
-    split.setStretchFactor(1, 1)
-    split.setSizes([420, 160])
-    root.addWidget(split)
+    page_l.addWidget(scroll, 1)
     return page

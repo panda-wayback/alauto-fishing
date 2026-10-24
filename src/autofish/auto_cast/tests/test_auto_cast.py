@@ -9,12 +9,7 @@ import pytest
 
 from autofish.cast_calibration.circle import CastCircle
 from autofish.events.bus import AutofishBus
-from autofish.events.topics import (
-    CastPhase,
-    FishingState,
-    FishingStateEvent,
-    Topic,
-)
+from autofish.events.topics import CastPhase, Topic
 from autofish.auto_cast import AutoCastWorker
 
 
@@ -22,6 +17,10 @@ class FakeMouse:
     def __init__(self):
         self.calls: list[bool] = []
         self.down = False
+
+    @property
+    def pressed(self) -> bool:
+        return self.down
 
     def set_holding(self, holding: bool) -> None:
         holding = bool(holding)
@@ -84,10 +83,6 @@ def wait_event(kit, phase, detail=None, timeout: float = 3.0):
                 return e
         time.sleep(0.005)
     return None
-
-
-def not_phase(worker, phase) -> bool:
-    return worker.phase != phase
 
 
 @pytest.fixture
@@ -198,6 +193,34 @@ def test_cancel_during_charge_releases(kit):
         w.stop()
 
 
+def test_system_right_click_cancels_batch(kit):
+    right = {"down": False}
+    w = AutoCastWorker(
+        kit.bus,
+        wait_lo_s=0.01,
+        wait_hi_s=0.02,
+        full_charge_s=2.0,
+        hold_jitter_s=0.0,
+        start_settle_s=0.0,
+        mouse=kit.mouse,
+        load_circle=lambda: CIRCLE,
+        cursor_pos=lambda: (1500.0, 540.0),
+        screen_size=lambda: (1920, 1080),
+        right_down=lambda: right["down"],
+    )
+    w.start()
+    try:
+        assert w.start_batch(2)
+        w._ignore_right_until = 0.0
+        assert wait_phase(w, CastPhase.CHARGING, timeout=2.0)
+        right["down"] = True
+        assert wait_event(kit, CastPhase.DISABLED, "right_click", timeout=2.0)
+        assert not w.active and w.remaining == 0
+        assert not kit.mouse.down
+    finally:
+        w.stop()
+
+
 def test_missing_calibration_aborts(kit):
     w = make_worker(kit.bus, kit.mouse, circle=None)
     w.start()
@@ -219,22 +242,57 @@ def test_missing_cursor_aborts(kit):
         w.stop()
 
 
-def test_round_ends_only_after_fishing_then_lost(kit):
-    w = make_worker(kit.bus, kit.mouse, cursor=(960.0, 540.0), full_charge_s=0.05)
+def test_hook_blocks_next_cast_until_bobber(kit):
+    """鱼钩（非就绪）时不抛下一杆；回到鱼漂才抛，且不记 no_fish。"""
+    ready = {"on": True, "saw_done": False}
+
+    def cast_ready() -> bool:
+        if any(e.phase == CastPhase.DONE for e in kit.events):
+            ready["saw_done"] = True
+        if ready["saw_done"]:
+            return ready["on"]
+        return True
+
+    w = make_worker(
+        kit.bus,
+        kit.mouse,
+        cursor=(960.0, 540.0),
+        full_charge_s=0.05,
+        wait_lo=0.01,
+        wait_hi=0.02,
+    )
+    w.set_cast_ready(cast_ready)
+    ready["on"] = False
     w.start()
     try:
         assert w.start_batch(2)
         assert wait_event(kit, CastPhase.DONE, "reached", timeout=2.0)
         assert w.remaining == 1
+        time.sleep(0.3)
+        assert w.cast_index == 1
+        assert not any(e.phase == CastPhase.CHARGING and "#2/2" in (e.detail or "") for e in kit.events)
+        assert not any("no_fish" in (e.detail or "") for e in kit.events)
+        bobber_wait = wait_event(kit, CastPhase.WAIT, "wait_bobber", timeout=1.0)
+        assert bobber_wait is not None
+        ready["on"] = True
+        assert wait_event(kit, CastPhase.CHARGING, "#2/2", timeout=2.0)
+    finally:
+        w.stop()
 
-        kit.bus.publish_fishing_state(FishingStateEvent(FishingState.FISHING, time.time()))
-        time.sleep(0.1)
-        assert not_phase(w, CastPhase.WAIT)
 
-        kit.bus.publish_fishing_state(FishingStateEvent(FishingState.LOST, time.time()))
-        assert wait_phase(w, CastPhase.WAIT, timeout=2.0)
-        wait_ev = wait_event(kit, CastPhase.WAIT, "after_fish", timeout=1.0)
-        assert wait_ev is not None and "wait=" in wait_ev.detail
+def test_not_ready_blocks_first_cast(kit):
+    ready = {"on": False}
+    w = make_worker(
+        kit.bus, kit.mouse, cursor=(960.0, 540.0), full_charge_s=0.05
+    )
+    w.set_cast_ready(lambda: ready["on"])
+    w.start()
+    try:
+        assert w.start_batch(1)
+        time.sleep(0.15)
+        assert not any(e.phase == CastPhase.AIM for e in kit.events)
+        ready["on"] = True
+        assert wait_event(kit, CastPhase.CHARGING, timeout=2.0)
     finally:
         w.stop()
 
@@ -248,9 +306,6 @@ def test_batch_exhausts_and_finishes(kit):
     try:
         assert w.start_batch(2)
         assert wait_event(kit, CastPhase.DONE, "reached", timeout=2.0)
-        kit.bus.publish_fishing_state(FishingStateEvent(FishingState.FISHING, time.time()))
-        time.sleep(0.05)
-        kit.bus.publish_fishing_state(FishingStateEvent(FishingState.LOST, time.time()))
         assert wait_event(kit, CastPhase.DONE, "reached", timeout=2.0)
         assert wait_phase(w, CastPhase.DISABLED, timeout=2.0)
         assert not w.active and w.remaining == 0

@@ -21,33 +21,46 @@ def os_cursor_position() -> tuple[float, float] | None:
 
 def os_left_down() -> bool | None:
     """读系统左键是否按下；失败返回 None。"""
+    return _os_button_down(left=True)
+
+
+def os_right_down() -> bool | None:
+    """读系统右键是否按下；失败返回 None。"""
+    return _os_button_down(left=False)
+
+
+def _os_button_down(*, left: bool) -> bool | None:
     if sys.platform == "win32":
-        return _win_left_down()
+        return _win_button_down(left=left)
 
     try:
         from Quartz import (  # type: ignore[import-untyped]
             CGEventSourceButtonState,
             kCGEventSourceStateCombinedSessionState,
             kCGMouseButtonLeft,
+            kCGMouseButtonRight,
         )
 
+        btn = kCGMouseButtonLeft if left else kCGMouseButtonRight
         return bool(
             CGEventSourceButtonState(
                 kCGEventSourceStateCombinedSessionState,
-                kCGMouseButtonLeft,
+                btn,
             )
         )
     except Exception:
         try:
             from AppKit import NSEvent  # type: ignore[import-untyped]
 
-            return bool(NSEvent.pressedMouseButtons() & 1)
+            mask = 1 if left else 2
+            return bool(NSEvent.pressedMouseButtons() & mask)
         except Exception:
             return None
 
 
-def _win_left_down() -> bool | None:
+def _win_button_down(*, left: bool) -> bool | None:
     """Windows：GetAsyncKeyState；不依赖「辅助功能」。"""
+    vk = 0x01 if left else 0x02
     try:
         import ctypes
         from ctypes import wintypes
@@ -57,12 +70,12 @@ def _win_left_down() -> bool | None:
         fn.argtypes = (wintypes.INT,)
         fn.restype = wintypes.SHORT
         # SHORT 最高位为 1 ⇒ 当前按下（注意 restype 避免符号截断）
-        return bool(fn(0x01) & 0x8000)
+        return bool(fn(vk) & 0x8000)
     except Exception:
         try:
             import ctypes
 
-            state = int(ctypes.windll.user32.GetAsyncKeyState(0x01))
+            state = int(ctypes.windll.user32.GetAsyncKeyState(vk))
             return bool(state & 0x8000)
         except Exception:
             return None

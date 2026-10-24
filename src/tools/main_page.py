@@ -1,4 +1,4 @@
-"""主控页：A/B/C 开关、仪表盘三卡、状态日志。"""
+"""主控页：A / B / C 三行能力卡（精简主读数）。"""
 
 from __future__ import annotations
 
@@ -8,95 +8,102 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
-    QSizePolicy,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
 
-from tools.shell_theme import (
-    ACCENT,
-    ACCENT_DIM,
-    BORDER,
-    DANGER,
-    TEXT_FAINT,
-    TEXT_MUTED,
-)
+from tools.shell_log import PageLogPopup
+from tools.shell_theme import BORDER
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
 
-_STYLE_OK = (
-    f"font-size:11px; font-weight:700; color:{ACCENT}; "
-    f"padding:5px 8px; border:1px solid {ACCENT_DIM}; border-radius:4px; "
-    f"background-color: rgba(61,184,160,0.12);"
-)
-_STYLE_WARN = (
-    f"font-size:11px; font-weight:700; color:{DANGER}; "
-    f"padding:5px 8px; border:1px solid {DANGER}; border-radius:4px; "
-    f"background-color: rgba(217,107,107,0.12);"
-)
+
+def _sync_cap_active(card: QFrame, chk: QCheckBox) -> None:
+    card.setProperty("active", "true" if chk.isChecked() else "false")
+    style = card.style()
+    style.unpolish(card)
+    style.polish(card)
+    card.update()
 
 
-def _make_card() -> tuple[QFrame, QVBoxLayout]:
+def _cap_card(*, chk: QCheckBox) -> tuple[QFrame, QHBoxLayout, QHBoxLayout]:
+    """返回 (card, head_row, body_row)。body_row 用于横排主读数。"""
     card = QFrame()
-    card.setObjectName("statusCard")
-    lay = QVBoxLayout(card)
-    lay.setContentsMargins(14, 12, 14, 12)
-    lay.setSpacing(8)
-    return card, lay
+    card.setObjectName("capabilityCard")
+    root = QVBoxLayout(card)
+    root.setContentsMargins(0, 0, 0, 0)
+    root.setSpacing(0)
+
+    head = QFrame()
+    head.setObjectName("capabilityHead")
+    hl = QHBoxLayout(head)
+    hl.setContentsMargins(10, 7, 10, 7)
+    hl.setSpacing(8)
+    chk.setObjectName("capSwitch")
+    chk.setCursor(Qt.CursorShape.PointingHandCursor)
+    hl.addWidget(chk, 0)
+    hl.addStretch(1)
+    root.addWidget(head)
+
+    body = QWidget()
+    body_l = QHBoxLayout(body)
+    body_l.setContentsMargins(10, 8, 10, 10)
+    body_l.setSpacing(10)
+    body_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+    root.addWidget(body)
+
+    chk.toggled.connect(lambda _=False, c=card, k=chk: _sync_cap_active(c, k))
+    _sync_cap_active(card, chk)
+    return card, hl, body_l
 
 
-def _metric_cell(title: str) -> tuple[QFrame, QLabel]:
-    cell = QFrame()
-    cell.setObjectName("metricCell")
-    cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-    v = QVBoxLayout(cell)
-    v.setContentsMargins(8, 6, 8, 6)
-    v.setSpacing(2)
-    val = QLabel("—")
-    val.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    val.setStyleSheet(f"font-size:15px; font-weight:700; color:{TEXT_MUTED};")
-    cap = QLabel(title)
-    cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    cap.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
-    v.addWidget(val)
-    v.addWidget(cap)
-    return cell, val
+def _hero_block(key: str, value: QLabel) -> QVBoxLayout:
+    col = QVBoxLayout()
+    col.setSpacing(2)
+    col.setContentsMargins(0, 0, 0, 0)
+    k = QLabel(key)
+    k.setObjectName("capKey")
+    col.addWidget(k)
+    value.setObjectName("capValue")
+    col.addWidget(value)
+    return col
 
 
 def build_main_page(host: "PreviewApp") -> QWidget:
     from common.license import load_license
     from datetime import datetime
 
-    page_main = QWidget()
-    main_root = QVBoxLayout(page_main)
-    main_root.setContentsMargins(0, 0, 0, 0)
-    main_root.setSpacing(0)
-    main_split = QSplitter(Qt.Orientation.Vertical)
-    main_split.setChildrenCollapsible(False)
-
     main_top = QWidget()
     main_l = QVBoxLayout(main_top)
     main_l.setContentsMargins(0, 0, 0, 0)
-    main_l.setSpacing(8)
+    main_l.setSpacing(6)
 
     host.lbl_license = QLabel("")
+    host.lbl_license.setObjectName("licenseBanner")
     host.lbl_license.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    host.lbl_license.setStyleSheet(_STYLE_OK)
     main_l.addWidget(host.lbl_license)
+
+    def _set_license_tone(tone: str) -> None:
+        """tone: '' | warn | danger — 临近到期用柔和琥珀，失效才用淡红。"""
+        host.lbl_license.setProperty("warn", "true" if tone == "warn" else "false")
+        host.lbl_license.setProperty(
+            "danger", "true" if tone == "danger" else "false"
+        )
+        st = host.lbl_license.style()
+        st.unpolish(host.lbl_license)
+        st.polish(host.lbl_license)
+        host.lbl_license.update()
 
     def _refresh_license_banner() -> None:
         lic = load_license()
         if lic is None:
             host.lbl_license.setText("未授权")
             host.lbl_license.setToolTip("")
-            host.lbl_license.setStyleSheet(_STYLE_WARN)
+            _set_license_tone("danger")
             return
         deadline = lic.expire_at
         secs = int((deadline - datetime.now()).total_seconds())
@@ -105,7 +112,7 @@ def build_main_page(host: "PreviewApp") -> QWidget:
         )
         if secs <= 0:
             host.lbl_license.setText("授权已到期")
-            host.lbl_license.setStyleSheet(_STYLE_WARN)
+            _set_license_tone("danger")
             return
         days, rem = divmod(secs, 86400)
         hours, rem = divmod(rem, 3600)
@@ -113,7 +120,7 @@ def build_main_page(host: "PreviewApp") -> QWidget:
         host.lbl_license.setText(
             f"授权剩余 {days} 天 {hours:02d}:{mins:02d}:{sec:02d}"
         )
-        host.lbl_license.setStyleSheet(_STYLE_WARN if secs <= 3 * 86400 else _STYLE_OK)
+        _set_license_tone("warn" if secs <= 3 * 86400 else "")
 
     host._refresh_license_banner = _refresh_license_banner
     host._license_timer = QTimer(host)
@@ -121,177 +128,108 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host._license_timer.start(1000)
     _refresh_license_banner()
 
-    switches = QGroupBox("开关")
-    sw = QVBoxLayout(switches)
-    sw.setSpacing(8)
-    host.chk_b = QCheckBox("自动拉线")
-    host.chk_b.setObjectName("switchRow")
-    host.chk_b.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.chk_b.setToolTip("Decide + Act：有漂后按策略按住/松开")
-    host.chk_b.toggled.connect(host._on_b_toggled)
-    sw.addWidget(host.chk_b)
     host.chk_a = QCheckBox("自动起勾")
-    host.chk_a.setObjectName("switchRow")
-    host.chk_a.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.chk_a.setToolTip("听开钓水声 → 点第一下 → 等漂后交给自动拉线")
+    host.chk_a.setToolTip("A：听开钓水声 → 点第一下 → 等漂后交给自动拉线")
     host.chk_a.toggled.connect(host._on_a_toggled)
-    sw.addWidget(host.chk_a)
+
+    host.chk_b = QCheckBox("自动拉线")
+    host.chk_b.setToolTip("B：Decide + Act，有漂后按策略按住 / 松开")
+    host.chk_b.toggled.connect(host._on_b_toggled)
+
     host.chk_c = QCheckBox("自动抛竿")
-    host.chk_c.setObjectName("switchRow")
-    host.chk_c.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.chk_c.setToolTip("开：光标成漂形后右键开停；F8 / F9 备用。关：整模块停。")
+    host.chk_c.setToolTip("C：光标成漂形后右键开停；F8 / F9 备用。关则整模块停。")
     host.chk_c.toggled.connect(host._on_c_toggled)
-    sw.addWidget(host.chk_c)
-    host.btn_float = QPushButton("浮窗")
-    host.btn_float.setObjectName("btnPrimary")
-    host.btn_float.setCursor(Qt.CursorShape.PointingHandCursor)
-    host.btn_float.setToolTip("同一窗口切到紧凑状态显示")
-    host.btn_float.clicked.connect(lambda: host._set_compact_mode(True))
-    sw.addWidget(host.btn_float)
-    main_l.addWidget(switches)
 
-    readout = QFrame()
-    readout.setObjectName("readout")
-    ro = QVBoxLayout(readout)
-    ro.setContentsMargins(0, 0, 0, 0)
-    ro.setSpacing(8)
+    def _ghost(name: str) -> QLabel:
+        lbl = QLabel("", main_top)
+        lbl.setObjectName(name)
+        lbl.hide()
+        return lbl
 
-    # —— POS ——
-    pos_card, pos_l = _make_card()
-    pos_head = QHBoxLayout()
-    pos_head.setSpacing(8)
-    pos_title = QLabel("POS")
-    pos_title.setObjectName("statusCardTitle")
-    pos_head.addWidget(pos_title)
-    pos_head.addStretch(1)
-    host.lbl_perf = QLabel("")
-    host.lbl_perf.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-    pos_head.addWidget(host.lbl_perf)
-    pos_l.addLayout(pos_head)
-    pos_row = QHBoxLayout()
-    pos_row.setSpacing(12)
+    host.lbl_strat_detail = _ghost("stratDetail")
+    host.lbl_perf = _ghost("perf")
+    host.lbl_mouse = _ghost("mouse")
+    host.lbl_mouse_diag = _ghost("mouseDiag")
+    host.lbl_intent = _ghost("intent")
+    host.lbl_a_meta = _ghost("aMeta")
+    host.lbl_cast_hint = _ghost("castHint")
+
+    caps = QVBoxLayout()
+    caps.setSpacing(6)
+    caps.setContentsMargins(0, 0, 0, 0)
+
+    # —— A ——
+    a_card, _a_head, a_body = _cap_card(chk=host.chk_a)
+    host.lbl_session = QLabel("关")
+    a_body.addLayout(_hero_block("会话", host.lbl_session), 0)
+    a_body.addStretch(1)
+    caps.addWidget(a_card)
+
+    # —— B ——
+    b_card, b_head, b_body = _cap_card(chk=host.chk_b)
+    host.lbl_b_act = QLabel("—")
+    host.lbl_b_act.setObjectName("capAct")
+    host.lbl_b_act.setAlignment(
+        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
+    )
+    b_head.addWidget(host.lbl_b_act, 0)
     host.lbl_pos = QLabel("—")
-    host.lbl_pos.setStyleSheet(f"font-size:26px; font-weight:700; color:{DANGER};")
-    pos_row.addWidget(host.lbl_pos)
-    right = QVBoxLayout()
-    right.setSpacing(2)
-    host.lbl_strat_detail = QLabel("")
-    host.lbl_strat_detail.setStyleSheet(f"font-size:12px; color:{TEXT_MUTED};")
-    right.addWidget(host.lbl_strat_detail)
-    host.lbl_session = QLabel("")
-    host.lbl_session.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-    right.addWidget(host.lbl_session)
-    right.addStretch(1)
-    pos_row.addLayout(right, 1)
-    pos_l.addLayout(pos_row)
-    ro.addWidget(pos_card)
+    host.lbl_pos.setObjectName("capValue")
+    b_body.addLayout(_hero_block("POS", host.lbl_pos), 0)
+    b_body.addStretch(1)
+    caps.addWidget(b_card)
 
-    # —— 抛杆 ——
-    cast_card, cast_l = _make_card()
-    cast_head = QHBoxLayout()
-    cast_title = QLabel("抛竿")
-    cast_title.setObjectName("statusCardTitle")
-    cast_head.addWidget(cast_title)
-    cast_head.addStretch(1)
-    host.lbl_cast_hint = QLabel("")
-    host.lbl_cast_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
-    cast_head.addWidget(host.lbl_cast_hint)
-    cast_l.addLayout(cast_head)
-    cast_row = QHBoxLayout()
-    cast_row.setSpacing(14)
-    rem_wrap = QFrame()
-    rem_wrap.setObjectName("metricCell")
-    # 与光标预览同高，避免主控顶栏被压时次数格纵向挤扁裁字
-    rem_wrap.setFixedSize(88, 56)
-    rem_wrap.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-    rem_v = QVBoxLayout(rem_wrap)
-    rem_v.setContentsMargins(6, 4, 6, 4)
-    rem_v.setSpacing(0)
-    rem_v.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    # —— C ——
+    c_card, _c_head, c_body = _cap_card(chk=host.chk_c)
     host.lbl_cast_remain = QLabel("—")
     host.lbl_cast_remain.setObjectName("castRemain")
-    host.lbl_cast_remain.setAlignment(Qt.AlignmentFlag.AlignCenter)
     host.lbl_cast_remain.setToolTip("待命=配置次数；进行中=剩余/共")
-    rem_v.addWidget(host.lbl_cast_remain)
-    host.lbl_cast_remain_cap = QLabel("次数")
-    host.lbl_cast_remain_cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    host.lbl_cast_remain_cap.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
-    rem_v.addWidget(host.lbl_cast_remain_cap)
-    cast_row.addWidget(rem_wrap, 0, Qt.AlignmentFlag.AlignVCenter)
+    host.lbl_cast_remain_cap = QLabel("")
+    host.lbl_cast_remain_cap.hide()
+    c_body.addLayout(_hero_block("抛竿", host.lbl_cast_remain), 0)
+    c_side = QVBoxLayout()
+    c_side.setSpacing(2)
     host.lbl_cast = QLabel("关")
-    host.lbl_cast.setStyleSheet(f"font-size:18px; font-weight:700; color:{TEXT_MUTED};")
-    host.lbl_cast.setAlignment(
-        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
-    )
-    cast_row.addWidget(host.lbl_cast, 1)
+    host.lbl_cast.setObjectName("capMeta")
+    c_side.addWidget(host.lbl_cast)
+    c_side.addStretch(1)
+    c_body.addLayout(c_side, 1)
     host.lbl_arm_preview = QLabel()
-    host.lbl_arm_preview.setFixedSize(56, 56)
+    host.lbl_arm_preview.setFixedSize(36, 36)
     host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
     host.lbl_arm_preview.setToolTip("系统光标 · 绿=就绪 · 灰=等待")
     host.lbl_arm_preview.setStyleSheet(
         f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
     )
     host.lbl_arm_preview.hide()
-    cast_row.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
-    cast_l.addLayout(cast_row)
-    ro.addWidget(cast_card)
+    c_body.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
+    caps.addWidget(c_card)
 
-    # —— 鼠标 ——
-    mouse_card, mouse_l = _make_card()
-    mouse_head = QHBoxLayout()
-    mouse_title = QLabel("鼠标")
-    mouse_title.setObjectName("statusCardTitle")
-    mouse_head.addWidget(mouse_title)
-    mouse_head.addStretch(1)
-    mouse_l.addLayout(mouse_head)
-    metrics = QHBoxLayout()
-    metrics.setSpacing(6)
-    intent_cell, host.lbl_mouse_intent = _metric_cell("意图")
-    prog_cell, host.lbl_mouse_prog = _metric_cell("程序")
-    sys_cell, host.lbl_mouse_sys = _metric_cell("系统")
-    metrics.addWidget(intent_cell)
-    metrics.addWidget(prog_cell)
-    metrics.addWidget(sys_cell)
-    mouse_l.addLayout(metrics)
-    # 兼容旧字段：单行汇总隐藏，诊断仅异常时显示
-    host.lbl_mouse = QLabel("")
-    host.lbl_mouse.hide()
-    host.lbl_mouse_diag = QLabel("")
-    host.lbl_mouse_diag.setStyleSheet(f"color:{DANGER}; font-size:11px;")
-    host.lbl_mouse_diag.setWordWrap(True)
-    host.lbl_mouse_diag.hide()
-    mouse_l.addWidget(host.lbl_mouse_diag)
-    host.lbl_intent = QLabel("")
-    host.lbl_intent.hide()
-    ro.addWidget(mouse_card)
+    main_l.addLayout(caps)
 
+    foot = QHBoxLayout()
+    foot.setSpacing(8)
     host.lbl_hint = QLabel("")
     host.lbl_hint.setObjectName("hint")
-    host.lbl_hint.setStyleSheet(f"font-size:11px; color:{TEXT_FAINT};")
     host.lbl_hint.setWordWrap(True)
-    ro.addWidget(host.lbl_hint)
+    foot.addWidget(host.lbl_hint, 1)
+    host._main_log_popup = PageLogPopup(
+        host, "状态日志", object_name="mainLog", placeholder="最新在上…"
+    )
+    host.log = host._main_log_popup.editor
+    foot.addWidget(host._main_log_popup.make_button(), 0)
+    host.btn_float = QPushButton("浮窗")
+    host.btn_float.setObjectName("btnFloat")
+    host.btn_float.setCursor(Qt.CursorShape.PointingHandCursor)
+    host.btn_float.setToolTip("同一窗口切到紧凑状态显示")
+    host.btn_float.clicked.connect(lambda: host._set_compact_mode(True))
+    foot.addWidget(host.btn_float, 0)
+    main_l.addLayout(foot)
 
-    main_l.addWidget(readout)
-    main_l.addStretch(1)
-    main_split.addWidget(main_top)
-
-    log_wrap = QWidget()
-    log_l = QVBoxLayout(log_wrap)
-    log_l.setContentsMargins(0, 8, 0, 0)
-    log_l.setSpacing(4)
-    log_title = QLabel("状态日志")
-    log_title.setObjectName("sectionTitle")
-    log_l.addWidget(log_title)
-    host.log = QPlainTextEdit()
-    host.log.setObjectName("mainLog")
-    host.log.setReadOnly(True)
-    host.log.setMinimumHeight(120)
-    host.log.setPlaceholderText("最新在上…")
-    log_l.addWidget(host.log, 1)
-    main_split.addWidget(log_wrap)
-    main_split.setStretchFactor(0, 1)
-    main_split.setStretchFactor(1, 2)
-    main_split.setSizes([240, 280])
-    main_root.addWidget(main_split)
-
+    page_main = QWidget()
+    page_l = QVBoxLayout(page_main)
+    page_l.setContentsMargins(0, 0, 0, 0)
+    page_l.setSpacing(0)
+    page_l.addWidget(main_top, 0)
+    page_l.addStretch(1)
     return page_main

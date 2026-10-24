@@ -1,0 +1,256 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  .label {
+    position: absolute;
+    left: 96px;
+    top: 72px;
+    font-size: 28px;
+    color: var(--muted);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  h2 {
+    position: absolute;
+    left: 96px;
+    top: 112px;
+    margin: 0;
+    font-size: 64px;
+  }
+  .hint {
+    position: absolute;
+    left: 96px;
+    bottom: 88px;
+    font-size: 30px;
+    color: var(--muted);
+  }
+  .key {
+    display: inline-block;
+    padding: 4px 14px;
+    margin: 0 4px;
+    border-radius: 8px;
+    background: #3a4334;
+    border: 1px solid #5a6650;
+    color: var(--ink);
+    font-weight: 700;
+  }
+  .window {
+    position: absolute;
+    left: 50%;
+    top: 52%;
+    transform: translate(-50%, -50%);
+    width: 980px;
+    height: 360px;
+    background: #262a20;
+    border-radius: 18px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.06),
+      0 40px 80px rgba(0,0,0,0.45);
+    overflow: hidden;
+  }
+  .titlebar {
+    height: 42px;
+    background: #32382c;
+    display: flex;
+    align-items: center;
+    padding: 0 18px;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 18px;
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+  .play {
+    position: absolute;
+    left: 0; right: 0; top: 42px; bottom: 0;
+    background: #262a20;
+  }
+  .bar-wrap {
+    position: absolute;
+    left: 48px;
+    right: 48px;
+    top: 56px;
+  }
+  .tension {
+    position: relative;
+    height: 54px;
+    border-radius: 8px;
+    background: linear-gradient(
+      90deg,
+      #8b2e28 0%,
+      #8b2e28 12%,
+      #c9a43a 16%,
+      #3d8f3a 22%,
+      #3d8f3a 78%,
+      #c9a43a 84%,
+      #8b2e28 88%,
+      #8b2e28 100%
+    );
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,0.35);
+  }
+  .bobber {
+    position: absolute;
+    top: 50%;
+    width: 28px;
+    height: 48px;
+    margin-left: -14px;
+    margin-top: -24px;
+    border-radius: 14px 14px 10px 10px;
+    background: linear-gradient(180deg, #f4f0e4 0%, #d8c89a 55%, #8a7040 100%);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  }
+  .bobber::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: -10px;
+    width: 4px;
+    height: 12px;
+    margin-left: -2px;
+    background: #c4b070;
+  }
+  .progress-wrap {
+    position: absolute;
+    left: 48px;
+    right: 48px;
+    top: 140px;
+  }
+  .progress-track {
+    height: 28px;
+    border-radius: 6px;
+    background: #1a1e16;
+    box-shadow: inset 0 0 0 2px rgba(0,0,0,0.35);
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #2a6ea8, #4a9fd4);
+  }
+  .fish {
+    position: absolute;
+    top: -6px;
+    width: 22px;
+    height: 40px;
+    margin-left: -11px;
+    background: #f0c040;
+    clip-path: polygon(0 40%, 70% 0, 100% 50%, 70% 100%, 0 60%);
+  }
+  .status {
+    position: absolute;
+    left: 0; right: 0;
+    bottom: 28px;
+    text-align: center;
+    font-size: 22px;
+    color: #c8d0b8;
+  }
+  .callout {
+    position: absolute;
+    right: 96px;
+    top: 200px;
+    width: 360px;
+    padding: 22px 26px;
+    border-radius: 16px;
+    background: rgba(44, 51, 40, 0.92);
+    border: 1px solid rgba(126, 207, 106, 0.25);
+    font-size: 26px;
+    line-height: 1.4;
+  }
+  .callout strong { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="label" id="label">01 · Simulator</div>
+  <h2 class="brand" id="heading">空格收线 · 留在绿区</h2>
+  <div class="window" id="window">
+    <div class="titlebar">
+      <span class="dot r"></span><span class="dot y"></span><span class="dot g"></span>
+      <span style="margin-left:12px">Albion Fishing · T4</span>
+    </div>
+    <div class="play">
+      <div class="bar-wrap">
+        <div class="tension" id="tension">
+          <div class="bobber" id="bobber"></div>
+        </div>
+      </div>
+      <div class="progress-wrap">
+        <div class="progress-track">
+          <div class="progress-fill" id="fill"></div>
+        </div>
+        <div class="fish" id="fish"></div>
+      </div>
+      <div class="status" id="status">按住空格收线</div>
+    </div>
+  </div>
+  <div class="callout" id="callout">
+    高频短按短松<br>
+    鱼漂留在 <strong>绿色安全区</strong><br>
+    碰到红区即失败
+  </div>
+  <div class="hint" id="hint">操作：按住 <span class="key">Space</span> / 鼠标左键 = 收线</div>
+</div>
+<script type="module">
+const bobber = document.getElementById("bobber");
+const fill = document.getElementById("fill");
+const fish = document.getElementById("fish");
+const status = document.getElementById("status");
+const callout = document.getElementById("callout");
+const heading = document.getElementById("heading");
+const label = document.getElementById("label");
+const hint = document.getElementById("hint");
+const windowEl = document.getElementById("window");
+
+function ease(t) {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+}
+
+/** Deterministic bobber path: oscillate in green, progress rises */
+function bobberX(t) {
+  // green roughly 22%–78%; center ~50%
+  const base = 0.5;
+  const amp = 0.18;
+  // tap rhythm: hold/release every ~0.35s
+  const phase = Math.sin(t * Math.PI * 2.4) * amp;
+  const drift = 0.04 * Math.sin(t * 1.1);
+  return Math.min(0.74, Math.max(0.28, base + phase + drift));
+}
+
+window.film = {
+  duration: 12,
+  ready: document.fonts.ready,
+  frame(t) {
+    const inA = ease(t / 0.6);
+    label.style.opacity = String(inA);
+    heading.style.opacity = String(ease((t - 0.15) / 0.6));
+    windowEl.style.opacity = String(ease((t - 0.25) / 0.6));
+    windowEl.style.transform = `translate(-50%, calc(-50% + ${(1 - ease((t - 0.25) / 0.6)) * 24}px))`;
+    callout.style.opacity = String(ease((t - 0.8) / 0.7));
+    hint.style.opacity = String(ease((t - 0.5) / 0.6));
+
+    const playT = Math.max(0, t - 0.4);
+    const x = bobberX(playT);
+    bobber.style.left = `${x * 100}%`;
+
+    const progress = Math.min(0.97, playT * 0.085);
+    fill.style.width = `${progress * 100}%`;
+    fish.style.left = `${progress * 100}%`;
+
+    const holding = Math.sin(playT * Math.PI * 2.4) > 0;
+    status.textContent = holding ? "收线中 · 鱼漂右移" : "松开 · 鱼向左拽";
+    status.style.color = holding ? "#7ecf6a" : "#c8d0b8";
+
+    if (t > 10.5) {
+      status.textContent = "进度到头 · 成功";
+      status.style.color = "#7ecf6a";
+    }
+  },
+};
+</script>
+</body>
+</html>

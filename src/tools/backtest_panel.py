@@ -13,11 +13,9 @@ from PySide6.QtWidgets import (
     QInputDialog,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QProgressDialog,
     QPushButton,
     QScrollArea,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -33,7 +31,7 @@ from autofish.first_click_trigger.paths import (
     template_source_label,
 )
 from tools.busy_worker import FnWorker
-from tools.shell_log import append_log
+from tools.shell_log import PageLogPopup, append_log
 from tools.shell_theme import TEXT_MUTED
 from tools.sound_panel import FirstClickTriggerPanel
 from tools.template_combo import fill_template_combo
@@ -74,8 +72,11 @@ class AudioBacktestPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
+
+        self._log_popup = PageLogPopup(
+            self, "回测 · 日志", object_name="mainLog", placeholder="最新在上…"
+        )
+        self.log = self._log_popup.editor
 
         top = QWidget()
         layout = QVBoxLayout(top)
@@ -98,6 +99,7 @@ class AudioBacktestPanel(QWidget):
         self.btn_sess_del.setToolTip("删除当前选中的长录音会话")
         self.btn_sess_del.clicked.connect(self._delete_session)
         row_sess.addWidget(self.btn_sess_del)
+        row_sess.addWidget(self._log_popup.make_button(), 0)
         layout.addLayout(row_sess)
 
         row_tmpl = QHBoxLayout()
@@ -163,23 +165,7 @@ class AudioBacktestPanel(QWidget):
         top_scroll.setWidgetResizable(True)
         top_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         top_scroll.setWidget(top)
-        splitter.addWidget(top_scroll)
-
-        log_wrap = QWidget()
-        log_l = QVBoxLayout(log_wrap)
-        log_l.setContentsMargins(0, 4, 0, 0)
-        log_title = QLabel("日志（可拖边上沿改高度）")
-        log_title.setStyleSheet(f"font-weight:600; color:{TEXT_MUTED}; font-size:12px;")
-        log_l.addWidget(log_title)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMinimumHeight(100)
-        log_l.addWidget(self.log, 1)
-        splitter.addWidget(log_wrap)
-        splitter.setStretchFactor(0, 3)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([420, 200])
-        root.addWidget(splitter)
+        root.addWidget(top_scroll, 1)
 
     def _refresh_sessions(self) -> None:
         cur = self.cmb_session.currentData()

@@ -14,11 +14,9 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSlider,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -31,7 +29,7 @@ from autofish.first_click_trigger.paths import (
 )
 from autofish.first_click_trigger.trigger import FirstClickTrigger
 from tools.dual_range_axis import SingleRangeBar
-from tools.shell_log import append_log
+from tools.shell_log import PageLogPopup, append_log
 from tools.shell_theme import DANGER, SUCCESS, TEXT_MUTED
 from tools.template_combo import fill_template_combo, sync_combo_to_path
 from tools.waveform_select import WaveformSelectWidget
@@ -242,8 +240,11 @@ class FirstClickTriggerPanel(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
+
+        self._log_popup = PageLogPopup(
+            self, "自动起勾 · 日志", object_name="mainLog", placeholder="最新在上…"
+        )
+        self.log = self._log_popup.editor
 
         top = QWidget()
         layout = QVBoxLayout(top)
@@ -262,6 +263,7 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_session.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_listen.addWidget(self.lbl_session)
         row_listen.addStretch(1)
+        row_listen.addWidget(self._log_popup.make_button(), 0)
         self.lbl_level = QLabel("音量：—")
         self.lbl_level.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_listen.addWidget(self.lbl_level)
@@ -373,24 +375,7 @@ class FirstClickTriggerPanel(QWidget):
         top_scroll.setWidgetResizable(True)
         top_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         top_scroll.setWidget(top)
-        splitter.addWidget(top_scroll)
-
-        log_wrap = QWidget()
-        log_l = QVBoxLayout(log_wrap)
-        log_l.setContentsMargins(0, 4, 0, 0)
-        log_l.setSpacing(2)
-        log_title = QLabel("日志（可拖边上沿改高度）")
-        log_title.setStyleSheet(f"font-weight:600; color:{TEXT_MUTED}; font-size:12px;")
-        log_l.addWidget(log_title)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMinimumHeight(120)
-        log_l.addWidget(self.log, 1)
-        splitter.addWidget(log_wrap)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([280, 280])
-        root.addWidget(splitter)
+        root.addWidget(top_scroll, 1)
 
     def _refresh_devices(self) -> None:
         self.cmb_device.blockSignals(True)

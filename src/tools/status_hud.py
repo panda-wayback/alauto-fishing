@@ -69,7 +69,7 @@ class StatusHudPanel(QWidget):
         metrics.setContentsMargins(0, 0, 0, 0)
         self.lbl_pos = self._row(metrics, "POS")
         self.lbl_cast = self._row(metrics, "抛竿")
-        self.lbl_mouse = self._row(metrics, "鼠标")
+        self.lbl_mouse = self._row(metrics, "拉线")
         body.addLayout(metrics, 1)
 
         self.lbl_phase = QLabel("待\n机")

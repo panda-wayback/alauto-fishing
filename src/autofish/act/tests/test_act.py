@@ -20,10 +20,15 @@ from autofish.events.topics import (
 
 
 REAL_OS_LEFT_DOWN = mouse_mod.os_left_down
+REAL_OS_RIGHT_DOWN = mouse_mod.os_right_down
 
 
 def test_os_left_down_returns_bool_or_none():
     assert REAL_OS_LEFT_DOWN() in (True, False, None)
+
+
+def test_os_right_down_returns_bool_or_none():
+    assert REAL_OS_RIGHT_DOWN() in (True, False, None)
 
 
 class FakeController:

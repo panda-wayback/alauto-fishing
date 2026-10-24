@@ -5,30 +5,30 @@ modules:
     function: 光标旁小窗低频认水面漂，对外暴露「可开抛」门闩
 input:
   - name: autofish.auto_cast.AutoCastWorker(bus, *, wait_lo_s=3.0, wait_hi_s=3.0, full_charge_s=1.0, hold_jitter_s=0.1, start_settle_s=1.0)
-    type: "bus: AutofishBus；wait_*: 拉漂结束后再抛等待；full_charge_s；hold_jitter_s；start_settle_s: 开抛后首杆前短等（默认 1s，避开右键抢键）"
-    desc: 新建自动抛杆工人；构造不订阅、不截屏、不按键；默认空闲（无任务）；标定在每轮 AIM 时从默认存盘读取
+    type: "bus: AutofishBus；wait_*: 再次鱼漂就绪后、下一杆 AIM 前的等待；full_charge_s；hold_jitter_s；start_settle_s: 开抛后首杆前短等（默认 1s，避开右键抢键）"
+    desc: 新建自动抛杆工人；构造不订阅、不截屏、不按键；默认空闲（无任务）；标定在每轮 AIM 时从默认存盘读取；默认无鱼漂门闩
   - name: AutoCastWorker.start() / AutoCastWorker.stop(timeout=2.0) / AutoCastWorker.is_running()
     type: "无参 / timeout: float 秒 / 无参"
-    desc: start 订阅鱼漂状态并起后台线程；stop 退订、取消任务、打断等待并确保松开本程序按下的鼠标
+    desc: start 起后台线程；stop 取消任务、打断等待并确保松开本程序按下的鼠标
+  - name: AutoCastWorker.set_cast_ready(ready)
+    type: "ready: Callable[[], bool] | None"
+    desc: 鱼漂就绪探针。None 关闭门闩（两杆之间只走配置等待）。有探针时，仅探针为 True 才 AIM；抛出后须再次进入就绪才抛下一杆
   - name: AutoCastWorker.start_batch(count)
     type: "count: int（夹到 1～10）"
     desc: 开始一轮有限次数抛杆；任务进行中再调则忽略并返回 False；成功开始返回 True；首杆先 start_settle_s（默认 1s）再 AIM
-  - name: AutoCastWorker.cancel_batch()
-    type: 无参
-    desc: 立刻停止任务、松开本程序按下的鼠标、剩余次数清零、阶段回 DISABLED；未在任务中则忽略
+  - name: AutoCastWorker.cancel_batch(*, detail="cancelled")
+    type: "detail: str（默认 cancelled；系统右键结束为 right_click）"
+    desc: 立刻停止任务、松开本程序按下的鼠标、剩余次数清零、阶段回 DISABLED 并写入 detail；未在任务中则忽略
   - name: AutoCastWorker.set_wait_range(lo_s, hi_s)
     type: "lo_s, hi_s: float 秒"
     desc: 设置收竿后随机等待区间，夹到 [0, 30] 秒，上下限颠倒自动互换；下一轮等待生效
   - name: AutoCastWorker.set_full_charge_s(seconds)
     type: "seconds: float"
     desc: 设置满蓄参考秒数，夹到 [0.05, 5.0]；下一杆蓄力生效
-  - name: 订阅 Topic.FISHING_STATE
-    type: "autofish.events.topics.FishingStateEvent（IDLE / FISHING / LOST）"
-    desc: 判定本轮鱼结束：抛杆后进入过 FISHING，再变 LOST / IDLE 即拉漂结束，再进入等待后抛下一杆
 output:
   - name: 发布 Topic.CAST_PHASE
     type: "autofish.events.topics.CastPhaseEvent(phase: CastPhase, ts, detail, target, power)"
-    desc: "阶段切换；detail 含 #第几次/共几次；CHARGING 含 hold=秒；WAIT 含 after_fish|retry wait=秒；DONE 时 power=目标比例"
+    desc: "阶段切换；detail 含 #第几次/共几次；CHARGING 含 hold=秒；WAIT 含 settle|wait_bobber|after_fish|retry；DONE 时 power=目标比例"
   - name: 系统鼠标左键按下 / 松开
     type: 经本工人自己的 autofish.act.MouseActuator
     desc: 只在当前光标位置 CHARGING 按住、到时或中止时松开；不移鼠标，与 A 的第一下、B 的拉漂分用不同执行器
@@ -36,8 +36,10 @@ output:
     type: "CastPhase / float | None / float | None / float | None / bool / int / int / int / float"
     desc: 阶段、目标比例、最近完成蓄力比例、最近按下秒数、是否有任务、剩余次数、本轮总次数、当前第几次、满蓄秒数
 contract:
-  - 闭环：start_batch(N) →（settle）→ AIM → CHARGING → DONE|ABORT；每次尝试（成功或失败）消耗 1 次剩余；若仍有剩余：成功则等鱼漂「进入过 FISHING 再 LOST/IDLE」后在等待区间内抽样再 AIM；失败则同样抽样等待再 AIM；剩余用尽或 cancel_batch → DISABLED
-  - 首杆：start_batch 后先 WAIT(settle，默认 1s) 再 AIM，避免右键开抛与左键蓄力冲突；两杆之间走「拉漂结束 + 等待」
+  - 闭环：start_batch(N) →（settle）→ 鱼漂就绪 → AIM → CHARGING → DONE|ABORT；每次尝试（成功或失败）消耗 1 次剩余；若仍有剩余且本杆已抛出：再次鱼漂就绪后，在等待区间内抽样再 AIM；瞄准/按下失败则抽样等待后再看就绪；剩余用尽或 cancel_batch → DISABLED
+  - 鱼漂门闩：set_cast_ready 之后，只有探针为 True（鱼漂 / 就绪）才 AIM；鱼钩及其它外形一直 WAIT(wait_bobber)，不记失败、不提前消耗下一杆。抛出后约 0.75 秒内须先离开鱼漂再进入，才算下一次就绪；这段时间内若一直仍是鱼漂，允许再抛。未 set_cast_ready 时无此门闩
+  - 系统右键结束：任务进行中读到系统右键按下则 cancel_batch(detail=right_click)，任意阶段（含等鱼漂）立刻停；start_batch 后 settle+短宽限内忽略，避免开抛那一下右键被当成结束；不用左键结束（程序拉漂也会按左键，无法与用户可靠区分）
+  - 首杆：start_batch 后先 WAIT(settle，默认 1s)，再等鱼漂就绪，然后 AIM，避免右键开抛与左键蓄力冲突
   - AIM：读一次系统鼠标位置与主屏尺寸，用 CastCircle.target_power_ratio 得 [0,1] 目标比例；缺标定、读不到鼠标或主屏尺寸时不抛，发布 ABORT(detail 说明)，仍消耗 1 次
   - CHARGING：hold_s = full_charge_s×target + U(-hold_jitter_s, +hold_jitter_s)，再夹到极短下限以上；按下后等到时松开并 DONE；不识红条、不订 Frame；可被 cancel / stop 打断并松开
   - 只在 CHARGING 控鼠；WAIT / AIM / DONE / ABORT / DISABLED 不按住鼠标；stop / cancel_batch 若本程序按着必松开
@@ -54,9 +56,11 @@ errors:
     desc: 缺标定 / 读不到鼠标 / 控鼠失败均以 ABORT + 消耗次数表达，线程不退出
 tests:
   - start_batch 后先 settle 再 AIM；进行中再 start_batch 忽略；cancel_batch 立即松开并回 DISABLED
+  - 任务进行中系统右键按下 → DISABLED(right_click) 并松开；开抛宽限内右键不结束；左键不结束任务
   - AIM 用鼠标位置与标定算出目标比例；缺标定 / 读不到鼠标时不抛、ABORT 并消耗 1 次
   - CHARGING 按下后按 full_charge_s×target±jitter 到时松开并发 DONE；detail 含 #n/N 与 hold=秒；cancel 可打断
-  - DONE 后进入过 FISHING 再 LOST / IDLE 才进入下一轮 WAIT（拉漂成功后再等）；一直 FISHING 不再抛
+  - 设了鱼漂门闩时：鱼钩（非就绪）期间不抛下一杆、不出现 no_fish；回到鱼漂后才 AIM
+  - 未设门闩时：抛出后按配置等待再 AIM，不等张力条鱼漂状态
   - start_batch(2) 抛满两次后自动 DISABLED，remaining=0
   - 失败也消耗次数；等待时长在配置区间内；set_wait_range / set_full_charge_s 夹取生效
   - CHARGING / WAIT 的 CastPhaseEvent.detail 可读；stop 必松开鼠标、退订且线程结束

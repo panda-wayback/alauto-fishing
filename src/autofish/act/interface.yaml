@@ -35,6 +35,9 @@ input:
   - name: autofish.act.mouse.os_left_down()
     type: 无参
     desc: 读系统左键当前是否按下
+  - name: autofish.act.mouse.os_right_down()
+    type: 无参
+    desc: 读系统右键当前是否按下
   - name: autofish.act.mouse.os_cursor_position()
     type: 无参
     desc: 读系统鼠标当前逻辑点坐标
@@ -57,6 +60,9 @@ output:
   - name: os_left_down()
     type: "bool | None"
     desc: 系统左键是否按下；读取失败返回 None
+  - name: os_right_down()
+    type: "bool | None"
+    desc: 系统右键是否按下；读取失败返回 None
   - name: os_cursor_position()
     type: "(x: float, y: float) | None"
     desc: 系统光标逻辑点；读取失败返回 None
@@ -79,7 +85,7 @@ errors:
   - code: ImportError
     desc: 未安装 pynput 时导入 autofish.act 抛出
 tests:
-  - os_left_down 返回 bool 或 None
+  - os_left_down / os_right_down 返回 bool 或 None
   - MouseActuator 重复按住/松开只各触发一次系统按键
   - MouseActuator.force_release 未按下时不触碰系统，按下时松开
   - 鱼漂 FISHING 时按住意图按下、松开意图松开，重复按住不重复按

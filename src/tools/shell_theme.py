@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# —— 色板（柔暗仪表）——
+# —— 色板（柔暗仪表 · 海青绿）——
 BG = "#16191e"
 SURFACE = "#1e2329"
 SURFACE_2 = "#262c34"
@@ -13,7 +13,7 @@ TEXT_MUTED = "#9aa3ad"
 TEXT_FAINT = "#6b7380"
 ACCENT = "#3db8a0"
 ACCENT_DIM = "#2a7d6c"
-ACCENT_ON = "#ffffff"  # 强调底上的字（禁止再用深色字）
+ACCENT_ON = "#ffffff"  # 强调底上的字
 SUCCESS = "#4caf82"
 WARN = "#d4a24c"
 DANGER = "#d96b6b"
@@ -52,10 +52,85 @@ def global_qss() -> str:
         border: 1px solid {BORDER_SOFT};
         border-radius: 10px;
     }}
+    QFrame#capabilityCard, QFrame#capabilityHero {{
+        background: {SURFACE};
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 10px;
+    }}
+    QFrame#capabilityCard[active="true"], QFrame#capabilityHero[active="true"] {{
+        border-color: {ACCENT_DIM};
+    }}
+    QFrame#capabilityHead {{
+        background: {SURFACE_2};
+        border: none;
+        border-bottom: 1px solid {BORDER_SOFT};
+        border-top-left-radius: 10px;
+        border-top-right-radius: 10px;
+    }}
+    QCheckBox#capSwitch {{
+        background: transparent;
+        border: none;
+        padding: 0;
+        font-size: 13px;
+        font-weight: 700;
+        spacing: 8px;
+    }}
+    QCheckBox#capSwitch::indicator {{
+        width: 14px;
+        height: 14px;
+        max-width: 14px;
+        max-height: 14px;
+        border-radius: 3px;
+    }}
+    QLabel#capKey {{
+        color: {TEXT_FAINT};
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.5px;
+    }}
+    QLabel#capValue {{
+        color: {TEXT};
+        font-size: 26px;
+        font-weight: 700;
+    }}
+    QLabel#heroPos {{
+        color: {TEXT};
+        font-size: 44px;
+        font-weight: 700;
+        letter-spacing: -1px;
+    }}
+    QLabel#capAct {{
+        color: {ACCENT};
+        font-size: 14px;
+        font-weight: 700;
+    }}
+    QLabel#capMeta {{
+        color: {TEXT_MUTED};
+        font-size: 12px;
+    }}
+    QLabel#licenseBanner {{
+        color: {TEXT_MUTED};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 8px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 4px;
+    }}
+    QLabel#licenseBanner[warn="true"] {{
+        color: {WARN};
+        background: rgba(212,162,76,0.08);
+        border: 1px solid rgba(212,162,76,0.28);
+    }}
+    QLabel#licenseBanner[danger="true"] {{
+        color: #c48a8a;
+        background: rgba(217,107,107,0.06);
+        border: 1px solid rgba(217,107,107,0.22);
+    }}
     QFrame#metricCell {{
         background: {SURFACE_2};
         border: 1px solid {BORDER_SOFT};
-        border-radius: 8px;
+        border-radius: 6px;
     }}
     QLabel#statusCardTitle {{
         color: {TEXT_FAINT};
@@ -84,6 +159,18 @@ def global_qss() -> str:
         color: {TEXT};
         border: 1px solid {BORDER_SOFT};
         border-left: 2px solid {ACCENT_DIM};
+    }}
+    QToolButton#logToggle {{
+        background: transparent;
+        border: none;
+        color: {TEXT_MUTED};
+        font-weight: 600;
+        font-size: 12px;
+        padding: 2px 0;
+        text-align: left;
+    }}
+    QToolButton#logToggle:hover {{
+        color: {TEXT};
     }}
     QPushButton {{
         background: {SURFACE_2};
@@ -127,6 +214,21 @@ def global_qss() -> str:
         color: {TEXT_FAINT};
         border: 1px solid {BORDER_SOFT};
         font-weight: 600;
+    }}
+    QPushButton#btnFloat {{
+        background-color: {ACCENT};
+        color: {ACCENT_ON};
+        border: 1px solid {ACCENT};
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        min-height: 18px;
+    }}
+    QPushButton#btnFloat:hover {{
+        background-color: #4ac9b0;
+        border-color: #4ac9b0;
+        color: {ACCENT_ON};
     }}
     QPushButton#btnGhost {{
         background-color: transparent;
@@ -211,7 +313,7 @@ def global_qss() -> str:
     }}
     QLabel#hint {{
         color: {TEXT_FAINT};
-        font-size: 11px;
+        font-size: 10px;
     }}
     QScrollArea {{
         background: transparent;

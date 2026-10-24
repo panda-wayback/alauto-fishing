@@ -49,3 +49,9 @@ data/license.json
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# OpenFilm 本地缓存 / 导出
+openfilm/.film/
+openfilm/*.mp4
+openfilm/*.webm
+openfilm/*.mov

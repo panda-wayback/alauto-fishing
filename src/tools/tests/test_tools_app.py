@@ -85,6 +85,9 @@ class FakeAutoCast:
     def set_full_charge_s(self, seconds: float) -> None:
         self._full_charge_s = float(max(0.05, min(5.0, seconds)))
 
+    def set_cast_ready(self, ready) -> None:
+        self.cast_ready = ready
+
 
 class FakeCursorArm:
     """测试用：不截屏、不起线程。"""
@@ -683,7 +686,7 @@ def test_restore_defaults_resets_settings_and_roi(env, monkeypatch):
     assert win.bar_delay.range() == pytest.approx((0.3, 1.5))
     assert win._sound_panel.current_threshold() == pytest.approx(0.81)
     assert not win._compact
-    assert (win.width(), win.height()) == (460, 800)
+    assert (win.width(), win.height()) == (420, 560)
     assert _pipe().decide_on and _pipe().act_on
     assert _pipe().monitor_on
     assert _pipe().rois[-1] == load_roi(env.roi)
