@@ -1,0 +1,56 @@
+name: cursor_arm
+function: 读系统当前光标位图，判定是否漂形「可开抛」门闩
+modules: []
+input:
+  - name: autofish.auto_cast.cursor_arm.see_surface_bobber(rgb)
+    type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
+    desc: 判定光标小图是否呈漂形（白肚 / 红带 / 黄羽，按不透明像素占比）；空图或过小为 False
+  - name: autofish.auto_cast.cursor_arm.grab_system_cursor()
+    type: 无参
+    desc: 读系统当前光标 RGBA；mss 截不到该层。macOS 用 NSCursor.currentSystemCursor；Windows 用 GetCursorInfo；失败 None
+  - name: autofish.auto_cast.cursor_arm.grab_around_cursor(size=100)
+    type: "size: int（忽略，兼容旧调用）"
+    desc: 等价于 grab_system_cursor 的 RGB 三通道；新代码请用 grab_system_cursor
+  - name: autofish.auto_cast.cursor_arm.CursorArmWatcher(*, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None)
+    type: "interval_s: float；size 兼容保留；on_armed_changed / on_frame 可选回调"
+    desc: 新建观察者；构造不起线程；默认 enabled=False、armed=False
+  - name: CursorArmWatcher.start() / CursorArmWatcher.stop(timeout=2.0)
+    type: "无参 / timeout: float"
+    desc: 起停后台线程；stop 后 armed / last_frame 清空
+  - name: CursorArmWatcher.set_enabled(enabled)
+    type: "enabled: bool"
+    desc: 仅 enabled 时读光标认漂；关则清 armed 与 last_frame
+  - name: CursorArmWatcher.is_running()
+    type: 无参
+    desc: 后台线程是否存活
+output:
+  - name: see_surface_bobber(rgb)
+    type: bool
+    desc: True=光标图命中漂形色块规则
+  - name: grab_system_cursor()
+    type: "np.ndarray uint8 (H, W, 4) RGBA | None"
+    desc: 当前系统光标位图
+  - name: grab_around_cursor(size=100)
+    type: "np.ndarray uint8 (H, W, 3) RGB | None"
+    desc: 光标图 RGB；失败 None
+  - name: CursorArmWatcher.armed / enabled / last_frame
+    type: "bool / bool / ndarray|None"
+    desc: 门闩、是否启用、最近光标图副本
+  - name: on_armed_changed(armed) / on_frame(rgba, armed)
+    type: 回调
+    desc: 翻转 / 每帧成功读取时在观察者线程回调
+contract:
+  - 认漂输入是系统光标位图，不是 mss 游戏画面截屏（mss 不含系统合成光标）
+  - 不 YOLO、不调 Detect / FindBobber
+  - Watcher 仅 enabled 时读取；interval_s 默认 0.3；空闲 sleep
+  - set_enabled(False) / stop 后 armed=False、last_frame=None
+  - 读取失败本轮跳过，不改变 armed（关启用除外）
+depends:
+  - src/autofish/act
+errors:
+  - code: 不向外抛业务异常
+    desc: 读光标失败以 None 或跳过本轮表达
+tests:
+  - 合成含黄+红+白的不透明斑 → see_surface_bobber True；透明/纯蓝 → False
+  - grab_system_cursor 在 mock 下返回帧；失败 None
+  - Watcher：enabled 后 armed 随 detect；on_frame 收到帧；False 清空

@@ -30,6 +30,8 @@ _FALLBACK_ENDCAP_R = _ASSET_DIR / "endcap_right.png"
 # CCOEFF 彩色分；配合橘黄软权重
 _ENDCAP_MIN_SCORE = 0.42
 _ENDCAP_MIN_ORANGE = 0.12
+# 程序锁连续这么多帧仍无 pos（有漂无条或完全 miss）则清锁，全图重定界
+_BAR_LOCK_AUTO_CLEAR_FRAMES = 15
 
 
 def _resolve_endcap(preferred: Path, fallback: Path) -> Path:
@@ -151,6 +153,8 @@ class BobberAnchorDetector:
         self._follow_scale: float | None = None
         self._follow_xy: tuple[float, float] | None = None
         self._recover_tick: int = 0
+        # 程序锁与当前画面不一致时连续无 pos → 自动清锁并回到全图定界
+        self._bar_pos_miss_streak: int = 0
         # 预热端帽常见尺度，减轻首次定界尖峰
         for s in (0.20, 0.28, 0.36, 0.48):
             self._end_tpl("L", float(s))
@@ -163,6 +167,30 @@ class BobberAnchorDetector:
         self._follow_scale = None
         self._follow_xy = None
         self._recover_tick = 0
+        self._bar_pos_miss_streak = 0
+        self._finder.clear_locked_scale()
+
+    def seed_program_bar(
+        self, box: tuple[float, float, float, float] | None
+    ) -> None:
+        """注入程序条界，不带跟漂点（由后续直播帧重建）。
+
+        用于载入/刷新参考图后恢复条内搜索，避免全图色种定界失败时永远锁不上；
+        也避免把参考图上的跟点写进直播导致条内跟丢。
+        """
+        if box is None:
+            self.clear_bar_lock()
+            return
+        left, top, bw, bh = (float(box[0]), float(box[1]), float(box[2]), float(box[3]))
+        if bw < 8.0 or bh < 0.0:
+            return
+        bar = (left, top, bw, bh)
+        self._locked_bar = bar
+        self._program_bar = bar
+        self._follow_xy = None
+        self._follow_scale = self._scale_hint_from_bar(bar)
+        self._recover_tick = 0
+        self._bar_pos_miss_streak = 0
         self._finder.clear_locked_scale()
 
     def set_manual_bar(
@@ -332,6 +360,21 @@ class BobberAnchorDetector:
             return self._manual_bar
         return self._locked_bar
 
+    def _update_bar_lock_health(self, hit: BobberHit | None) -> None:
+        """手动条界不自动清；程序锁在连续拿不到 pos 时丢弃，避免旧框把直播搜死。"""
+        if self._manual_bar is not None:
+            self._bar_pos_miss_streak = 0
+            return
+        if self._locked_bar is None:
+            self._bar_pos_miss_streak = 0
+            return
+        if hit is not None and hit.bar_width > 0:
+            self._bar_pos_miss_streak = 0
+            return
+        self._bar_pos_miss_streak += 1
+        if self._bar_pos_miss_streak >= _BAR_LOCK_AUTO_CLEAR_FRAMES:
+            self.clear_bar_lock()
+
     def _end_tpl(self, side: str, scale: float) -> tuple[np.ndarray, np.ndarray]:
         cache = self._el_cache if side == "L" else self._er_cache
         src = self._el_rgb if side == "L" else self._er_rgb
@@ -361,7 +404,8 @@ class BobberAnchorDetector:
             ),
             key=lambda s: abs(s - s_nom),
         )
-        max_half = min(max(180.0, bh * 11.0), 400.0)
+        # 条宽≈漂身高×10.5；漂在条一端时另一端也须够得着
+        max_half = max(180.0, bh * 12.0)
         thr = self.endcap_min_score - 0.08
         # (dist, -rank, sc, rank, ax, ay, w, h, orange_frac)
         cands: list[tuple[float, float, float, float, int, int, int, int, float]] = []
@@ -463,20 +507,21 @@ class BobberAnchorDetector:
                 if self._program_bar is not None
                 else None
             )
-        if hit is None or abs(inv - 1.0) < 1e-9:
-            return hit
-        return BobberHit(
-            pos=hit.pos,
-            x=hit.x * inv,
-            y=hit.y * inv,
-            pixel_count=hit.pixel_count,
-            bar_left=hit.bar_left * inv,
-            bar_top=hit.bar_top * inv,
-            bar_width=hit.bar_width * inv,
-            bar_height=hit.bar_height * inv,
-            score=hit.score,
-            detect_ms=hit.detect_ms,
-        )
+        if hit is not None and abs(inv - 1.0) >= 1e-9:
+            hit = BobberHit(
+                pos=hit.pos,
+                x=hit.x * inv,
+                y=hit.y * inv,
+                pixel_count=int(round(hit.pixel_count * inv * inv)),
+                bar_left=hit.bar_left * inv,
+                bar_top=hit.bar_top * inv,
+                bar_width=hit.bar_width * inv,
+                bar_height=hit.bar_height * inv,
+                score=hit.score,
+                detect_ms=hit.detect_ms,
+            )
+        self._update_bar_lock_health(hit)
+        return hit
 
     def _detect_work(
         self,
@@ -491,10 +536,8 @@ class BobberAnchorDetector:
             if hint is None:
                 hint = self._scale_hint_from_bar(active)
             if self._follow_xy is None:
-                # 无跟点：隔帧扫整条邻域，空窗期不打满 CPU
+                # 无跟点：在条邻域内每帧找漂（隔帧会闪 pos，拉线不稳）
                 self._recover_tick += 1
-                if self._recover_tick % 2 == 0:
-                    return None
                 loc = self._finder.find(
                     rgb,
                     search_box=self._bar_neighborhood(active),

@@ -1,0 +1,85 @@
+name: decide
+function: 按读数与阈值策略发布按住/松开意图
+modules: []
+input:
+  - name: autofish.decide.ThresholdPosPolicy(*, press_lo=70.6, press_hi=74.4, release_lo=76.6, release_hi=79.2, seed=None)
+    type: "四端点: float（绿条 0～100 坐标）；seed: int | None（随机种子）"
+    desc: 新建阈值策略；按住阈值 low 从 [press_lo, press_hi]、松开阈值 high 从 [release_lo, release_hi] 均匀抽取
+  - name: ThresholdPosPolicy.decide(pos)
+    type: "pos: float（鱼漂在绿条内 0～100 的位置）"
+    desc: 按当前 low/high 判定意图
+  - name: ThresholdPosPolicy.set_ranges(press_lo, press_hi, release_lo, release_hi)
+    type: float × 4
+    desc: 更新抽样范围并立即重抽 low/high
+  - name: ThresholdPosPolicy.reset()
+    type: 无参
+    desc: 意图复位为松开并重抽 low/high
+  - name: autofish.decide.DecideWorker(bus, *, press_lo=70.6, press_hi=74.4, release_lo=76.6, release_hi=79.2)
+    type: "bus: autofish.events.bus.AutofishBus；四端点同 ThresholdPosPolicy"
+    desc: 新建决策订阅者（构造时不订阅）
+  - name: DecideWorker.start() / DecideWorker.stop()
+    type: 无参
+    desc: start 订阅并按当前总线快照立即判定一次；stop 退订并发松开；重复调用忽略
+  - name: DecideWorker.set_ranges(press_lo, press_hi, release_lo, release_hi)
+    type: float × 4
+    desc: 运行时改抽样范围（同 ThresholdPosPolicy.set_ranges）
+  - name: 订阅 Topic.POS
+    type: "autofish.events.topics.PosEvent（使用 pos: float | None）"
+    desc: 鱼漂读数
+  - name: 订阅 Topic.FISHING_STATE
+    type: "FishingStateEvent(state: FishingState)"
+    desc: 鱼漂状态机；A 关（会话 DISABLED）时决定能否拉漂
+  - name: 订阅 Topic.CAST_SESSION
+    type: "CastSessionEvent(state: CastSessionState)"
+    desc: 开钓会话态；非 DISABLED（A 开）时决定能否拉漂
+output:
+  - name: ThresholdPosPolicy.decide(pos)
+    type: "(holding: bool, reason: str)"
+    desc: "pos < low → True；pos > high → False；low ≤ pos ≤ high → 保持上次结果（初始 False）；reason 为非空说明文字"
+  - name: ThresholdPosPolicy.low / high
+    type: float
+    desc: 当前抽到的按住 / 松开阈值
+  - name: ThresholdPosPolicy.press_lo / press_hi / release_lo / release_hi
+    type: float
+    desc: 当前抽样范围
+  - name: DecideWorker.current_thresholds
+    type: "(low: float, high: float)"
+    desc: 当前抽到的阈值
+  - name: 发布 Topic.ACTION_INTENT（经 AutofishBus.publish_action_intent）
+    type: "autofish.events.topics.ActionIntentEvent(holding: bool, ts: float time.time 秒, reason: str, pos: float | None)"
+    desc: 按住 / 松开意图；只在意图变化时发布
+contract:
+  - 意图切换（松开↔按住）成功后立即重抽 low/high；low 始终在 [press_lo, press_hi]，high 始终在 [release_lo, release_hi]
+  - 同一 seed 与相同输入序列产生相同输出
+  - 意图切换立即生效，本 Module 不做按下间隔
+  - "可拉漂条件：会话 DISABLED（A 关）时鱼漂状态为 FISHING；会话非 DISABLED（A 开）时会话为 FISHING（不看鱼漂状态）"
+  - 不满足可拉漂条件时意图为松开；进入不可拉状态时立即发松开并重置策略
+  - 重新满足可拉漂条件时，立即按总线快照中的最新 pos 判定
+  - 可拉漂时收到 pos 为 None 的读数，保持上一意图不发布
+  - 相同 holding 不重复发布；start 后首次判定无论结果都会发布（无 pos 且可拉漂时除外）
+  - stop 后不再响应任何主题；stop 时若上次意图不是松开则发布松开
+  - 回调在发布者线程同步执行，不创建线程；不截屏、不识图、不操作鼠标
+depends:
+  - src/autofish/events
+errors:
+  - code: ValueError
+    desc: "set_ranges / 构造时 press_lo > press_hi、release_lo > release_hi 或 press_hi ≥ release_lo"
+tests:
+  - 默认构造时 low/high 落在默认范围内
+  - pos < low 按住、pos > high 松开、区间内（含端点）保持
+  - 每次切换后重抽且 low/high 始终在范围内
+  - 同 seed 两个策略输出与阈值一致
+  - reset 后回到松开
+  - set_ranges 生效，非法范围抛 ValueError
+  - DecideWorker.current_thresholds 在范围内，set_ranges 生效且非法抛 ValueError
+  - 鱼漂空闲时 start 发布一次松开
+  - 鱼漂 FISHING 下 pos 驱动按住/松开，区间内与重复意图不发布
+  - 可拉漂时 pos 为 None 不发布、保持上一意图
+  - 非可拉漂时 pos 不产生按住
+  - 鱼漂离开 FISHING 立刻发松开
+  - 重新进入 FISHING 时按快照最新 pos 立即判定
+  - A 开时会话非 FISHING 不按住，会话进入 FISHING 后按快照 pos 按住
+  - A 开时会话离开 FISHING 立刻松开且之后 pos 不再按住
+  - start 时按已有快照（FISHING + pos）立即判定
+  - stop 发松开并退订
+  - start / stop 重复调用不重复订阅、不重复发布

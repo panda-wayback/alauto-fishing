@@ -1,0 +1,109 @@
+name: act
+function: 按意图控制系统鼠标按下/松开
+modules: []
+input:
+  - name: autofish.act.ActWorker(bus)
+    type: "bus: autofish.events.bus.AutofishBus"
+    desc: 新建执行订阅者；构造时不订阅任何主题
+  - name: ActWorker.start() / ActWorker.stop()
+    type: 无参
+    desc: start 订阅意图与会话并立即按快照落键一次；stop 退订并松开本程序按下的键；重复调用忽略
+  - name: ActWorker.poll()
+    type: 无参
+    desc: 每帧调用；按总线快照中的最新意图重新落键（补上被间隔挡住的按下、系统松开后接管、离开可控鼠条件后松开）；未 start 时无操作
+  - name: 订阅 Topic.ACTION_INTENT
+    type: "autofish.events.topics.ActionIntentEvent(holding: bool, ...)"
+    desc: 按住 / 松开意图
+  - name: 订阅 Topic.CAST_SESSION
+    type: "CastSessionEvent(state: CastSessionState)"
+    desc: 开钓会话态；离开 FISHING 时立即松开
+  - name: 订阅 Topic.CAST_PHASE
+    type: "CastPhaseEvent(phase: CastPhase)"
+    desc: 自动抛杆阶段；CHARGING 时立刻松键让位，离开 CHARGING 时按快照意图接管
+  - name: 读取 AutofishBus.snapshot()
+    type: "AutofishSnapshot（使用 holding / fishing_state / cast_session / cast_phase / press_interval_s）"
+    desc: 判定是否可控鼠、poll 时的当前意图；press_interval_s 为两次程序按下的最短间隔（由 AutofishBus.publish_press_interval 写入）
+  - name: autofish.act.MouseActuator()
+    type: 无参构造
+    desc: 系统级鼠标左键控制器（落点为当前光标）
+  - name: MouseActuator.set_holding(holding)
+    type: "holding: bool"
+    desc: 要按住且未按下 → 按下左键；要松开且本对象按下过 → 松开左键
+  - name: MouseActuator.force_release()
+    type: 无参
+    desc: 仅当本对象按下过时松开
+  - name: autofish.act.mouse.os_left_down()
+    type: 无参
+    desc: 读系统左键当前是否按下
+  - name: autofish.act.mouse.os_right_down()
+    type: 无参
+    desc: 读系统右键当前是否按下
+  - name: autofish.act.mouse.os_cursor_position()
+    type: 无参
+    desc: 读系统鼠标当前逻辑点坐标
+output:
+  - name: 系统鼠标左键按下 / 松开
+    type: 系统事件
+    desc: 在当前光标位置按下或松开左键
+  - name: ActWorker.pressed
+    type: bool
+    desc: 本程序当前是否按着左键
+  - name: ActWorker.yielding
+    type: bool
+    desc: 是否因系统左键被他人按住而让位
+  - name: ActWorker.press_interval
+    type: float
+    desc: 当前生效的按下间隔（秒，0～0.3）
+  - name: MouseActuator.pressed
+    type: bool
+    desc: 本对象当前是否按着左键
+  - name: os_left_down()
+    type: "bool | None"
+    desc: 系统左键是否按下；读取失败返回 None
+  - name: os_right_down()
+    type: "bool | None"
+    desc: 系统右键是否按下；读取失败返回 None
+  - name: os_cursor_position()
+    type: "(x: float, y: float) | None"
+    desc: 系统光标逻辑点；读取失败返回 None
+contract:
+  - 只跟随意图，不做决策；落点为当前光标
+  - "可控鼠条件：cast_phase 为 CHARGING 时不可控鼠；会话 DISABLED（A 关）时鱼漂状态为 FISHING；会话非 DISABLED（A 开）时会话为 FISHING"
+  - 不满足可控鼠条件时不按下；若本程序正按着则立即松开（只松本程序按下的键）
+  - 收到会话进入非 FISHING（含 FIRST_CLICK）立即松开；收到会话 DISABLED 且鱼漂非 FISHING 也立即松开
+  - 两次程序按下间隔至少 press_interval；被挡住的按下由之后的 poll 在间隔满后补上；松开立即执行不受间隔约束
+  - press_interval 始终等于总线快照的 press_interval_s（0～0.3 秒，默认 0）；未 start 时也随快照更新
+  - stop 后总线不再持有 ActWorker 的引用；反复新建 / 停止 Worker 不累积订阅
+  - 已按下时重复按住意图不重复按键；未按下时松开意图不触碰系统
+  - 单帧无 Pos 不影响键态（只跟随意图与可控鼠条件）
+  - 有权控鼠时，若系统左键按下而非本程序按下 → 让位（yielding=True，不按下），直到系统松开后由下一次意图或 poll 按当前意图接管
+  - os_left_down 读取失败（None）视为系统未按下
+  - stop 后若本程序正按着则松开，之后不再响应意图
+depends:
+  - src/autofish/events
+errors:
+  - code: ImportError
+    desc: 未安装 pynput 时导入 autofish.act 抛出
+tests:
+  - os_left_down / os_right_down 返回 bool 或 None
+  - MouseActuator 重复按住/松开只各触发一次系统按键
+  - MouseActuator.force_release 未按下时不触碰系统，按下时松开
+  - 鱼漂 FISHING 时按住意图按下、松开意图松开，重复按住不重复按
+  - 未 start 时意图不落键
+  - start 时按快照中的已有意图落键
+  - 非可控鼠条件下按住意图不按下
+  - press_interval 内第二次按下被挡，间隔满后 poll 补按
+  - 有间隔时松开仍立即执行
+  - start 读取快照间隔，更新值被夹到 0～0.3
+  - 未 start 时也能接收按下间隔
+  - 停止且不再引用的 Worker 可被回收（总线不持有）
+  - 会话进入 FIRST_CLICK 立即松开
+  - A 开时仅会话 FISHING 才按下，进入 FISHING 后 poll 接管
+  - 会话切回 DISABLED 且鱼漂非 FISHING 时松开
+  - 鱼漂离开 FISHING 后 poll 松开
+  - 单帧无 Pos 不松开
+  - 系统左键被占用时让位，系统松开后 poll 接管按下
+  - 本程序自己按下时不视为系统占用
+  - 无权控鼠时不进入让位
+  - 系统键态读取失败时不让位
+  - stop 松开并退订

@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""macOS .app（onedir）：autofish.preview --ui → dist/<APP_NAME>
+"""macOS .app（onedir）：run_preview_ui.py → dist/<APP_NAME>
 
 环境变量（本地反复测授权时用）：
   ALBN_BUNDLE_ID   默认 com.albn.autofish
@@ -35,7 +35,6 @@ if _tmpl.is_dir():
 binaries = []
 hiddenimports = [
     "autofish",
-    "autofish.preview",
     "tools.preview_app",
     "tools.dual_range_axis",
     "common.paths",

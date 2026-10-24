@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-# —— 色板（柔暗仪表）——
+# —— 色板（柔暗仪表 · 海青绿）——
 BG = "#16191e"
 SURFACE = "#1e2329"
 SURFACE_2 = "#262c34"
@@ -13,13 +13,24 @@ TEXT_MUTED = "#9aa3ad"
 TEXT_FAINT = "#6b7380"
 ACCENT = "#3db8a0"
 ACCENT_DIM = "#2a7d6c"
-ACCENT_ON = "#ffffff"  # 强调底上的字（禁止再用深色字）
+ACCENT_ON = "#ffffff"  # 强调底上的字
 SUCCESS = "#4caf82"
 WARN = "#d4a24c"
 DANGER = "#d96b6b"
 LOG_BG = "#12151a"
 PREVIEW_BG = "#0f1216"
 NAV_ACTIVE_BG = "#252b33"
+
+
+def paint_tone(widget, tone: str) -> None:
+    """用动态属性上色。字号留在样式表里，避免 setStyleSheet 把字号盖掉。"""
+    if widget.property("tone") == tone:
+        return
+    widget.setProperty("tone", tone)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
 
 
 def global_qss() -> str:
@@ -44,9 +55,174 @@ def global_qss() -> str:
         color: {TEXT_MUTED};
     }}
     QFrame#readout {{
+        background: transparent;
+        border: none;
+    }}
+    QFrame#statusCard {{
         background: {SURFACE};
         border: 1px solid {BORDER_SOFT};
-        border-radius: 8px;
+        border-radius: 10px;
+    }}
+    QFrame#capabilityCard, QFrame#capabilityHero {{
+        background: {SURFACE};
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 16px;
+    }}
+    QFrame#capabilityHero {{
+        border-radius: 18px;
+    }}
+    QFrame#capabilityCard[active="true"], QFrame#capabilityHero[active="true"] {{
+        border: 1px solid rgba(61, 184, 160, 0.55);
+    }}
+    QFrame#capabilityCard[live="true"] {{
+        border: 2px solid {ACCENT};
+        background: {SURFACE_2};
+    }}
+    QFrame#capabilityCard[flash="true"] {{
+        border: 2px solid {ACCENT};
+        background: rgba(61, 184, 160, 0.22);
+    }}
+    QLabel#castBadge {{
+        color: {TEXT_FAINT};
+        border: 1px solid {BORDER};
+        border-radius: 9px;
+        padding: 1px 8px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QLabel#castBadge[live="true"] {{
+        color: {ACCENT_ON};
+        background: {ACCENT};
+        border-color: {ACCENT};
+    }}
+    QLabel#castNote {{
+        color: {TEXT};
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QFrame#capabilityCard[active="false"] QCheckBox#capSwitch,
+    QFrame#capabilityHero[active="false"] QCheckBox#capSwitch {{
+        color: {TEXT_MUTED};
+    }}
+    QCheckBox#capSwitch {{
+        background: transparent;
+        border: none;
+        padding: 0;
+        font-size: 14px;
+        font-weight: 700;
+        spacing: 8px;
+    }}
+    QCheckBox#capSwitch::indicator {{
+        width: 16px;
+        height: 16px;
+        max-width: 16px;
+        max-height: 16px;
+        border-radius: 4px;
+    }}
+    QCheckBox#capSwitch::indicator:checked,
+    QCheckBox#capSwitch::indicator:checked:hover {{
+        background: {ACCENT};
+        border-color: {ACCENT};
+    }}
+    QLabel#capKey {{
+        color: {TEXT_MUTED};
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1.6px;
+    }}
+    QLabel#capValue {{
+        color: {TEXT};
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+    }}
+    QFrame#capabilityCard[active="false"] QLabel#capValue {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#heroPos {{
+        color: {TEXT};
+        font-size: 56px;
+        font-weight: 700;
+        letter-spacing: -2px;
+    }}
+    QLabel#heroPos[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#heroPos[tone="warn"] {{
+        color: {WARN};
+    }}
+    QLabel#capAct {{
+        color: {TEXT_MUTED};
+        font-size: 15px;
+        font-weight: 700;
+    }}
+    QLabel#capAct[tone="hold"] {{
+        color: {SUCCESS};
+    }}
+    QLabel#capAct[tone="release"] {{
+        color: {WARN};
+    }}
+    QLabel#capAct[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#capMeta {{
+        color: {TEXT_MUTED};
+        font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#capMeta[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#capMeta[tone="warn"] {{
+        color: {WARN};
+    }}
+    QLabel#capMeta[tone="ok"] {{
+        color: {SUCCESS};
+    }}
+    QLabel#capMeta[tone="accent"] {{
+        color: {ACCENT};
+    }}
+    QLabel#licenseBanner {{
+        color: {TEXT_MUTED};
+        font-size: 11px;
+        font-weight: 600;
+        padding: 4px 8px;
+        background: rgba(255,255,255,0.03);
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 4px;
+    }}
+    QLabel#licenseBanner[warn="true"] {{
+        color: {WARN};
+        background: rgba(212,162,76,0.08);
+        border: 1px solid rgba(212,162,76,0.28);
+    }}
+    QLabel#licenseBanner[danger="true"] {{
+        color: #c48a8a;
+        background: rgba(217,107,107,0.06);
+        border: 1px solid rgba(217,107,107,0.22);
+    }}
+    QFrame#metricCell {{
+        background: {SURFACE_2};
+        border: 1px solid {BORDER_SOFT};
+        border-radius: 6px;
+    }}
+    QLabel#statusCardTitle {{
+        color: {TEXT_FAINT};
+        font-size: 11px;
+        font-weight: 700;
+        letter-spacing: 1px;
+    }}
+    QLabel#castRemain {{
+        font-size: 32px;
+        font-weight: 700;
+        letter-spacing: -0.5px;
+        color: {TEXT};
+    }}
+    QLabel#castRemain[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#castRemain[tone="live"] {{
+        color: {ACCENT};
     }}
     QPlainTextEdit {{
         background: {LOG_BG};
@@ -64,6 +240,18 @@ def global_qss() -> str:
         color: {TEXT};
         border: 1px solid {BORDER_SOFT};
         border-left: 2px solid {ACCENT_DIM};
+    }}
+    QToolButton#logToggle {{
+        background: transparent;
+        border: none;
+        color: {TEXT_MUTED};
+        font-weight: 600;
+        font-size: 12px;
+        padding: 2px 0;
+        text-align: left;
+    }}
+    QToolButton#logToggle:hover {{
+        color: {TEXT};
     }}
     QPushButton {{
         background: {SURFACE_2};
@@ -107,6 +295,21 @@ def global_qss() -> str:
         color: {TEXT_FAINT};
         border: 1px solid {BORDER_SOFT};
         font-weight: 600;
+    }}
+    QPushButton#btnFloat {{
+        background-color: {ACCENT};
+        color: {ACCENT_ON};
+        border: 1px solid {ACCENT};
+        border-radius: 6px;
+        padding: 5px 12px;
+        font-size: 11px;
+        font-weight: 700;
+        min-height: 18px;
+    }}
+    QPushButton#btnFloat:hover {{
+        background-color: #4ac9b0;
+        border-color: #4ac9b0;
+        color: {ACCENT_ON};
     }}
     QPushButton#btnGhost {{
         background-color: transparent;
@@ -191,7 +394,7 @@ def global_qss() -> str:
     }}
     QLabel#hint {{
         color: {TEXT_FAINT};
-        font-size: 11px;
+        font-size: 10px;
     }}
     QScrollArea {{
         background: transparent;

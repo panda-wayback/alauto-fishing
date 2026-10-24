@@ -1,0 +1,78 @@
+name: algo
+function: 拉鱼策略接口与在模拟器上无头批量跑局
+modules: []
+input:
+  - name: algo.PullPolicy
+    type: "Protocol：decide(obs: sim.Observation) -> bool；可选 reset() -> None"
+    desc: 策略协议；每帧根据观测返回本帧是否按住；有局内状态的策略实现 reset()，每局开始前被调用
+  - name: ThresholdHoldPolicy.reset()
+    type: 无参
+    desc: 回到开局状态（松开、可立即切换）；随机数序列继续
+  - name: algo.ThresholdHoldPolicy(*, low=50.0, high=90.0, min_interval=0.2, jitter=0.1, seed=None)
+    type: "low / high: float（绿区相对位置 0～100，须 low < high）; min_interval / jitter: float（秒）; seed: int | None"
+    desc: 阈值点按策略；pos < low 按住，pos > high 松开，之间保持
+  - name: ThresholdHoldPolicy.decide(obs)
+    type: "obs: sim.Observation"
+    desc: 返回本帧是否按住
+  - name: algo.bobber_pos_in_safe_100(obs)
+    type: "obs: sim.Observation"
+    desc: 鱼漂在绿区内的相对位置
+  - name: algo.run_episode(policy, *, tier=4, dt=None, max_frames=60000)
+    type: "policy: PullPolicy; tier: int; dt: float | None（秒，None=1/sim.config.FPS）; max_frames: int"
+    desc: 新开一局指定等级的模拟，每帧 policy.decide(obs) → sim.step，直到终局或帧数用尽
+  - name: algo.run_batch(policy, *, episodes=100, tier=4, dt=None, max_frames=60000)
+    type: "参数同 run_episode；episodes: int"
+    desc: 用同一 policy 连跑 episodes 局并汇总；每局开始前 policy.reset()（若有）
+  - name: "CLI python -m algo [--tier N] [--episodes M] [--low L] [--high H] [--seed S]"
+    type: "N: int 1～8（默认 4）; M: int（默认 50）; L / H: float（默认 50 / 90）; S: int（默认无）"
+    desc: 用 ThresholdHoldPolicy 无头批量跑局并打印统计；需 PYTHONPATH=src
+  - name: algo.__main__.main(argv=None)
+    type: "argv: list[str] | None（同 CLI 参数；None=读 sys.argv）"
+    desc: CLI 的可调用入口
+output:
+  - name: ThresholdHoldPolicy.decide(obs)
+    type: bool
+    desc: True=按住，False=松开
+  - name: algo.bobber_pos_in_safe_100(obs)
+    type: float
+    desc: "100 * (bobber_x - safe_left) / (safe_right - safe_left)，夹紧到 0～100；绿区宽度 ≤ 1e-6 时返回 50"
+  - name: algo.run_episode(...)
+    type: "algo.EpisodeResult（frozen dataclass）：state: sim.State, frames: int, progress: float, time: float, tier: int"
+    desc: 单局结果；state 为 SUCCESS / FAILED，帧数用尽未分胜负时为 PLAYING；tier 为夹紧后的实际等级
+  - name: algo.run_batch(...)
+    type: "algo.BatchResult（frozen dataclass）：episodes: int, wins: int, win_rate: float, avg_time: float, avg_progress: float"
+    desc: 批量统计；win_rate = wins / episodes，avg_* 为各局 time / progress 均值；episodes=0 时比率与均值为 0
+  - name: "CLI python -m algo / algo.__main__.main(argv)"
+    type: "stdout 两行：'tier=T{N} episodes={M} win_rate={x.x%} avg_time={s}s avg_progress={p}' 与 'sample episode: {STATE} time={s}s progress={p}'; 退出码 int"
+    desc: 退出码 0=批量有胜局或额外一局样例成功，1=全部失败
+contract:
+  - 只在模拟器上运行，不动真实鼠标、不截屏、不开窗口
+  - run_episode 每局新建并开局一份模拟器；policy 有 reset 时在第一次 decide 之前调用一次；policy.decide 每帧被调用一次，frames 等于调用次数，time ≈ frames × dt
+  - run_batch 所有局共用传入的同一 policy 实例，不重新构造；局间状态由 reset 清除，因此带 reset 的策略每局结果与新实例一致（随机数序列除外）
+  - ThresholdHoldPolicy 初始与 reset 后为松开且可立即切换；按住↔松开切换后，至少 min_interval + U(0, jitter) 秒（按 obs.time）内不再切换；相同 seed 与相同观测序列给出相同输出
+  - CLI 的样例局使用新的策略实例
+depends:
+  - src/sim
+errors:
+  - code: ValueError
+    desc: ThresholdHoldPolicy 构造时 low >= high
+  - code: SystemExit(2)
+    desc: CLI / main 参数非法（如 --tier 不在 1～8）
+tests:
+  - bobber_pos_in_safe_100 线性映射、夹紧到 0～100、绿区退化时返回 50
+  - ThresholdHoldPolicy low >= high 抛 ValueError
+  - ThresholdHoldPolicy 低于 low 按住、高于 high 松开、之间保持
+  - ThresholdHoldPolicy 切换后 min_interval 内不再切换，之后可切换
+  - 相同 seed 的 ThresholdHoldPolicy 对相同观测序列输出相同
+  - run_episode 用新 ThresholdHoldPolicy 在 T1 成功，结果字段一致
+  - run_episode 持续按住的策略失败；frames 等于 decide 调用次数
+  - run_episode 帧数用尽返回 PLAYING，time ≈ frames × dt；tier 被夹紧
+  - run_batch 汇总 wins / win_rate / 均值，且所有局共用同一 policy
+  - run_episode 在每局第一次 decide 之前调用 policy.reset()
+  - ThresholdHoldPolicy.reset 恢复松开且可立即切换
+  - run_batch 共用一个 ThresholdHoldPolicy 时每局都能赢（与新实例一致）
+  - run_batch episodes=0 返回全零
+  - main(argv) 打印两行统计并在有胜局时返回 0
+  - main 在全部失败时返回 1
+  - main 非法 --tier 以 SystemExit(2) 退出
+  - 子进程运行 python -m algo 退出码 0 并输出统计

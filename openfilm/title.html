@@ -1,0 +1,91 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  .logo {
+    width: 168px;
+    height: 168px;
+    object-fit: contain;
+    filter: drop-shadow(0 12px 28px rgba(0,0,0,0.45));
+  }
+  .wrap {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 28px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 96px;
+    line-height: 1.05;
+  }
+  p.line {
+    margin: 0;
+    font-size: 36px;
+    max-width: 1400px;
+    text-align: center;
+    line-height: 1.35;
+  }
+  .badge-row {
+    display: flex;
+    gap: 16px;
+    margin-top: 8px;
+  }
+</style>
+</head>
+<body>
+<div class="stage" id="stage">
+  <div class="wrap" id="wrap">
+    <img class="logo" id="logo" src="assets/logo.png" alt="">
+    <h1 class="brand" id="title">albn-fishing</h1>
+    <p class="line tagline" id="tagline">Albion 拉鱼：模拟器测算法 + 真机自动拉鱼</p>
+    <div class="badge-row" id="badges">
+      <span class="pill" id="b1">Simulator</span>
+      <span class="pill" id="b2">Autofish</span>
+      <span class="pill" id="b3">Open source</span>
+    </div>
+  </div>
+</div>
+<script type="module">
+const wrap = document.getElementById("wrap");
+const logo = document.getElementById("logo");
+const title = document.getElementById("title");
+const tagline = document.getElementById("tagline");
+const badges = document.getElementById("badges");
+
+function ease(t) {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+}
+
+window.film = {
+  duration: 5,
+  ready: Promise.all([
+    logo.decode?.() ?? Promise.resolve(),
+    document.fonts.ready,
+  ]),
+  frame(t) {
+    // start partially visible so t=0 is not a black frame
+    const a = 0.25 + 0.75 * ease(t / 0.55);
+    const b = 0.15 + 0.85 * ease((t - 0.12) / 0.55);
+    const c = ease((t - 0.35) / 0.6);
+    const d = ease((t - 0.7) / 0.6);
+    logo.style.opacity = String(a);
+    logo.style.transform = `translateY(${(1 - a) * 20}px) scale(${0.94 + 0.06 * a})`;
+    title.style.opacity = String(b);
+    title.style.transform = `translateY(${(1 - b) * 16}px)`;
+    tagline.style.opacity = String(c);
+    tagline.style.transform = `translateY(${(1 - c) * 14}px)`;
+    badges.style.opacity = String(d);
+    badges.style.transform = `translateY(${(1 - d) * 12}px)`;
+    const pulse = t > 3.2 ? 1 + 0.012 * Math.sin((t - 3.2) * Math.PI * 2) : 1;
+    wrap.style.transform = `scale(${pulse})`;
+  },
+};
+</script>
+</body>
+</html>

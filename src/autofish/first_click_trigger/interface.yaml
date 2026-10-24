@@ -1,0 +1,312 @@
+name: first_click_trigger
+function: 听水花声自动开钓的会话机与声音模板管理
+modules: []
+input:
+  # ---- 会话机（autofish.first_click_trigger.FirstClickTrigger，亦可从 .trigger 导入）----
+  - name: FirstClickTrigger(bus, device=None, threshold=0.70, template_path=None, *, loopback=None)
+    type: "bus: autofish.events.bus.AutofishBus | None; device: int（sounddevice 序号）| str（AudioDeviceInfo.key 或设备名）| None（自动选环回/虚拟采集）; threshold: float; template_path: str | Path | None; loopback: bool | None（按名称选 Windows 设备时是否当环回）"
+    desc: 新建声音开钓会话机；按设备探测采样率；给 template_path 时立即加载模板；构造不打开音频流、不启动线程
+  - name: FirstClickTrigger.start() / FirstClickTrigger.stop()
+    type: 无参
+    desc: start 订阅 Topic.POS 并起后台线程打开音频流持续监听；stop 掐断音频流、退订、打断进行中的第一下并松开鼠标后结束线程
+  - name: FirstClickTrigger.set_session_enabled(enabled)
+    type: "enabled: bool"
+    desc: 开关声音开钓（A）；开 → WAIT，关 → DISABLED；与当前相同时忽略
+  - name: FirstClickTrigger.set_threshold(threshold)
+    type: "threshold: float（Mel 相似度 0～1）"
+    desc: 改命中阈值，立即生效
+  - name: FirstClickTrigger.set_click_timing(delay_lo_s, delay_hi_s, hold_lo_s, hold_hi_s, after_lo_s=0.2, after_hi_s=0.8)
+    type: "全部 float 秒"
+    desc: 第一下的 等待 / 长按 / 松开后停顿 区间；每次命中在区间内均匀随机取值
+  - name: FirstClickTrigger.load_template(path) / FirstClickTrigger.set_template(wave, *, trim_energy=True)
+    type: "path: str | Path（.npy 单声道或多声道 float 波形）; wave: np.ndarray 波形（采样率须与采集一致）"
+    desc: 换模板；load_template 不裁切，set_template 默认按能量裁到主体
+  - name: FirstClickTrigger.play_template()
+    type: 无参
+    desc: 用本机扬声器/耳机（跳过 BlackHole、多输出等虚拟线）非阻塞试听当前模板
+  - name: FirstClickTrigger.start_session_recording() / FirstClickTrigger.stop_session_recording()
+    type: 无参
+    desc: 起停长录音（与会话机无关，需已 start 才有数据）；停止时落盘到会话目录，有模板则立即回测
+  - name: FirstClickTrigger.backtest_last_or_dir(root)
+    type: "root: Path（session_* 目录）"
+    desc: 用当前模板回测一条已落盘会话
+  - name: FirstClickTrigger.replace_template_from_range(wave, samplerate, start_s, end_s, *, save_user=True)
+    type: "wave: np.ndarray 单声道; samplerate: int; start_s, end_s: float 秒（顺序可反）; save_user: bool"
+    desc: 用选区原样（不裁切）替换当前模板；save_user 时另存入用户模板库并设为当前选中
+  - name: FirstClickTrigger.drain_logs(channel=None)
+    type: "channel: \"sound\" | \"backtest\" | None（全部）"
+    desc: 取出并清空后台日志（相似度、阈值、各段时长、切态、录音/回测）
+  - name: 订阅 Topic.POS
+    type: "autofish.events.topics.PosEvent（只看 pos 是否为 None）"
+    desc: start 后订阅；判定出漂 / 丢漂
+  # ---- 音频采集（autofish.first_click_trigger.audio_input）----
+  - name: AudioInput.list_devices()
+    type: 静态方法，无参
+    desc: 枚举可录音设备；Windows 用 soundcard（含扬声器 Loopback），其它平台用 sounddevice 输入设备
+  - name: AudioInput.preferred_capture_key()
+    type: 静态方法，无参
+    desc: 取首个环回/虚拟采集设备的 key
+  - name: AudioInput(device=None, samplerate=None, blocksize=1024, channels=None, *, loopback=None)
+    type: "device 同 FirstClickTrigger; samplerate / channels: int | None（None=设备缺省）; blocksize: int"
+    desc: 新建采集器（只探测设备，不打开流）
+  - name: AudioInput.start() / AudioInput.stop() / AudioInput.read()
+    type: 无参
+    desc: 打开 / 关闭采集流；read 非阻塞取一块单声道音频
+  - name: AudioInput.begin_record() / AudioInput.end_record() / AudioInput.record_snapshot()
+    type: 无参
+    desc: 起止长录音（原始多声道，不丢块）/ 取当前已录块副本
+  # ---- 循环缓冲（autofish.first_click_trigger.ring_buffer）----
+  - name: AudioRingBuffer(capacity_samples) / .extend(samples) / .last(n_samples)
+    type: "capacity_samples, n_samples: int; samples: 1 维 float32"
+    desc: 保存最近 capacity 个样本；单线程使用
+  # ---- 模板匹配（autofish.first_click_trigger.template_matcher）----
+  - name: TemplateMatcher(samplerate=48000, template_duration_s=2.0, threshold=0.70, min_energy_db=-80.0, search_pad_s=2.0, min_score_rise=0.08)
+    type: "samplerate: int; 其余 float"
+    desc: 新建 Mel 频谱滑动 NCC 匹配器（无模板）；threshold 属性可直接改
+  - name: TemplateMatcher.set_template(wave, *, trim_energy=True) / TemplateMatcher.load_template(path)
+    type: "wave: np.ndarray（多声道取均值）; path: .npy"
+    desc: 设模板；load_template 不裁切
+  - name: TemplateMatcher.feed(block, *, update_baseline=True)
+    type: "block: np.ndarray 单声道或 (N, ch)"
+    desc: 追加实时音频块并判定是否命中；update_baseline=False 时只填缓冲不更新抬升基线
+  - name: TemplateMatcher.analyze_clip(wave)
+    type: "wave: np.ndarray 单声道片段"
+    desc: 只算片段与模板的峰值相似（不看抬升）
+  - name: TemplateMatcher.reset_buffer() / reset_score_baseline() / bump_score_baseline(score) / clone_for_offline()
+    type: "score: float"
+    desc: 清缓冲与基线 / 只清抬升基线 / 把基线抬到至少 score / 复制模板与参数得到独立匹配器
+  # ---- 长录音会话（autofish.first_click_trigger.session_eval）----
+  - name: save_session(wave, samplerate, ranges, *, paths=None)
+    type: "wave: np.ndarray (N,) 或 (N, ch); samplerate: int; ranges: list[(start_s, end_s)] | list[{start_s, end_s}]; paths: SessionPaths | None（None=新建会话目录）"
+    desc: 落盘一条长录音与水花标注
+  - name: SessionPaths(root, audio, meta, marks) / save_marks(paths, ranges)
+    type: "Path ×4（root/audio.npy、meta.json、marks.json）; ranges 同上"
+    desc: 会话文件位置；save_marks 只改标注
+  - name: load_session(root) / load_session_raw(root)
+    type: "root: Path"
+    desc: 读会话：单声道波形 + 标注 / 原始多声道波形
+  - name: backtest_recording(wave, samplerate, matcher, ranges, *, block=1024)
+    type: "wave: np.ndarray; matcher: TemplateMatcher（须有模板）; ranges 同上（人工水花，可空）"
+    desc: 用独立匹配器按实时同款逻辑滑过整段并对照标注
+  - name: extract_range(wave, samplerate, start_s, end_s) / normalize_ranges(ranges) / merge_nearby_hits(hits, *, merge_gap_s=0.5) / format_backtest_report(result)
+    type: "秒为单位; hits: list[{t_s, score, ...}]; result: backtest_recording 的返回"
+    desc: 截区间 / 规范标注 / 合并近邻命中 / 生成文字报告
+  # ---- 模板库与会话目录（autofish.first_click_trigger.paths）----
+  - name: list_library_templates() / list_bundled_templates() / bundled_template_path()
+    type: 无参
+    desc: 列模板库（用户库 + 内置）/ 列内置 / 取平台默认内置
+  - name: resolve_template_path() / get_active_template_name() / set_active_template(path)
+    type: "path: Path | None（None=清除选中）"
+    desc: 取当前模板 / 读选中名 / 设选中（写用户库 active.json）
+  - name: save_wave_as_library_template(wave, path=None) / rename_library_template(path, new_stem) / delete_library_template(path)
+    type: "wave: np.ndarray; path: Path; new_stem: str（可带 .npy）"
+    desc: 用户库新增（并设为选中）/ 改名 / 删除
+  - name: next_auto_template_path() / is_bundled_template(path) / template_source_label(path)
+    type: "path: Path | None"
+    desc: 取不重名的 tpl_YYYYMMDD_HHMMSS.npy / 是否内置 / 界面显示名
+  - name: list_session_dirs() / delete_session_dir(path) / user_audio_sessions_dir() / user_template_dir() / assets_audio_dir() / bundled_sessions_seed_dir()
+    type: "path: Path"
+    desc: 列 / 删长录音会话；各固定目录
+  - name: ensure_user_template_seed() / ensure_session_seed()
+    type: 无参
+    desc: 从包内种子补齐用户模板库 / 会话目录
+output:
+  - name: 发布 Topic.CAST_SESSION
+    type: "autofish.events.topics.CastSessionEvent(state: CastSessionState, ts, detail: str, splash: SplashHit | None)"
+    desc: 会话切态；进入 FIRST_CLICK 时 detail="splash" 且 splash=SplashHit(score, delay_s, hold_s, after_s, threshold)；其它切态 splash=None，detail 为短说明（a_on / a_off / clicked / bobber / bobber_timeout / lost_1s / stopped / error）
+  - name: 系统鼠标左键按下 / 松开
+    type: 经 autofish.act.MouseActuator
+    desc: FIRST_CLICK 内的第一下（按住 hold_s 后松开）
+  - name: FirstClickTrigger.session_state
+    type: CastSessionState
+    desc: 当前会话态
+  - name: FirstClickTrigger.is_running()
+    type: bool
+    desc: 后台监听线程是否在跑
+  - name: FirstClickTrigger.has_template / template_wave / samplerate
+    type: "bool / np.ndarray float32 副本 | None / int"
+    desc: 模板是否就绪、当前模板波形、采集采样率
+  - name: FirstClickTrigger.last_score / level_db / trigger_count / last_trigger_at
+    type: "float / float dB / int / float 墙钟秒（0=从未）"
+    desc: 最近相似度、最近一块音量、已完成的第一下次数与时刻
+  - name: FirstClickTrigger.recent_monitor_wave(seconds=20.0)
+    type: "np.ndarray float32 单声道"
+    desc: 最近 seconds 秒波形（最多 20s、不超过已收到的量）
+  - name: FirstClickTrigger.live_hits_for_monitor(seconds=20.0)
+    type: "list[{start_s, end_s, t_s, score}]"
+    desc: 最近 seconds 秒内的实时命中，时间为相对该窗口起点的秒；带宽 = 模板时长
+  - name: FirstClickTrigger.is_session_recording / session_record_duration_s / session_recording_preview()
+    type: "bool / float 秒 / (wave: np.ndarray | None, samplerate: int, ranges: list)"
+    desc: 长录音状态、已录时长、已录单声道波形副本
+  - name: FirstClickTrigger.stop_session_recording()
+    type: "dict{paths: SessionPaths, wave: np.ndarray 单声道, samplerate: int, ranges: list, report: dict | None, report_text: str}"
+    desc: 落盘结果；无模板时 report=None
+  - name: FirstClickTrigger.backtest_last_or_dir(root)
+    type: "dict（同 backtest_recording，另含 report_text: str）"
+    desc: 回测报告
+  - name: FirstClickTrigger.replace_template_from_range(...)
+    type: "np.ndarray float32"
+    desc: 截得的新模板波形
+  - name: FirstClickTrigger.drain_logs(channel)
+    type: "list[str]"
+    desc: 按时间顺序的日志行
+  - name: AudioInput.list_devices()
+    type: "list[AudioDeviceInfo(key: str \"sd:<序号>\" | \"sc:lb:<id>\" | \"sc:mic:<id>\", name: str, is_input: bool, channels: int, samplerate: float, is_loopback: bool, is_virtual_capture: bool)]"
+    desc: 环回/虚拟采集排前；Windows 系统默认扬声器环回名后缀 DEFAULT_SPEAKER_TAG 并排最前；AudioDeviceInfo.index 对 sd 设备返回 int 序号
+  - name: AudioInput.preferred_capture_key()
+    type: "str | None"
+    desc: 无环回/虚拟采集设备时为 None
+  - name: AudioInput.read()
+    type: "np.ndarray float32 (N,) | None"
+    desc: 多声道取均值后的一块；无数据时 None
+  - name: AudioInput.samplerate / channels / blocksize / record_frames
+    type: int
+    desc: 采集参数与已录帧数
+  - name: AudioInput.end_record() / record_snapshot()
+    type: "np.ndarray float32 (N, ch) | None / list[np.ndarray]"
+    desc: 长录音原始数据；未录到任何块时 end_record 返回 None
+  - name: AudioRingBuffer.last(n_samples) / capacity
+    type: "np.ndarray float32 副本（时间顺序）/ int"
+    desc: 最近 min(n, 已写入, capacity) 个样本
+  - name: TemplateMatcher.feed(...)
+    type: "(triggered: bool, score: float)"
+    desc: score 为短窗（模板+0.8s）与长窗（模板+search_pad_s）Mel 相似的较高者；last_reject 为未触发原因（如「太静」「相似不足…」「未抬升…」）
+  - name: TemplateMatcher.analyze_clip(wave)
+    type: "dict{score, rise, match_start, prominence, ambient, threshold, would_trigger, reason, window}"
+    desc: would_trigger 只看 score ≥ threshold
+  - name: TemplateMatcher.has_template / template_wave / template_duration_s / threshold
+    type: "bool / np.ndarray 副本 | None / float 秒 / float"
+    desc: 模板状态与参数
+  - name: save_session(...)
+    type: "SessionPaths"
+    desc: "audio.npy 原样（多声道保持 (N, ch)）；meta.json {samplerate, samples, channels, duration_s}；marks.json {splash_ranges: [{start_s, end_s}]}"
+  - name: load_session(root) / load_session_raw(root)
+    type: "(wave 单声道 float32, samplerate: int, ranges: list[(start_s, end_s)]) / (raw float32, samplerate: int)"
+    desc: 无 marks.json 时 ranges 为空
+  - name: backtest_recording(...)
+    type: "dict{duration_s, ranges, hits, true_positive, false_positive, false_negative_ranges, summary{n_marks, n_hits, n_raw_hits, tp, fp, fn}}"
+    desc: hits 每项 {t_s, start_s, end_s, score（区间峰值相似）, trigger_score}，按时间排序；命中时刻落在某段未用标注内为真阳，否则假阳；无命中的标注为漏检
+  - name: extract_range(...)
+    type: "np.ndarray float32 副本"
+    desc: "wave[int(start_s*sr):int(end_s*sr)]，越界截断"
+  - name: normalize_ranges(ranges)
+    type: "list[(start_s, end_s)]"
+    desc: 起止颠倒的互换，短于 1ms 的丢弃，按起点排序
+  - name: resolve_template_path()
+    type: "Path | None"
+    desc: 选中的模板存在则取之；否则用户库按名排序第一个；否则平台默认内置；都没有为 None
+  - name: list_library_templates()
+    type: "list[Path]"
+    desc: 用户库 *.npy（名字不分大小写排序）在前，内置 assets/audio/*.npy 在后
+  - name: bundled_template_path()
+    type: Path
+    desc: Windows → windows.npy，macOS → macos.npy，其它平台依次找 windows.npy / macos.npy；首选缺失时取内置目录内（按名）第一个
+  - name: list_session_dirs()
+    type: "list[Path]"
+    desc: 会话目录下同时含 audio.npy 与 meta.json 的 session_*，按名倒序（新在前）
+  - name: get_active_template_name()
+    type: "str | None"
+    desc: 用户库文件为文件名；内置为 "__bundled__:<文件名>"；无选中为 None
+contract:
+  - "会话机：WAIT →（水声命中）FIRST_CLICK →（第一下完成）WAIT_BOBBER →（有效 Pos）FISHING →（持续无有效 Pos 满 1s）WAIT；WAIT_BOBBER 3s 内无有效 Pos 回 WAIT；第一下出错回 WAIT"
+  - A 关（set_session_enabled(False) 或从未开启）时会话为 DISABLED：不听声、不点击、Pos 不改变会话态
+  - 只有 WAIT 且听声冷却已过才会因水声进入 FIRST_CLICK；FIRST_CLICK / WAIT_BOBBER / FISHING 中的水声一律忽略
+  - 从本轮其它态回到 WAIT 后至少 3s 不听声（冷却），并清空匹配缓冲；从 DISABLED 进入 WAIT 无冷却
+  - 每次进入可听声状态，抬升基线归零
+  - FIRST_CLICK 内依次：等待 delay_s → 按住 hold_s → 松开 → 停顿 after_s → 进入 WAIT_BOBBER；三值在 set_click_timing 区间内均匀随机，并随进入 FIRST_CLICK 的事件 SplashHit 带出
+  - set_click_timing 各值夹到 0～5s（长按下限 0.05s），区间上下限颠倒时自动互换；缺省等待 0.3～1.5s、长按 0.7～1.5s、松开后 0.2～0.8s
+  - 只订阅 Topic.POS（start 时订、stop 时退）；不订阅 Topic.ACTION_INTENT；只发布 Topic.CAST_SESSION
+  - bus 为 None 时会话机照常运行但不发事件
+  - FIRST_CLICK 中关 A 立即松开本程序按下的鼠标；stop 可打断第一下的任一等待段，返回前松开鼠标、关闭音频流；stop 后 A 开为 WAIT、A 关为 DISABLED，detail=stopped
+  - 后台匹配慢于实时时把积压的块一次取完再匹配，不丢块
+  - 音频流打开失败不抛出：后台线程记日志「音频启动失败 · <原因>」后退出（is_running() 变 False）
+  - 无模板时不触发；实时缓冲保留最近 20s 供 recent_monitor_wave
+  - "命中判定：缓冲短时峰值 RMS ≥ min_energy_db（否则 score=0、last_reject=太静、基线衰减）且 score ≥ threshold 且 score − 基线 ≥ min_score_rise；命中且 update_baseline 时基线抬到该分数，同一段声音不连发"
+  - 模板最长 max(template_duration_s, 2.0) 秒（超出截前段）；设模板后 template_duration_s 等于模板实际时长，匹配缓冲与基线清零
+  - backtest_recording 使用 matcher 的独立副本，不改变传入 matcher 的缓冲与基线；近邻命中（相差 < 0.5s）只留最高分
+  - AudioInput 未及时 read 时队列最多积压 8 块，超出丢最旧；长录音直接收原始块不丢
+  - AudioInput.start 重复调用不重复开流；stop 可重复调用并清空未读块
+  - 模板库写操作只落在 user_template_dir()（data_root()/audio_template）；内置 assets/audio 只读；选中记录在 user_template_dir()/active.json
+  - save_wave_as_library_template 只写用户库（给出库外路径时按同名放入用户库），float32 保存并设为选中；改名后若原为选中则选中跟随
+  - 删除当前选中模板后，选中改为 resolve_template_path() 的新结果
+  - 种子补齐只拷缺失项、不覆盖已有，模板种子只拷 *.npy；list_library_templates / list_session_dirs 调用时自动补齐
+  - 长录音会话目录为 user_audio_sessions_dir()/session_YYYYmmdd_HHMMSS；delete_session_dir 只删该目录下的 session_* 子目录
+depends:
+  - src/autofish/events
+  - src/autofish/act
+  - src/common
+errors:
+  - code: RuntimeError
+    desc: "FirstClickTrigger：无模板时 play_template / 回测；重复 start_session_recording；无长录音时 stop_session_recording；长录音为空；backtest_last_or_dir(None)"
+  - code: RuntimeError
+    desc: "AudioInput.start：设备为多输出/聚合（只能播放）或无输入声道；Windows 环回缺 soundcard 或打不开设备"
+  - code: RuntimeError
+    desc: "paths：改名/删除/覆盖内置模板；改名/删除库外文件；新名含非法字符或与已有重名；删除不存在或不在会话目录下的会话"
+  - code: RuntimeError
+    desc: "TemplateMatcher.clone_for_offline / backtest_recording：无模板"
+  - code: ValueError
+    desc: "set_template 空波形；extract_range 区间为空或超出录音"
+  - code: ImportError
+    desc: 未安装 sounddevice 时导入 audio_input / trigger 抛出
+tests:
+  # AudioInput / AudioRingBuffer
+  - list_devices 过滤无输入与多输出设备，虚拟采集排前并带标志
+  - preferred_capture_key 取虚拟采集，没有时为 None
+  - 构造只探测设备采样率与声道，不打开流
+  - start 只开一次流，read 返回多声道均值的单声道块，无数据为 None
+  - 未读块最多保留最新 8 块
+  - 长录音保留原始多声道，end_record 后清零，未录到数据返回 None
+  - stop 中止并关闭流、清空未读块，可重复调用
+  - 多输出设备与无输入声道设备 start 抛 RuntimeError
+  - 环缓空 / 未满时按已写入量返回
+  - 环缓回绕后按时间顺序返回最近样本
+  - 环缓超长块只留尾部，last 返回副本
+  # TemplateMatcher
+  - 无模板时 feed 不命中，clone 抛 RuntimeError，空模板抛 ValueError
+  - 模板超长被截到上限，template_wave 返回副本
+  - trim_energy 裁掉静音，关闭时原样保留
+  - load_template 多声道转单声道 float32 且不裁切
+  - 静音缓冲不命中且原因为太静
+  - 水花命中后基线抬升不连发，reset_score_baseline 后可再命中
+  - update_baseline=False 不抬基线
+  - reset_buffer 清掉已缓存的水花
+  - 不相似声音与超高阈值都不命中
+  - analyze_clip 只看阈值且不改基线
+  - clone_for_offline 得到参数一致且互不影响的匹配器
+  - bump_score_baseline 抬高基线后同分不命中
+  - 真实会话标注水花区间与内置模板相似度过阈值（只读仓库 npy）
+  # session_eval
+  - normalize_ranges 互换颠倒、丢弃过短并排序
+  - save_session / load_session / load_session_raw / save_marks 往返一致
+  - save_session 缺省落到会话目录并出现在 list_session_dirs
+  - extract_range 截取、颠倒、越界截断与无效区间
+  - merge_nearby_hits 近邻只留最高分
+  - backtest_recording 区分真阳 / 假阳 / 漏检且不改动传入匹配器，报告文本含命中数
+  - backtest_recording 无模板抛错，无命中报告提示整段无匹配
+  # paths
+  - 内置默认按平台：win32→windows.npy、darwin→macos.npy、其它→windows.npy
+  - 首选内置缺失时取内置目录第一个
+  - 无选中无用户模板时按平台取内置，都没有返回 None
+  - 模板库用户在前内置在后，种子只补缺失 npy 不覆盖不拷 active.json
+  - save_wave_as_library_template 自动命名、设为选中并能解析，库外路径落回用户库
+  - 不能覆盖内置模板
+  - 选中内置与清除选中
+  - next_auto_template_path 不重名
+  - 改名跟随选中，非法名 / 重名 / 内置 / 库外改名抛错
+  - 删除选中模板后选中依次落到其它用户模板与平台内置，内置不可删
+  - 会话列表含种子、按名倒序、过滤不完整目录；只删会话目录下的 session_*
+  # FirstClickTrigger
+  - 构造不打开音频、初始 DISABLED、模板已加载
+  - "全流程：WAIT 命中 → FIRST_CLICK（带 SplashHit）→ WAIT_BOBBER → FISHING（期间水声忽略）→ 丢漂满 1s 回 WAIT → 冷却内水声忽略 → 冷却后再命中；只订阅 POS"
+  - WAIT_BOBBER 3s 无漂回 WAIT
+  - A 关为 DISABLED，水声与 Pos 都不改变会话、不点鼠标、不订 ACTION_INTENT
+  - FIRST_CLICK 中关 A 立即松开鼠标并转 DISABLED
+  - stop 打断第一下等待、区间被夹取与互换、音频流被中止、鼠标未按
+  - 音频打开失败记日志并结束线程
+  - 实时波形最多保留最近 20s
+  - set_threshold 即时生效
+  - 无模板不触发，set_template 后可触发
+  - 无总线时会话机照常运行
+  - play_template 走默认扬声器并归一化峰值，不改模板文件；无模板抛错
+  - 长录音落盘到会话目录并自动回测，重复开始 / 未开始停止 / 空录音抛错
+  - 选区替换模板，可选入库并设为选中，无效区间抛 ValueError

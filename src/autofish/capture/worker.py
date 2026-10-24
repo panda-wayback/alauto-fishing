@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import time
 
-from autofish.bus import AutofishBus
+from autofish.events.bus import AutofishBus
 from autofish.capture.screen import grab_roi
-from autofish.topics import FrameEvent
-from autofish.worker_base import WorkerBase
+from autofish.events.topics import FrameEvent
+from autofish.events.worker_base import WorkerBase
 
 
 class CaptureWorker(WorkerBase):

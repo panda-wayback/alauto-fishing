@@ -1,4 +1,4 @@
-"""更多页：权限、开钓第一下区间、打包默认。"""
+"""更多页：权限、恢复默认、打包默认。"""
 
 from __future__ import annotations
 
@@ -16,16 +16,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from tools.dual_range_axis import SingleRangeBar
 from tools.shell_config import is_frozen_app
 from tools.shell_theme import TEXT_MUTED
+
+from common.expire import load_expire_on
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
 
 
 def build_more_page(host: "PreviewApp") -> QWidget:
-    s = host._settings
     # —— 更多：权限 ——
     page_more = QWidget()
     more_scroll = QScrollArea()
@@ -67,47 +67,33 @@ def build_more_page(host: "PreviewApp") -> QWidget:
     row_perm.addStretch(1)
     perm_l.addLayout(row_perm)
     more_l.addWidget(perm)
-    
-    click = QGroupBox("开钓第一下")
-    click_l = QVBoxLayout(click)
-    hint_click = QLabel(
-        "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
+
+    pkg_on = load_expire_on()
+    if pkg_on is not None:
+        validity = QGroupBox("有效期")
+        validity_l = QVBoxLayout(validity)
+        lbl_pkg = QLabel(f"本安装包到期 {pkg_on.isoformat()}")
+        validity_l.addWidget(lbl_pkg)
+        more_l.addWidget(validity)
+
+    restore = QGroupBox("恢复默认")
+    restore_l = QVBoxLayout(restore)
+    hint_restore = QLabel(
+        "把拉线、起勾、抛竿和截图范围恢复为默认，并清空手动条界；"
+        "不删除模板、录音和授权"
     )
-    hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-    hint_click.setWordWrap(True)
-    click_l.addWidget(hint_click)
-    host.bar_delay = SingleRangeBar(
-        title="等待",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_delay_lo_s), float(s.click_delay_hi_s)),
-        unit="s",
-        min_span=0.1,
+    hint_restore.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+    hint_restore.setWordWrap(True)
+    restore_l.addWidget(hint_restore)
+    host.btn_restore_defaults = QPushButton("恢复默认")
+    host.btn_restore_defaults.setObjectName("btnGhost")
+    host.btn_restore_defaults.setToolTip(
+        "恢复打包默认（没有则用内建缺省），并按当前主屏重算截图框"
     )
-    host.bar_delay.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_delay)
-    host.bar_hold = SingleRangeBar(
-        title="长按",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_hold_lo_s), float(s.click_hold_hi_s)),
-        unit="s",
-        min_span=0.1,
-    )
-    host.bar_hold.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_hold)
-    host.bar_after = SingleRangeBar(
-        title="松开后",
-        vmin=0.0,
-        vmax=5.0,
-        value=(float(s.click_after_lo_s), float(s.click_after_hi_s)),
-        unit="s",
-        min_span=0.1,
-    )
-    host.bar_after.rangeChanged.connect(host._on_click_timing_changed)
-    click_l.addWidget(host.bar_after)
-    more_l.addWidget(click)
-    
+    host.btn_restore_defaults.clicked.connect(host._on_restore_defaults)
+    restore_l.addWidget(host.btn_restore_defaults)
+    more_l.addWidget(restore)
+
     if not is_frozen_app():
         pack = QGroupBox("打包默认")
         pack_l = QVBoxLayout(pack)

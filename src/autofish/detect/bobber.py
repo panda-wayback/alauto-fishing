@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
 
 try:
@@ -11,23 +9,13 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
+from autofish.events.topics import BobberHit
+
+__all__ = ["BobberHit", "green_zone_mask", "pixel_to_pos"]
+
 # 中间安全区绿（实机条心约 H≈41～46；须与橘红色相分离）
 _GREEN_LO = np.array([36, 45, 40], dtype=np.uint8)
 _GREEN_HI = np.array([80, 255, 235], dtype=np.uint8)
-
-
-@dataclass(frozen=True)
-class BobberHit:
-    pos: float
-    x: float
-    y: float
-    pixel_count: int
-    bar_left: float = 0.0
-    bar_top: float = 0.0
-    bar_width: float = 0.0
-    bar_height: float = 0.0
-    score: float = 0.0
-    detect_ms: float = 0.0
 
 
 def pixel_to_pos(x: float, width: int) -> float:

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import time
 
-from autofish.bus import AutofishBus
-from autofish.topics import FishingState, FishingStateEvent, PosEvent, RoiEvent, Topic
+from autofish.events.bus import AutofishBus
+from autofish.events.topics import FishingState, FishingStateEvent, PosEvent, RoiEvent, Topic
 
 
 class FishingStateMachine:

@@ -11,13 +11,12 @@ from typing import TYPE_CHECKING, Callable
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
     QSlider,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -29,21 +28,26 @@ from autofish.first_click_trigger.paths import (
     template_source_label,
 )
 from autofish.first_click_trigger.trigger import FirstClickTrigger
-from tools.shell_log import append_log
+from tools.dual_range_axis import SingleRangeBar
+from tools.shell_log import PageLogPopup, append_log
 from tools.shell_theme import DANGER, SUCCESS, TEXT_MUTED
 from tools.template_combo import fill_template_combo, sync_combo_to_path
 from tools.waveform_select import WaveformSelectWidget
 
 if TYPE_CHECKING:
-    from autofish.bus import AutofishBus
+    from autofish.events.bus import AutofishBus
 
 
 class FirstClickTriggerPanel(QWidget):
-    """声音页：设备 / 监听 / 当前模板 / 阈值。会话启停由主控 A 驱动。"""
+    """声音页：设备 / 监听 / 当前模板 / 阈值 / 开钓第一下。会话启停由主控 A 驱动。"""
 
     def __init__(
         self,
         parent=None,
+        *,
+        click_delay: tuple[float, float] = (0.3, 1.5),
+        click_hold: tuple[float, float] = (0.7, 1.5),
+        click_after: tuple[float, float] = (0.2, 0.8),
     ) -> None:
         super().__init__(parent)
         self._bus: AutofishBus | None = None
@@ -53,13 +57,16 @@ class FirstClickTriggerPanel(QWidget):
         self._library_cbs: list[Callable[[], None]] = []
         self._threshold_cbs: list[Callable[[float], None]] = []
         self._device_cbs: list[Callable[[str], None]] = []
+        self._click_timing_cbs: list[Callable[[], None]] = []
         self._preferred_device_name = ""
-        self._delay_lo_s = 0.3
-        self._delay_hi_s = 1.5
-        self._hold_lo_s = 0.7
-        self._hold_hi_s = 1.5
-        self._after_lo_s = 0.2
-        self._after_hi_s = 0.8
+        # 主控 A 的会话偏好；停监听会关会话态，但不丢此偏好，再开监听时恢复
+        self._session_wanted = False
+        self._delay_lo_s = float(click_delay[0])
+        self._delay_hi_s = float(click_delay[1])
+        self._hold_lo_s = float(click_hold[0])
+        self._hold_hi_s = float(click_hold[1])
+        self._after_lo_s = float(click_after[0])
+        self._after_hi_s = float(click_after[1])
 
         self._build_ui()
         self._refresh_devices()
@@ -85,6 +92,9 @@ class FirstClickTriggerPanel(QWidget):
 
     def on_device_changed(self, cb: Callable[[str], None]) -> None:
         self._device_cbs.append(cb)
+
+    def on_click_timing_changed(self, cb: Callable[[], None]) -> None:
+        self._click_timing_cbs.append(cb)
 
     def set_preferred_device_name(self, name: str) -> None:
         self._preferred_device_name = str(name or "").strip()
@@ -114,6 +124,17 @@ class FirstClickTriggerPanel(QWidget):
                 self._after_lo_s,
                 self._after_hi_s,
             )
+
+    def _on_click_bars_changed(self, *_args) -> None:
+        d_lo, d_hi = self.bar_delay.range()
+        h_lo, h_hi = self.bar_hold.range()
+        a_lo, a_hi = self.bar_after.range()
+        self.set_click_timing(d_lo, d_hi, h_lo, h_hi, a_lo, a_hi)
+        for cb in self._click_timing_cbs:
+            try:
+                cb()
+            except Exception:  # noqa: BLE001
+                pass
 
     def current_device_name(self) -> str:
         key, is_loopback = self._selected_device()
@@ -169,7 +190,7 @@ class FirstClickTriggerPanel(QWidget):
         """回测长录音前：未监听则按当前设备开监听。"""
         device, loopback = self._selected_device()
         if device is None:
-            raise RuntimeError("没有可用音频设备：请先到「声音开钓配置」页选择设备")
+            raise RuntimeError("没有可用音频设备：请先到「自动起勾」页选择设备")
         if self._trigger is None or not self._trigger.is_running():
             self._start_listen(device, loopback=loopback)
         assert self._trigger is not None
@@ -193,6 +214,7 @@ class FirstClickTriggerPanel(QWidget):
             self._apply_selected_template(path, log=False)
 
     def set_session_enabled(self, enabled: bool) -> None:
+        self._session_wanted = bool(enabled)
         if enabled:
             path = resolve_template_path()
             device, loopback = self._selected_device()
@@ -208,18 +230,21 @@ class FirstClickTriggerPanel(QWidget):
                 else:
                     raise RuntimeError("没有模板：请到「回测」页从选区入库")
             self._trigger.set_session_enabled(True)
-            self._log("声音开钓 ON · 会话 WAIT")
+            self._log("自动起勾 ON · 会话 WAIT")
         else:
             if self._trigger is not None:
                 self._trigger.set_session_enabled(False)
-            self._log("声音开钓 OFF")
+            self._log("自动起勾 OFF")
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setChildrenCollapsible(False)
+
+        self._log_popup = PageLogPopup(
+            self, "自动起勾 · 日志", object_name="mainLog", placeholder="最新在上…"
+        )
+        self.log = self._log_popup.editor
 
         top = QWidget()
         layout = QVBoxLayout(top)
@@ -238,6 +263,7 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_session.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_listen.addWidget(self.lbl_session)
         row_listen.addStretch(1)
+        row_listen.addWidget(self._log_popup.make_button(), 0)
         self.lbl_level = QLabel("音量：—")
         self.lbl_level.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_listen.addWidget(self.lbl_level)
@@ -291,6 +317,47 @@ class FirstClickTriggerPanel(QWidget):
         self.lbl_count.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         row_thr.addWidget(self.lbl_count)
         layout.addLayout(row_thr)
+
+        click = QGroupBox("开钓第一下")
+        click_l = QVBoxLayout(click)
+        hint_click = QLabel(
+            "命中水声后：等待 → 长按 → 松开 → 再停顿；拖端点或整段，区间内均匀随机"
+        )
+        hint_click.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+        hint_click.setWordWrap(True)
+        click_l.addWidget(hint_click)
+        self.bar_delay = SingleRangeBar(
+            title="等待",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._delay_lo_s, self._delay_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_delay.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_delay)
+        self.bar_hold = SingleRangeBar(
+            title="长按",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._hold_lo_s, self._hold_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_hold.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_hold)
+        self.bar_after = SingleRangeBar(
+            title="松开后",
+            vmin=0.0,
+            vmax=5.0,
+            value=(self._after_lo_s, self._after_hi_s),
+            unit="s",
+            min_span=0.1,
+        )
+        self.bar_after.rangeChanged.connect(self._on_click_bars_changed)
+        click_l.addWidget(self.bar_after)
+        layout.addWidget(click)
+
         hint = QLabel("下方为最近约 20s 实时波形；橙=命中。长录音/回测 →「回测」页")
         hint.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
         layout.addWidget(hint)
@@ -308,24 +375,7 @@ class FirstClickTriggerPanel(QWidget):
         top_scroll.setWidgetResizable(True)
         top_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
         top_scroll.setWidget(top)
-        splitter.addWidget(top_scroll)
-
-        log_wrap = QWidget()
-        log_l = QVBoxLayout(log_wrap)
-        log_l.setContentsMargins(0, 4, 0, 0)
-        log_l.setSpacing(2)
-        log_title = QLabel("日志（可拖边上沿改高度）")
-        log_title.setStyleSheet(f"font-weight:600; color:{TEXT_MUTED}; font-size:12px;")
-        log_l.addWidget(log_title)
-        self.log = QPlainTextEdit()
-        self.log.setReadOnly(True)
-        self.log.setMinimumHeight(120)
-        log_l.addWidget(self.log, 1)
-        splitter.addWidget(log_wrap)
-        splitter.setStretchFactor(0, 2)
-        splitter.setStretchFactor(1, 3)
-        splitter.setSizes([280, 280])
-        root.addWidget(splitter)
+        root.addWidget(top_scroll, 1)
 
     def _refresh_devices(self) -> None:
         self.cmb_device.blockSignals(True)
@@ -477,12 +527,12 @@ class FirstClickTriggerPanel(QWidget):
         loopback: bool | None = None,
     ) -> None:
         wave = None
-        session_on = False
+        # 用 A 偏好，不用旧 trigger 的 session_state：停监听后必为 disabled，
+        # 若据此判断则再开监听永远不会恢复会话 → 相似再高也不触发。
+        want_session = bool(self._session_wanted)
+        had_prev = self._trigger is not None
         if self._trigger is not None:
             wave = self._trigger.template_wave
-            from autofish.topics import CastSessionState
-
-            session_on = self._trigger.session_state != CastSessionState.DISABLED
             self._trigger.stop()
         threshold = self.sld_threshold.value() / 100.0
         self._trigger = FirstClickTrigger(
@@ -507,8 +557,10 @@ class FirstClickTriggerPanel(QWidget):
                 self._trigger.load_template(path)
                 self._set_template_label(path)
         self._trigger.start()
-        if session_on:
+        if want_session:
             self._trigger.set_session_enabled(True)
+            if had_prev:
+                self._log("已恢复自动起勾会话 · WAIT")
         self.btn_listen.setText("停止监听")
         self.cmb_device.setEnabled(False)
         self.live_wave.clear()
@@ -522,6 +574,7 @@ class FirstClickTriggerPanel(QWidget):
     def _stop_listen(self) -> None:
         if self._trigger is not None:
             try:
+                # 只关当前会话态；保留 _session_wanted（主控 A 仍勾选时，再开监听会恢复）
                 self._trigger.set_session_enabled(False)
             except Exception as exc:  # noqa: BLE001
                 self._log(f"关闭会话失败：{exc}")

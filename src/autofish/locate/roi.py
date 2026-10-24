@@ -26,8 +26,7 @@ class Roi:
     def __post_init__(self) -> None:
         if self.width <= 0 or self.height <= 0:
             raise ValueError("ROI width/height must be positive")
-        if self.left < 0 or self.top < 0:
-            raise ValueError("ROI left/top must be >= 0")
+        # left/top 可为负：多屏虚拟桌面原点左侧/上方的显示器
 
     def as_mss(self) -> dict[str, int]:
         return {
@@ -70,6 +69,8 @@ class BarMark:
     right: float
     top: float = 0.0
     height: float = 0.0
+    # 标定时帧宽；0 = 老存盘（当时帧宽 = ROI 逻辑宽）
+    frame_width: float = 0.0
 
     def __post_init__(self) -> None:
         if self.right - self.left < 8:
@@ -86,6 +87,15 @@ class BarMark:
         h = self.height if self.height > 0 else 1.0
         return (float(self.left), float(self.top), float(self.width), float(h))
 
+    def box_for_frame(
+        self, frame_width: float, roi_width: float
+    ) -> tuple[float, float, float, float]:
+        """按当前帧宽换算的 (left, top, width, height)。"""
+        src = self.frame_width if self.frame_width > 0 else float(roi_width)
+        k = float(frame_width) / src if src > 0 else 1.0
+        left, top, w, h = self.as_box()
+        return (left * k, top * k, w * k, h * k)
+
 
 def _bar_from_data(data: dict) -> BarMark | None:
     if "bar_left" not in data or "bar_right" not in data:
@@ -95,6 +105,7 @@ def _bar_from_data(data: dict) -> BarMark | None:
         right=float(data["bar_right"]),
         top=float(data.get("bar_top", 0.0)),
         height=float(data.get("bar_height", 0.0)),
+        frame_width=float(data.get("bar_frame_width", 0.0)),
     )
 
 
@@ -167,6 +178,8 @@ def save_roi(
         data["bar_right"] = float(use.right)
         data["bar_top"] = float(use.top)
         data["bar_height"] = float(use.height)
+        if use.frame_width > 0:
+            data["bar_frame_width"] = float(use.frame_width)
     p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     return p
 
@@ -176,7 +189,7 @@ def clear_bar_mark(path: Path | None = None) -> None:
     if not p.is_file():
         return
     data = json.loads(p.read_text(encoding="utf-8"))
-    for k in ("bar_left", "bar_right", "bar_top", "bar_height"):
+    for k in ("bar_left", "bar_right", "bar_top", "bar_height", "bar_frame_width"):
         data.pop(k, None)
     p.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
 
@@ -188,7 +201,15 @@ def bar_ref_path(roi_path: Path | None = None) -> Path:
     return p.with_name("bar_ref.png")
 
 
+def bar_ref_meta_path(roi_path: Path | None = None) -> Path:
+    """条界参考图同目录的程序蓝框元数据（与像素同帧的 program_bar）。"""
+    return bar_ref_path(roi_path).with_name("bar_ref_meta.json")
+
+
 def clear_bar_ref(roi_path: Path | None = None) -> None:
     ref = bar_ref_path(roi_path)
     if ref.is_file():
         ref.unlink()
+    meta = bar_ref_meta_path(roi_path)
+    if meta.is_file():
+        meta.unlink()

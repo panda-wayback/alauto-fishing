@@ -1,0 +1,39 @@
+name: pubsub
+function: 进程内线程安全的发布/订阅总线，不含业务主题
+modules: []
+input:
+  - name: common.pubsub.EventBus()
+    type: 无参构造
+    desc: 新建一条独立总线；不同实例互不相通
+  - name: EventBus.subscribe(topic, callback)
+    type: "topic: Hashable; callback: Callable[[Any], None]"
+    desc: 订阅主题
+  - name: EventBus.unsubscribe(topic, callback)
+    type: "topic: Hashable; callback: Callable[[Any], None]"
+    desc: 退订主题；未订阅过时静默忽略
+  - name: EventBus.publish(topic, event)
+    type: "topic: Hashable; event: Any"
+    desc: 向该主题当前所有订阅者推送 event
+output:
+  - name: EventBus.publish(topic, event)
+    type: None
+    desc: 按订阅顺序在发布者线程同步调用各 callback(event)
+  - name: common.pubsub.Subscriber
+    type: "类型别名 Callable[[Any], None]"
+    desc: 订阅回调签名
+contract:
+  - 同一 callback 对同一主题重复 subscribe 只登记一次，publish 时只调用一次
+  - 回调在发布者线程同步执行；耗时工作须由订阅方自行排队
+  - 单个订阅者抛异常不影响其它订阅者，也不会从 publish 抛出
+  - publish 期间订阅/退订不影响本次已取得的订阅者列表
+  - subscribe / unsubscribe / publish 可从多线程并发调用
+  - 无订阅者的主题 publish 为空操作
+depends: []
+errors: []
+tests:
+  - 订阅后 publish 收到同一 event 对象
+  - 重复订阅同一回调只收到一次
+  - 退订后不再收到；退订未订阅回调不报错
+  - 一个订阅者抛异常，其余订阅者仍收到，publish 不抛
+  - 不同主题互不串扰
+  - 多线程并发 publish 计数正确

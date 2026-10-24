@@ -1,0 +1,251 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<link rel="stylesheet" href="theme.css">
+<style>
+  .label {
+    position: absolute;
+    left: 88px;
+    top: 88px;
+    font-size: 22px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+  h2 {
+    position: absolute;
+    left: 88px;
+    top: 128px;
+    margin: 0;
+    font-size: 56px;
+    max-width: 560px;
+    line-height: 1.12;
+  }
+  .pipeline {
+    position: absolute;
+    left: 88px;
+    top: 300px;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .step {
+    padding: 10px 16px;
+    border-radius: 999px;
+    background: rgba(44, 51, 40, 0.9);
+    border: 1px solid rgba(255,255,255,0.08);
+    font-size: 18px;
+    color: var(--muted);
+  }
+  .step.on {
+    color: var(--ink);
+    border-color: rgba(126, 207, 106, 0.45);
+    background: rgba(126, 207, 106, 0.14);
+  }
+  .arrow { color: #5a6450; font-size: 18px; }
+
+  .shell {
+    position: absolute;
+    right: 120px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 640px;
+    background: #232820;
+    border-radius: 28px;
+    box-shadow:
+      0 0 0 1px rgba(255,255,255,0.07),
+      0 36px 90px rgba(0,0,0,0.5);
+    overflow: hidden;
+    padding: 28px;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .chrome {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 0 6px 4px;
+    font-size: 18px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .mark {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+
+  .hero {
+    background: #1c2119;
+    border-radius: 20px;
+    border: 1px solid rgba(126, 207, 106, 0.28);
+    padding: 26px 28px 22px;
+  }
+  .hero-top {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .act {
+    margin-left: auto;
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+  .pos {
+    margin-top: 10px;
+    font-size: 108px;
+    font-weight: 700;
+    line-height: 0.92;
+    letter-spacing: -0.04em;
+  }
+  .pos-k {
+    margin-top: 8px;
+    font-size: 16px;
+    letter-spacing: 0.16em;
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 18px;
+  }
+  .card {
+    background: #1c2119;
+    border-radius: 18px;
+    border: 1px solid rgba(255,255,255,0.06);
+    padding: 22px 22px 20px;
+    min-height: 148px;
+  }
+  .card.on {
+    border-color: rgba(126, 207, 106, 0.28);
+  }
+  .card-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 18px;
+    font-weight: 700;
+    color: #9aa68c;
+  }
+  .card.on .card-top { color: var(--ink); }
+  .card-v {
+    margin-top: 18px;
+    font-size: 48px;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.03em;
+    color: #6e7864;
+  }
+  .card.on .card-v { color: var(--ink); }
+
+  .box {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    border: 2px solid #6a7560;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    color: transparent;
+    flex: 0 0 auto;
+  }
+  .on .box {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #132010;
+  }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="label" id="label">02 · Autofish shell</div>
+  <h2 class="brand" id="heading">真机调试壳<br>主控一览</h2>
+  <div class="pipeline" id="pipeline">
+    <span class="step" id="s1">圈定</span><span class="arrow">→</span>
+    <span class="step" id="s2">截图</span><span class="arrow">→</span>
+    <span class="step" id="s3">识别</span><span class="arrow">→</span>
+    <span class="step" id="s4">决策</span><span class="arrow">→</span>
+    <span class="step" id="s5">执行</span>
+  </div>
+  <div class="shell" id="shell">
+    <div class="chrome"><span class="mark"></span>主控</div>
+    <div class="hero" id="cb">
+      <div class="hero-top">
+        <span class="box">✓</span>
+        自动拉线
+        <span class="act" id="act">按住</span>
+      </div>
+      <div class="pos" id="pos">72.4</div>
+      <div class="pos-k">POS</div>
+    </div>
+    <div class="pair">
+      <div class="card" id="ca">
+        <div class="card-top"><span class="box">✓</span>自动起勾</div>
+        <div class="card-v" id="sess">关</div>
+      </div>
+      <div class="card" id="cc">
+        <div class="card-top"><span class="box">✓</span>自动抛竿</div>
+        <div class="card-v" id="cast">关</div>
+      </div>
+    </div>
+  </div>
+</div>
+<script type="module">
+const label = document.getElementById("label");
+const heading = document.getElementById("heading");
+const shell = document.getElementById("shell");
+const pipeline = document.getElementById("pipeline");
+const ca = document.getElementById("ca");
+const cb = document.getElementById("cb");
+const cc = document.getElementById("cc");
+const pos = document.getElementById("pos");
+const act = document.getElementById("act");
+const cast = document.getElementById("cast");
+const sess = document.getElementById("sess");
+const steps = [1,2,3,4,5].map(i => document.getElementById("s" + i));
+
+function ease(t) {
+  return 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+}
+
+window.film = {
+  duration: 13,
+  ready: document.fonts.ready,
+  frame(t) {
+    const enter = ease((t - 0.15) / 0.55);
+    label.style.opacity = String(ease(t / 0.45));
+    heading.style.opacity = String(ease((t - 0.08) / 0.5));
+    pipeline.style.opacity = String(ease((t - 0.2) / 0.5));
+    shell.style.opacity = String(enter);
+    shell.style.transform = `translateY(calc(-50% + ${(1 - enter) * 20}px))`;
+
+    const si = Math.min(4, Math.floor(Math.max(0, t - 1.0) / 1.35));
+    steps.forEach((el, i) => el.classList.toggle("on", i <= si));
+
+    const listen = t > 3.5;
+    const casting = t > 6.5;
+    ca.classList.toggle("on", listen);
+    cc.classList.toggle("on", casting);
+    cb.classList.add("on");
+    sess.textContent = listen ? "听声" : "关";
+    cast.textContent = casting ? "2/5" : "关";
+
+    const p = 68 + 8 * Math.sin(t * 2.8) + 3 * Math.sin(t * 5.1);
+    const holding = Math.sin(t * 2.8) < 0.35;
+    pos.textContent = p.toFixed(1);
+    act.textContent = holding ? "按住" : "松开";
+    act.style.color = holding ? "#7ecf6a" : "#d4b45a";
+  },
+};
+</script>
+</body>
+</html>

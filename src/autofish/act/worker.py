@@ -1,22 +1,19 @@
-"""段5：ActWorker — 订 ActionIntent / PressInterval → 真鼠标。"""
+"""段5：ActWorker — 订 ActionIntent，读快照按下间隔 → 真鼠标。"""
 
 from __future__ import annotations
 
 import time
 
 from autofish.act.mouse import MouseActuator, os_left_down
-from autofish.bus import AutofishBus
-from autofish.topics import (
+from autofish.events.bus import AutofishBus
+from autofish.events.topics import (
     ActionIntentEvent,
+    CastPhase,
     CastSessionEvent,
     CastSessionState,
     FishingState,
-    PressIntervalEvent,
     Topic,
 )
-
-_DEFAULT_PRESS_INTERVAL = 0.0
-_MAX_PRESS_INTERVAL = 0.3
 
 
 class ActWorker:
@@ -34,10 +31,7 @@ class ActWorker:
         self._mouse = MouseActuator()
         self._active = False
         self._yield_to_system = False
-        self._press_interval = _DEFAULT_PRESS_INTERVAL
         self._last_press_at = 0.0
-        # 间隔主题始终订：壳可在操作未启用时先调
-        self.bus.subscribe(Topic.PRESS_INTERVAL, self._on_press_interval)
 
     @property
     def pressed(self) -> bool:
@@ -50,14 +44,14 @@ class ActWorker:
 
     @property
     def press_interval(self) -> float:
-        return self._press_interval
+        return self.bus.snapshot().press_interval_s
 
     def start(self) -> None:
         if self._active:
             return
-        self._press_interval = self.bus.snapshot().press_interval_s
         self.bus.subscribe(Topic.ACTION_INTENT, self._on_intent)
         self.bus.subscribe(Topic.CAST_SESSION, self._on_cast)
+        self.bus.subscribe(Topic.CAST_PHASE, self._on_cast_phase)
         self._active = True
         self.poll()
 
@@ -66,6 +60,7 @@ class ActWorker:
             return
         self.bus.unsubscribe(Topic.ACTION_INTENT, self._on_intent)
         self.bus.unsubscribe(Topic.CAST_SESSION, self._on_cast)
+        self.bus.unsubscribe(Topic.CAST_PHASE, self._on_cast_phase)
         self._active = False
         self._yield_to_system = False
         self._mouse.force_release()
@@ -81,7 +76,9 @@ class ActWorker:
 
     @staticmethod
     def _may_control(snap) -> bool:
-        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。"""
+        """A 关：跟鱼漂 FSM；A 开：仅会话 FISHING。C 蓄力中一律让鼠。"""
+        if snap.cast_phase == CastPhase.CHARGING:
+            return False
         if snap.cast_session == CastSessionState.DISABLED:
             return snap.fishing_state == FishingState.FISHING
         return snap.cast_session == CastSessionState.FISHING
@@ -111,6 +108,25 @@ class ActWorker:
         if event.state != CastSessionState.FISHING:
             self._release_program()
 
+    def _on_cast_phase(self, event) -> None:
+        """C 蓄力：松本段键让鼠；离开蓄力：立即按当前意图接管（不依赖下一次 poll）。"""
+        if not self._active:
+            return
+        if event.phase == CastPhase.CHARGING:
+            self._release_program()
+            return
+        # 离开 CHARGING（DONE / ABORT / WAIT / …）：
+        # 不走 _system_owns——C 刚松手时 OS 可能仍短暂报按下，否则会把 C 当成「系统占用」让 B 永久让位。
+        self._yield_to_system = False
+        snap = self.bus.snapshot()
+        if not self._may_control(snap):
+            self._release_program()
+            return
+        if snap.holding is True:
+            self._try_press()
+        elif snap.holding is False:
+            self._mouse.set_holding(False)
+
     def _apply(
         self,
         holding: bool | None,
@@ -139,7 +155,7 @@ class ActWorker:
         if self._mouse.pressed:
             return
         now = time.monotonic()
-        if now - self._last_press_at < self._press_interval:
+        if now - self._last_press_at < self.press_interval:
             return
         self._mouse.set_holding(True)
         self._last_press_at = now
@@ -147,8 +163,3 @@ class ActWorker:
     def _on_intent(self, event: ActionIntentEvent) -> None:
         snap = self.bus.snapshot()
         self._apply(event.holding, snap)
-
-    def _on_press_interval(self, event: PressIntervalEvent) -> None:
-        self._press_interval = max(
-            0.0, min(_MAX_PRESS_INTERVAL, float(event.interval_s))
-        )

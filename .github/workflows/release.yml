@@ -12,6 +12,10 @@ on:
         description: "可选：填写则额外发 GitHub Release（如 v0.1.0）；留空则与 main 推送相同——只构建并上传 Artifact"
         required: false
         default: ""
+      expire_days:
+        description: "试用天数（如 30=构建日起 30 天后过期）；留空=不过期"
+        required: false
+        default: ""
 
 permissions:
   contents: write
@@ -42,6 +46,7 @@ jobs:
         run: |
           export PYTHON="$(command -v python)"
           export ALBN_BUILD_SUFFIX="${GITHUB_RUN_ID}"
+          export ALBN_EXPIRE_DAYS="${{ github.event.inputs.expire_days }}"
           bash packaging/build_macos.sh
           echo "suffix=${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"
           echo "app_name=albn-autofish-${ALBN_BUILD_SUFFIX}.app" >> "$GITHUB_OUTPUT"
@@ -76,6 +81,7 @@ jobs:
         run: |
           export PYTHON="$(command -v python)"
           export ALBN_BUILD_SUFFIX="${GITHUB_RUN_ID}"
+          export ALBN_EXPIRE_DAYS="${{ github.event.inputs.expire_days }}"
           bash packaging/build_windows.sh
           echo "suffix=${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"
           echo "dist_name=albn-autofish-${ALBN_BUILD_SUFFIX}" >> "$GITHUB_OUTPUT"

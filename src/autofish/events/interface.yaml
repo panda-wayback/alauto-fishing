@@ -1,0 +1,153 @@
+name: events
+function: autofish 域主题、事件载荷、域总线快照与 Worker 基类
+modules: []
+input:
+  # ---- 主题与状态枚举（autofish.events.topics）----
+  - name: autofish.events.topics.Topic
+    type: "str 枚举：ROI=\"roi\" / FRAME=\"frame\" / POS=\"pos\" / FISHING_STATE=\"fishing_state\" / CAST_SESSION=\"cast_session\" / CAST_PHASE=\"cast_phase\" / ACTION_INTENT=\"action_intent\" / PRESS_INTERVAL=\"press_interval\""
+    desc: autofish 总线主题闭集
+  - name: autofish.events.topics.FishingState
+    type: "str 枚举：IDLE / FISHING / LOST（值为小写同名）"
+    desc: 鱼漂状态机状态
+  - name: autofish.events.topics.CastSessionState
+    type: "str 枚举：DISABLED / WAIT / FIRST_CLICK / WAIT_BOBBER / FISHING（值为小写同名）"
+    desc: 声音开钓会话态；DISABLED 表示声音开钓关闭
+  - name: autofish.events.topics.CastPhase
+    type: "str 枚举：DISABLED / WAIT / AIM / CHARGING / DONE / ABORT（值为小写同名）"
+    desc: 自动抛杆阶段（C）；CHARGING 时 A / B 让鼠
+  # ---- 事件载荷（autofish.events.topics，均为 frozen dataclass）----
+  - name: autofish.events.topics.BobberHit(pos, x, y, pixel_count, bar_left=0.0, bar_top=0.0, bar_width=0.0, bar_height=0.0, score=0.0, detect_ms=0.0)
+    type: "pos: float（漂在条内 0～100）; x, y: float（帧坐标）; pixel_count: int; bar_*: float（条框，帧坐标；bar_width=0 表示无条）; score, detect_ms: float"
+    desc: 单帧识别结果
+  - name: autofish.events.topics.RoiEvent(roi, version, ts, source, score=0.0)
+    type: "roi: autofish.locate.Roi | None（None=清空）; version: int; ts: float; source: \"manual\" | \"default\" | \"clear\" 等; score: float"
+    desc: 手框变更；version 为新的当前 ROI 版本
+  - name: autofish.events.topics.FrameEvent(frame, roi_version, ts, seq=0)
+    type: "frame: np.ndarray (H, W, 3) uint8 RGB; roi_version: int; ts: float; seq: int（递增帧序）"
+    desc: 按当前 ROI 截得的一帧
+  - name: autofish.events.topics.PosEvent(pos, hit, roi_version, frame_ts, ts, frame_seq=0, frame=None, detect_ms=0.0)
+    type: "pos: float | None（0～100；None=本帧无有效读数）; hit: BobberHit | None; roi_version: int; frame_ts, ts: float; frame_seq: int（对应 FrameEvent.seq）; frame: np.ndarray | None; detect_ms: float"
+    desc: 一帧的识别读数
+  - name: autofish.events.topics.FishingStateEvent(state, ts, detail="")
+    type: "state: FishingState; ts: float; detail: str"
+    desc: 鱼漂状态变化
+  - name: autofish.events.topics.SplashHit(score, delay_s, hold_s, after_s, threshold)
+    type: 全部 float
+    desc: 水声命中进入 FIRST_CLICK 时的命中详情
+  - name: autofish.events.topics.CastSessionEvent(state, ts, detail="", splash=None)
+    type: "state: CastSessionState; ts: float; detail: str; splash: SplashHit | None"
+    desc: 开钓会话态变化
+  - name: autofish.events.topics.CastPhaseEvent(phase, ts, detail="", target=None, power=None)
+    type: "phase: CastPhase; ts: float; detail: str; target/power: float | None"
+    desc: 自动抛杆阶段变化；target 为本轮目标力度、power 为蓄力完成时记录的比例（按时长松杆时可与 target 相同，可空）
+  - name: autofish.events.topics.ActionIntentEvent(holding, ts, reason="", pos=None)
+    type: "holding: bool（True=要按住，False=要松开）; ts: float; reason: str; pos: float | None"
+    desc: 决策意图
+  - name: autofish.events.topics.PressIntervalEvent(interval_s, ts)
+    type: "interval_s: float（秒）; ts: float"
+    desc: 两次程序按下的最短间隔设置
+  # ---- 域总线（autofish.events.bus）----
+  - name: autofish.events.bus.AutofishBus()
+    type: 无参构造
+    desc: 新建独立 autofish 域总线（实例间互不相通），快照初值见 AutofishSnapshot 默认值
+  - name: AutofishBus.subscribe(topic, callback) / AutofishBus.unsubscribe(topic, callback)
+    type: "topic: Topic; callback: Callable[[对应事件], None]"
+    desc: 订阅 / 退订主题；语义同 common.pubsub.EventBus
+  - name: AutofishBus.publish_roi(event)
+    type: RoiEvent
+    desc: 设置当前 ROI 与版本并推送 Topic.ROI
+  - name: AutofishBus.clear_roi(source="clear")
+    type: "source: str"
+    desc: 以「当前版本 + 1」发布 roi=None 的 RoiEvent
+  - name: AutofishBus.publish_frame(event)
+    type: FrameEvent
+    desc: 发布帧到 Topic.FRAME
+  - name: AutofishBus.publish_pos(event)
+    type: PosEvent
+    desc: 发布读数到 Topic.POS
+  - name: AutofishBus.reset_pos_seq()
+    type: 无参
+    desc: 监控重启时清空读数与读数帧序
+  - name: AutofishBus.publish_fishing_state(event)
+    type: FishingStateEvent
+    desc: 发布鱼漂状态到 Topic.FISHING_STATE
+  - name: AutofishBus.publish_cast_session(event)
+    type: CastSessionEvent
+    desc: 发布开钓会话态到 Topic.CAST_SESSION
+  - name: AutofishBus.publish_cast_phase(event)
+    type: CastPhaseEvent
+    desc: 发布自动抛杆阶段到 Topic.CAST_PHASE（同 phase 且同 detail 去重）
+  - name: AutofishBus.publish_action_intent(event)
+    type: ActionIntentEvent
+    desc: 发布按住 / 松开意图到 Topic.ACTION_INTENT
+  - name: AutofishBus.publish_press_interval(event)
+    type: PressIntervalEvent
+    desc: 发布按下间隔到 Topic.PRESS_INTERVAL
+  - name: AutofishBus.snapshot()
+    type: 无参
+    desc: 拉取当前聚合快照
+  - name: AutofishBus.current_roi()
+    type: 无参
+    desc: 拉取当前 ROI 与版本
+  # ---- Worker 基类（autofish.events.worker_base）----
+  - name: autofish.events.worker_base.WorkerBase(bus, name)
+    type: "bus: AutofishBus; name: str（线程名）"
+    desc: 线程 Worker 基类；子类覆写 _run()，循环中以 self._stop（threading.Event）判断退出，可用 self.bus
+  - name: WorkerBase.start()
+    type: 无参
+    desc: 在新 daemon 线程中运行 _run
+  - name: WorkerBase.stop(timeout=2.0)
+    type: "timeout: float（秒）"
+    desc: 置停止标志并等待线程结束至多 timeout 秒
+  - name: WorkerBase.is_running()
+    type: 无参
+    desc: 查询线程是否仍在运行
+output:
+  - name: AutofishBus.snapshot()
+    type: "AutofishSnapshot（可变 dataclass 副本）：roi: Roi | None=None, roi_version: int=0, roi_score: float=0.0, roi_source: str=\"\", frame: None, frame_ts: float=0.0, pos: float | None=None, hit: BobberHit | None=None, pos_ts: float=0.0, pos_frame_seq: int=0, fishing_state=FishingState.IDLE, fishing_detail: str=\"\", state_ts=0.0, cast_session=CastSessionState.DISABLED, cast_detail=\"\", cast_splash: SplashHit | None=None, cast_ts=0.0, cast_phase=CastPhase.DISABLED, cast_phase_detail: str=\"\", holding: bool | None=None, intent_reason=\"\", intent_ts=0.0, press_interval_s: float=0.0"
+    desc: 各主题最近一次被接受的事件聚合；frame 恒为 None（画面须订阅 Frame / Pos 取得）
+  - name: AutofishBus.current_roi()
+    type: "tuple[Roi | None, int]"
+    desc: (当前 ROI, 当前 ROI 版本)
+  - name: 订阅回调
+    type: 发布时传入的事件对象（publish_press_interval 推送的是夹取后的新 PressIntervalEvent）
+    desc: 在发布者线程同步调用
+  - name: WorkerBase.is_running()
+    type: bool
+    desc: 已 start 且线程仍存活为 True
+contract:
+  - 所有事件载荷不可变（frozen dataclass）；Topic / FishingState / CastSessionState 为 str 枚举，可与其字符串值比较
+  - 订阅、回调异常隔离、重复订阅只登记一次等推送语义与 common.pubsub.EventBus 一致；回调在发布者线程同步执行
+  - publish_roi 无条件接受（不比较版本大小），立即成为当前 ROI 与版本，并清空快照中的帧
+  - publish_frame：event.roi_version ≠ 当前 ROI 版本时静默丢弃（不更新快照、不推送）
+  - publish_pos：roi_version ≠ 当前 ROI 版本，或 frame_seq 小于已接受的最大帧序时静默丢弃；frame_seq 相等仍接受
+  - reset_pos_seq 将快照 pos / hit 置 None、读数帧序归 0，之后较小帧序的 Pos 可再次被接受；不推送事件
+  - publish_fishing_state：state 与 detail 都与快照相同则不更新快照、不推送
+  - publish_cast_session：state、detail、splash 都与快照相同则不更新快照、不推送
+  - publish_cast_phase：phase 与 detail 都与快照相同则不更新快照、不推送
+  - publish_action_intent 不去重，每次都更新快照 holding / intent_reason / intent_ts 并推送
+  - publish_press_interval 把 interval_s 夹到 [0, 0.3] 后写入快照并推送夹取后的事件
+  - clear_roi 发布 roi=None、version=当前版本+1、source=参数值 的 RoiEvent
+  - snapshot() 返回副本，修改副本不影响总线；snapshot / current_roi / publish_* 可从多线程调用
+  - WorkerBase.start 在线程仍存活时为空操作；stop 后可再次 start
+  - WorkerBase.stop 在 join 超时后线程仍存活时 is_running() 仍为 True（不假装已停），再次 stop 可继续等待
+depends:
+  - src/common/pubsub
+  - src/autofish/locate
+errors: []
+tests:
+  - 事件载荷不可变；Topic 等枚举与字符串值相等
+  - 订阅后各 publish_* 推送同一事件；退订后不再收到；回调异常不影响其它订阅者
+  - 新总线快照为默认值且 current_roi 为 (None, 0)
+  - publish_roi 更新 current_roi 与快照的 roi / version / source / score
+  - publish_frame 版本匹配时推送并记录 frame_ts，snapshot 的 frame 恒为 None；版本不符的帧被丢弃
+  - ROI 换版本后，旧版本的 Frame 与 Pos 被丢弃，新版本的被接受
+  - publish_pos 丢弃比已接受帧序更旧的读数，相等帧序接受；reset_pos_seq 清读数后小帧序重新可接受
+  - publish_fishing_state / publish_cast_session 对完全相同的状态去重，detail 变化则推送
+  - publish_cast_phase 对相同 phase 与 detail 去重，detail 变化则推送
+  - publish_action_intent 每次都推送并更新快照 holding / reason
+  - publish_press_interval 把间隔夹到 [0, 0.3]，推送与快照均为夹取值
+  - clear_roi 发布 roi=None、版本 +1、带 source 的事件
+  - snapshot 返回副本，修改不影响总线
+  - WorkerBase start 后 is_running 为真，stop 后为假；重复 start 不另起线程；stop 后可再 start
+  - WorkerBase stop join 超时时 is_running 仍为真，线程退出后再 stop 变假

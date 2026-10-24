@@ -53,24 +53,7 @@ def main(argv: list[str] | None = None) -> int:
         default=Path("data/debug_bobber.png"),
         help="调试输出图",
     )
-    parser.add_argument(
-        "--ui",
-        action="store_true",
-        help="打开分区预览窗（推荐）",
-    )
     args = parser.parse_args(argv)
-
-    if args.ui:
-        from PySide6.QtWidgets import QApplication, QStyleFactory
-        from tools.preview_app import PreviewApp
-
-        app = QApplication.instance() or QApplication(sys.argv)
-        fusion = QStyleFactory.create("Fusion")
-        if fusion is not None:
-            app.setStyle(fusion)
-        win = PreviewApp(roi_path=args.roi)
-        win.show()
-        return app.exec()
 
     if args.image is not None:
         from PIL import Image

@@ -1,0 +1,146 @@
+name: autofish
+function: 真机自动拉鱼：编排五段流水线与鱼漂状态机
+modules:
+  - path: events
+    function: autofish 域主题、事件载荷、域总线快照与 Worker 基类
+  - path: locate
+    function: 手框 ROI 与手动条界的存盘读写
+  - path: capture
+    function: 按手框 ROI 截屏并发布帧
+  - path: detect
+    function: 从帧识别绿条与鱼漂并发布读数
+  - path: decide
+    function: 按读数与阈值策略发布按住/松开意图
+  - path: act
+    function: 按意图控制系统鼠标按下/松开
+  - path: first_click_trigger
+    function: 听水花声自动开钓的会话机与声音模板管理
+  - path: cast_calibration
+    function: 透视贴地环（Perspective Projective Circle）分辨率无关标定值、力度比例换算与存盘读写
+  - path: auto_cast
+    function: 自动抛杆控制：快捷键发起有限次数任务，按鼠标位置定目标力度，按时长蓄力后松开
+input:
+  # ---- 流水线编排 ----
+  - name: autofish.AutofishPipeline(*, capture_fps=45.0, cast_wait_lo_s=3.0, cast_wait_hi_s=3.0, cast_full_charge_s=1.0)
+    type: "capture_fps: float（截帧频率，< 1 按 1）；cast_*: 转交 autofish.auto_cast.AutoCastWorker 构造参数"
+    desc: 组装总线、鱼漂状态机与 Capture / Detect / Decide / Act / AutoCast；构造时不启动线程、不截屏、不按鼠标
+  - name: AutofishPipeline.set_roi_manual(roi)
+    type: "roi: autofish.locate.Roi"
+    desc: 发布新的手框（Topic.ROI），即成为截屏范围
+  - name: AutofishPipeline.clear_roi()
+    type: 无参
+    desc: 清空手框（发布 roi=None 的 Topic.ROI）
+  - name: AutofishPipeline.start_monitor() / AutofishPipeline.stop_monitor()
+    type: 无参
+    desc: 启停监控段（Capture + Detect）
+  - name: AutofishPipeline.start_decide() / AutofishPipeline.stop_decide()
+    type: 无参
+    desc: 启停策略段（Decide）
+  - name: AutofishPipeline.start_act() / AutofishPipeline.stop_act()
+    type: 无参
+    desc: 启停操作段（Act，真鼠标）
+  - name: AutofishPipeline.start_auto_cast() / AutofishPipeline.stop_auto_cast()
+    type: 无参
+    desc: 启停自动抛杆工人线程；start 后默认空闲；stop 先 cancel_batch 再停线程并松开鼠标
+  - name: AutofishPipeline.start_cast_batch(count) / AutofishPipeline.cancel_cast_batch()
+    type: "count: int（夹到 1～10）/ 无参"
+    desc: 开始 / 立刻结束有限次数抛杆任务（转交 AutoCastWorker.start_batch / cancel_batch）
+  - name: AutofishPipeline.set_cast_wait_range(lo_s, hi_s)
+    type: "lo_s, hi_s: float 秒"
+    desc: 设置收竿后随机等待区间（转交 AutoCastWorker.set_wait_range）
+  - name: AutofishPipeline.set_cast_full_charge_s(seconds)
+    type: "seconds: float"
+    desc: 设置满蓄参考秒数（转交 AutoCastWorker.set_full_charge_s）
+  - name: AutofishPipeline.stop()
+    type: 无参
+    desc: 依次停自动抛杆、操作、策略、监控
+  - name: AutofishPipeline.set_decide_ranges(press_lo, press_hi, release_lo, release_hi)
+    type: "float ×4，pos 0～100；press_lo ≤ press_hi < release_lo ≤ release_hi"
+    desc: 设置 Decide 的按下 / 松开阈值抽样范围（转交 DecideWorker.set_ranges）
+  - name: AutofishPipeline.subscribe(topic, callback) / AutofishPipeline.unsubscribe(topic, callback)
+    type: "topic: autofish.events.topics.Topic; callback: Callable[[事件], None]"
+    desc: 订阅 / 退订流水线总线主题（等同 pipeline.bus.subscribe / unsubscribe）
+  - name: AutofishPipeline.snapshot()
+    type: 无参
+    desc: 拉取总线快照（等同 pipeline.bus.snapshot()）
+  - name: "AutofishPipeline.bus / .fsm / .capture / .detector / .decide / .act / .auto_cast"
+    type: "AutofishBus / FishingStateMachine / CaptureWorker / DetectorWorker / DecideWorker / ActWorker / AutoCastWorker"
+    desc: 各段实例，按各子 Module 接口使用（如 bus.publish_press_interval、decide.current_thresholds、act.poll / act.pressed / act.yielding、auto_cast.phase）
+  # ---- 鱼漂状态机 ----
+  - name: autofish.fishing_fsm.FishingStateMachine(bus, *, lost_after=15, idle_after=60)
+    type: "bus: AutofishBus; lost_after, idle_after: int（连续无读数的 Pos 帧数）"
+    desc: 构造即订阅 bus 的 Topic.ROI 与 Topic.POS，并经 bus.publish_fishing_state 发布 Topic.FISHING_STATE
+  # ---- CLI ----
+  - name: "python -m autofish.preview [--roi <json>] [--image <png>] [--out <png>]（等价 autofish.preview.main(argv)）"
+    type: "--roi: ROI 存盘路径，默认 autofish.locate.DEFAULT_ROI_PATH；--image: 本地 RGB 图，给出则不截屏；--out: 调试图输出路径，默认 data/debug_bobber.png（相对当前目录）"
+    desc: 对一张图（或按 ROI 截一帧）做识别并写出调试图
+  # ---- 包顶层重导出 ----
+  - name: "autofish.{AutofishPipeline, AutofishBus, AutofishSnapshot, Topic, FishingState, BobberHit, detect, Roi, DEFAULT_ROI_PATH, load_roi, save_roi, ScreenGrab, DEFAULT_SCREEN_PATH, grab_primary, grab_roi, load_screen, save_screen}"
+    type: 名称
+    desc: 与 pipeline / events / detect / locate / capture 子 Module 中同名对象相同
+output:
+  - name: 发布 Topic.ROI（set_roi_manual）
+    type: "RoiEvent(roi=roi, version=上次版本+1, source=\"manual\", score=1.0)"
+    desc: 版本从 1 起，每次 set_roi_manual / clear_roi 递增 1
+  - name: 发布 Topic.ROI（clear_roi）
+    type: "RoiEvent(roi=None, version=当前版本+1, source=\"manual\")"
+    desc: 清空后 Capture 停止出帧
+  - name: 监控开启后的总线事件
+    type: "Topic.FRAME: FrameEvent → Topic.POS: PosEvent → Topic.FISHING_STATE: FishingStateEvent → Topic.ACTION_INTENT: ActionIntentEvent（策略开启时）"
+    desc: 有手框时 Capture 出帧、Detect 发读数、状态机发状态、Decide 发意图；Act 开启时按意图按下 / 松开系统左键
+  - name: "AutofishPipeline.monitor_on / decide_on / act_on / auto_cast_on"
+    type: bool
+    desc: 对应段当前是否开启（auto_cast_on 表示工人线程在跑，不等于有进行中的抛杆任务）
+  - name: AutofishPipeline.snapshot()
+    type: autofish.events.bus.AutofishSnapshot
+    desc: 见 src/autofish/events
+  - name: FishingStateMachine 发布 Topic.FISHING_STATE
+    type: "FishingStateEvent(state: FishingState, ts, detail)"
+    desc: "detail 取值：pos_ok（→FISHING）/ pos_miss（FISHING→LOST）/ pos_gone（LOST→IDLE）/ roi_cleared（ROI 清空→IDLE）/ no_roi（无 ROI 时收到 Pos→IDLE）"
+  - name: autofish.preview CLI 退出码
+    type: "int：0 识别到鱼漂；1 未给 --image 且 ROI 存盘不存在；2 未识别到鱼漂；argparse 参数错误为 2（SystemExit）"
+    desc: 0 时 stdout 打印 "pos=<0~100> ... x= y= pixels= → <out>"；2 时打印 "未找到鱼漂色块 → <out>"；1 时 stderr 提示缺少 ROI 文件
+  - name: autofish.preview --out 文件
+    type: PNG，尺寸与输入帧相同
+    desc: 绿区加亮、鱼漂中心 5×5 青色标记；退出码 0 与 2 时都写出，1 时不写
+contract:
+  - 各段只经总线交接；监控 / 策略 / 操作 / 自动抛杆可独立启停，互不要求先后
+  - start_* / stop_* 均幂等；stop_* 对未开启的段为空操作
+  - start_monitor 首次调用时预热截屏（失败忽略），并清空总线读数帧序后再启动 Detect 与 Capture
+  - 无手框（未 set_roi_manual 或已 clear_roi）时 Capture 不截屏、不出帧
+  - 手框换版本后旧版本的帧与读数被总线丢弃
+  - stop_monitor 返回时 Capture / Detect 线程已停止（或在 join 超时后仍在退出中）
+  - stop_decide 发布一次松开意图（若上次意图不是松开）；stop_act 若本程序按着左键则松开；stop_auto_cast 先 cancel_batch 再停线程并松开抛杆鼠标
+  - Act 仅在鱼漂 FISHING（声音开钓关闭时）或会话 FISHING（声音开钓开启时）才按下系统左键；自动抛杆 CHARGING 时 Act 让鼠
+  - 自动抛杆与 Act / 声音开钓互斥：蓄力期发布 Topic.CAST_PHASE=CHARGING，Act 与 FirstClickTrigger 据此让鼠；无任务或非蓄力时不影响 A / B
+  - FishingStateMachine：初始 IDLE；ROI 非空且 Pos.pos 非 None → FISHING；FISHING 下连续 lost_after 个 pos=None → LOST；连续 idle_after 个 pos=None（自开始丢读数起计）且处于 LOST → IDLE；LOST 下读数恢复 → FISHING；ROI 清空 → IDLE 并清零丢读计数；无 ROI 时收到 Pos → IDLE
+  - FishingStateMachine 只发布状态变化；相同 state 与 detail 不重复发布
+  - autofish.preview 不加 --image 时按 ROI 存盘截一帧屏幕；不提供界面入口（--ui 已移除）
+depends:
+  - src/autofish/events
+  - src/autofish/locate
+  - src/autofish/capture
+  - src/autofish/detect
+  - src/autofish/decide
+  - src/autofish/act
+  - src/autofish/auto_cast
+errors:
+  - code: ValueError
+    desc: set_decide_ranges 范围非法（press_lo > press_hi、release_lo > release_hi 或 press_hi ≥ release_lo）
+  - code: ImportError
+    desc: 导入 autofish 时缺 mss / pynput 等依赖
+tests:
+  - "集成：假帧源（替换 mss）给真实截图 + 假鼠标，开 ROI / 监控 / 策略 / 操作后总线依次出现 Frame、Pos、FishingState=FISHING、ActionIntent(按住)，且假鼠标被按下"
+  - 集成：上述按住状态下 clear_roi → 状态机回 IDLE、Decide 发松开意图、假鼠标松开；之后不再出帧
+  - 集成：stop() 后四段关闭、Capture / Detect / AutoCast 线程停止、假鼠标处于松开
+  - start_* / stop_* 幂等且标志正确；无 ROI 时监控开启也不截屏
+  - start_auto_cast / stop_auto_cast 幂等；start_cast_batch / cancel_cast_batch / set_cast_wait_range / set_cast_full_charge_s 转交 AutoCastWorker；stop 含停自动抛杆；蓄力按时长、不依赖 cast_power
+  - set_roi_manual / clear_roi 发布的 ROI 事件版本连续递增、source 与 score 正确
+  - set_decide_ranges 生效于 decide.current_thresholds，非法范围抛 ValueError
+  - FishingStateMachine：IDLE → FISHING → LOST → FISHING → LOST → IDLE 的读数驱动转移与 detail
+  - FishingStateMachine：ROI 清空回 IDLE（roi_cleared），无 ROI 时收到 Pos 为 IDLE（no_roi），相同状态不重复发布
+  - preview --image 有漂图退出 0、打印 pos 并写出同尺寸调试图
+  - preview --image 无漂图退出 2 并仍写出调试图
+  - preview 无 --image 且 ROI 存盘缺失时退出 1、不截屏、不写图
+  - preview 无 --image 时按 ROI 存盘范围截一帧（假 mss），按识别结果返回退出码并写出调试图
+  - preview 传 --ui 被 argparse 拒绝

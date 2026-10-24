@@ -6,6 +6,7 @@ from autofish.capture.screen import (
     grab_primary,
     grab_roi,
     load_screen,
+    roi_frame_size,
     save_screen,
     warmup,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "grab_primary",
     "grab_roi",
     "load_screen",
+    "roi_frame_size",
     "save_screen",
     "warmup",
 ]

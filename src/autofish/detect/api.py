@@ -40,6 +40,15 @@ def apply_manual_bar(
         setter(box)
 
 
+def apply_program_bar(
+    box: tuple[float, float, float, float] | None,
+) -> None:
+    """把程序条界注入当前识别器（不带跟点）；None 清除程序锁。无此能力则忽略。"""
+    seed = getattr(get_detector(), "seed_program_bar", None)
+    if callable(seed):
+        seed(box)
+
+
 def detect(rgb: np.ndarray) -> BobberHit | None:
     """统一入口：传入 RGB 图 → BobberHit（含条框与 pos）或 None。"""
     return get_detector().detect(rgb)

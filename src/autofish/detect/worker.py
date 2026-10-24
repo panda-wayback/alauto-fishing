@@ -6,10 +6,10 @@ import threading
 import time
 import traceback
 
-from autofish.bus import AutofishBus
+from autofish.events.bus import AutofishBus
 from autofish.detect.api import detect, get_detector
-from autofish.topics import FrameEvent, PosEvent, Topic
-from autofish.worker_base import WorkerBase
+from autofish.events.topics import FrameEvent, PosEvent, Topic
+from autofish.events.worker_base import WorkerBase
 
 
 class DetectorWorker(WorkerBase):

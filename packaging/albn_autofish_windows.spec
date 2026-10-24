@@ -1,8 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-"""Windows onedir：autofish.preview --ui → dist/albn-autofish/"""
-
-# -*- mode: python ; coding: utf-8 -*-
-"""Windows onedir：autofish.preview --ui → dist/<ALBN_DIST_NAME>/
+"""Windows onedir：run_preview_ui.py → dist/<ALBN_DIST_NAME>/
 
 环境变量：
   ALBN_DIST_NAME  默认 albn-autofish（build_windows.sh 会设为带唯一后缀的名字）
@@ -31,7 +28,6 @@ if _tmpl.is_dir():
 binaries = []
 hiddenimports = [
     "autofish",
-    "autofish.preview",
     "tools.preview_app",
     "tools.dual_range_axis",
     "common.paths",

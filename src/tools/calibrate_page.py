@@ -6,14 +6,14 @@ from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSlider,
-    QSplitter,
     QVBoxLayout,
     QWidget,
 )
@@ -21,21 +21,50 @@ from PySide6.QtWidgets import (
 from tools.bar_mark_canvas import BarMarkCanvas
 from tools.dual_range_axis import DualRangeAxis
 from tools.image_canvas import ImageCanvas
-from tools.shell_theme import TEXT_MUTED
+from tools.shell_log import PageLogPopup
+from tools.shell_theme import TEXT_FAINT, TEXT_MUTED
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
 
 
+def _metric_cell(title: str) -> tuple[QFrame, QLabel]:
+    cell = QFrame()
+    cell.setObjectName("metricCell")
+    cell.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+    v = QVBoxLayout(cell)
+    v.setContentsMargins(6, 5, 6, 5)
+    v.setSpacing(1)
+    val = QLabel("—")
+    val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    val.setStyleSheet(f"font-size:14px; font-weight:700; color:{TEXT_FAINT};")
+    cap = QLabel(title)
+    cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    cap.setStyleSheet(f"font-size:10px; color:{TEXT_FAINT};")
+    v.addWidget(val)
+    v.addWidget(cap)
+    return cell, val
+
+
 def build_calibrate_page(host: "PreviewApp") -> QWidget:
-    # —— 自动拉漂配置（ROI / BAR / 策略 / 本页日志）——
+    # —— 自动拉漂配置（ROI / BAR / 策略）；日志在独立工具窗 ——
     page_cal = QWidget()
-    cal_root = QVBoxLayout(page_cal)
-    cal_root.setContentsMargins(0, 0, 0, 0)
-    cal_root.setSpacing(0)
-    cal_split = QSplitter(Qt.Orientation.Vertical)
-    cal_split.setChildrenCollapsible(False)
-    
+    page_l = QVBoxLayout(page_cal)
+    page_l.setContentsMargins(0, 0, 0, 0)
+    page_l.setSpacing(6)
+
+    host._cal_log_popup = PageLogPopup(
+        host,
+        "自动拉线 · 日志",
+        object_name="calLog",
+        placeholder="开始拉漂 / 结束拉漂 / ROI…",
+    )
+    host.cal_log = host._cal_log_popup.editor
+    log_row = QHBoxLayout()
+    log_row.addStretch(1)
+    log_row.addWidget(host._cal_log_popup.make_button(), 0)
+    page_l.addLayout(log_row)
+
     cal_scroll = QScrollArea()
     cal_scroll.setWidgetResizable(True)
     cal_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
@@ -81,7 +110,8 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     bar_title.addWidget(host.lbl_bar_hint, 1)
     host.btn_bar_refresh = QPushButton("刷新参考图")
     host.btn_bar_refresh.setToolTip(
-        "点击后等待下一次鱼漂识别成功，用该帧更新条界参考图"
+        "先清除旧参考图与黄线标记（防错标记继续控拉线），"
+        "再等待下一次鱼漂识别成功后用该帧更新；更新后请重新标左右界"
     )
     host.btn_bar_refresh.clicked.connect(host._refresh_bar_ref)
     bar_title.addWidget(host.btn_bar_refresh)
@@ -96,7 +126,7 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     vis.addWidget(host.bar_canvas)
     cal_l.addWidget(vision)
     
-    strat = QGroupBox("拉漂策略")
+    strat = QGroupBox("拉线策略")
     strat_l = QVBoxLayout(strat)
     row_pol = QHBoxLayout()
     host.btn_apply_policy = QPushButton("应用策略")
@@ -105,6 +135,19 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     row_pol.addWidget(host.btn_apply_policy)
     row_pol.addStretch(1)
     strat_l.addLayout(row_pol)
+
+    mouse_row = QHBoxLayout()
+    mouse_row.setSpacing(6)
+    intent_cell, host.lbl_mouse_intent = _metric_cell("意图")
+    prog_cell, host.lbl_mouse_prog = _metric_cell("程序")
+    sys_cell, host.lbl_mouse_sys = _metric_cell("系统")
+    mouse_row.addWidget(intent_cell)
+    mouse_row.addWidget(prog_cell)
+    mouse_row.addWidget(sys_cell)
+    strat_l.addLayout(mouse_row)
+    mouse_tip = QLabel("按 / 松 · 不一致时看日志「鼠标异常」")
+    mouse_tip.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+    strat_l.addWidget(mouse_tip)
     strat_l.addWidget(QLabel("拖动数轴 · 两段不重叠且间隔≥1 · 精度0.1"))
     s = host._settings
     host.range_axis = DualRangeAxis(
@@ -133,25 +176,5 @@ def build_calibrate_page(host: "PreviewApp") -> QWidget:
     cal_l.addWidget(strat)
     cal_l.addStretch(1)
     cal_scroll.setWidget(cal_inner)
-    cal_split.addWidget(cal_scroll)
-    
-    cal_log_wrap = QWidget()
-    cal_log_l = QVBoxLayout(cal_log_wrap)
-    cal_log_l.setContentsMargins(0, 4, 0, 0)
-    cal_log_l.setSpacing(2)
-    cal_log_title = QLabel("本页日志（开始/结束拉漂 · 最新在上）")
-    cal_log_title.setObjectName("sectionTitle")
-    cal_log_l.addWidget(cal_log_title)
-    host.cal_log = QPlainTextEdit()
-    host.cal_log.setObjectName("calLog")
-    host.cal_log.setReadOnly(True)
-    host.cal_log.setMinimumHeight(100)
-    host.cal_log.setPlaceholderText("开始拉漂 / 结束拉漂 / ROI…")
-    cal_log_l.addWidget(host.cal_log, 1)
-    cal_split.addWidget(cal_log_wrap)
-    cal_split.setStretchFactor(0, 3)
-    cal_split.setStretchFactor(1, 2)
-    cal_split.setSizes([420, 180])
-    cal_root.addWidget(cal_split)
-
+    page_l.addWidget(cal_scroll, 1)
     return page_cal

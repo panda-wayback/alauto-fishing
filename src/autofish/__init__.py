@@ -1,6 +1,6 @@
 """真机自动拉鱼：五段实现（locate / capture / detect / decide / act）。"""
 
-from autofish.bus import AutofishBus, AutofishSnapshot
+from autofish.events.bus import AutofishBus, AutofishSnapshot
 from autofish.detect import BobberHit, detect
 from autofish.capture import (
     DEFAULT_SCREEN_PATH,
@@ -12,7 +12,7 @@ from autofish.capture import (
 )
 from autofish.locate import DEFAULT_ROI_PATH, Roi, load_roi, save_roi
 from autofish.pipeline import AutofishPipeline
-from autofish.topics import FishingState, Topic
+from autofish.events.topics import FishingState, Topic
 
 __all__ = [
     "AutofishBus",

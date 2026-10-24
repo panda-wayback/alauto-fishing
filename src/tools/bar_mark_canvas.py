@@ -14,10 +14,13 @@ _HIT_PX = 10
 
 
 def _rgb_to_pixmap(rgb: np.ndarray) -> QPixmap:
+    """ndarray 像素 ↔ Qt 逻辑像素 1:1（避免 Retina DPR 把条界框画偏）。"""
     rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
     h, w = rgb.shape[:2]
     qimg = QImage(rgb.data, w, h, 3 * w, QImage.Format.Format_RGB888).copy()
-    return QPixmap.fromImage(qimg)
+    pm = QPixmap.fromImage(qimg)
+    pm.setDevicePixelRatio(1.0)
+    return pm
 
 
 class BarMarkCanvas(QLabel):
@@ -65,6 +68,10 @@ class BarMarkCanvas(QLabel):
         self.update()
 
     @property
+    def program_bar(self) -> tuple[float, float, float, float] | None:
+        return self._program
+
+    @property
     def manual_bar(self) -> tuple[float, float, float, float] | None:
         return self._manual
 
@@ -97,7 +104,11 @@ class BarMarkCanvas(QLabel):
     def _layout_pixmap(self) -> None:
         if self._pixmap.isNull():
             return
-        pw, ph = self._pixmap.width(), self._pixmap.height()
+        # 用原图像素尺寸做映射，与 bar_* / program_bar 坐标系一致
+        if self._rgb is not None:
+            ph, pw = self._rgb.shape[:2]
+        else:
+            pw, ph = self._pixmap.width(), self._pixmap.height()
         cw, ch = max(1, self.width()), max(1, self.height())
         self._scale = min(cw / pw, ch / ph, 1.0)
         nw, nh = max(1, int(pw * self._scale)), max(1, int(ph * self._scale))
@@ -121,8 +132,12 @@ class BarMarkCanvas(QLabel):
         if self._pixmap.isNull():
             return
         p = QPainter(self)
-        nw = max(1, int(self._pixmap.width() * self._scale))
-        nh = max(1, int(self._pixmap.height() * self._scale))
+        if self._rgb is not None:
+            ph, pw = self._rgb.shape[:2]
+        else:
+            pw, ph = self._pixmap.width(), self._pixmap.height()
+        nw = max(1, int(pw * self._scale))
+        nh = max(1, int(ph * self._scale))
         p.drawPixmap(QRect(self._offset.x(), self._offset.y(), nw, nh), self._pixmap)
         if self._program is not None:
             self._draw_bar(p, self._program, QColor(80, 180, 255, 200), 1)

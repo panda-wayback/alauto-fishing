@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import time
 
-from autofish.bus import AutofishBus
+from autofish.events.bus import AutofishBus
 from autofish.decide.policy import ThresholdPosPolicy
-from autofish.topics import (
+from autofish.events.topics import (
     ActionIntentEvent,
     CastSessionEvent,
     CastSessionState,
