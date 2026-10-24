@@ -22,6 +22,17 @@ PREVIEW_BG = "#0f1216"
 NAV_ACTIVE_BG = "#252b33"
 
 
+def paint_tone(widget, tone: str) -> None:
+    """用动态属性上色。字号留在样式表里，避免 setStyleSheet 把字号盖掉。"""
+    if widget.property("tone") == tone:
+        return
+    widget.setProperty("tone", tone)
+    style = widget.style()
+    style.unpolish(widget)
+    style.polish(widget)
+    widget.update()
+
+
 def global_qss() -> str:
     return f"""
     QMainWindow, QWidget {{
@@ -55,58 +66,121 @@ def global_qss() -> str:
     QFrame#capabilityCard, QFrame#capabilityHero {{
         background: {SURFACE};
         border: 1px solid {BORDER_SOFT};
-        border-radius: 10px;
+        border-radius: 16px;
+    }}
+    QFrame#capabilityHero {{
+        border-radius: 18px;
     }}
     QFrame#capabilityCard[active="true"], QFrame#capabilityHero[active="true"] {{
-        border-color: {ACCENT_DIM};
+        border: 1px solid rgba(61, 184, 160, 0.55);
     }}
-    QFrame#capabilityHead {{
+    QFrame#capabilityCard[live="true"] {{
+        border: 2px solid {ACCENT};
         background: {SURFACE_2};
-        border: none;
-        border-bottom: 1px solid {BORDER_SOFT};
-        border-top-left-radius: 10px;
-        border-top-right-radius: 10px;
+    }}
+    QFrame#capabilityCard[flash="true"] {{
+        border: 2px solid {ACCENT};
+        background: rgba(61, 184, 160, 0.22);
+    }}
+    QLabel#castBadge {{
+        color: {TEXT_FAINT};
+        border: 1px solid {BORDER};
+        border-radius: 9px;
+        padding: 1px 8px;
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QLabel#castBadge[live="true"] {{
+        color: {ACCENT_ON};
+        background: {ACCENT};
+        border-color: {ACCENT};
+    }}
+    QLabel#castNote {{
+        color: {TEXT};
+        font-size: 12px;
+        font-weight: 700;
+    }}
+    QFrame#capabilityCard[active="false"] QCheckBox#capSwitch,
+    QFrame#capabilityHero[active="false"] QCheckBox#capSwitch {{
+        color: {TEXT_MUTED};
     }}
     QCheckBox#capSwitch {{
         background: transparent;
         border: none;
         padding: 0;
-        font-size: 13px;
+        font-size: 14px;
         font-weight: 700;
         spacing: 8px;
     }}
     QCheckBox#capSwitch::indicator {{
-        width: 14px;
-        height: 14px;
-        max-width: 14px;
-        max-height: 14px;
-        border-radius: 3px;
+        width: 16px;
+        height: 16px;
+        max-width: 16px;
+        max-height: 16px;
+        border-radius: 4px;
+    }}
+    QCheckBox#capSwitch::indicator:checked,
+    QCheckBox#capSwitch::indicator:checked:hover {{
+        background: {ACCENT};
+        border-color: {ACCENT};
     }}
     QLabel#capKey {{
-        color: {TEXT_FAINT};
-        font-size: 10px;
+        color: {TEXT_MUTED};
+        font-size: 11px;
         font-weight: 700;
-        letter-spacing: 0.5px;
+        letter-spacing: 1.6px;
     }}
     QLabel#capValue {{
         color: {TEXT};
-        font-size: 26px;
+        font-size: 32px;
         font-weight: 700;
+        letter-spacing: -0.5px;
+    }}
+    QFrame#capabilityCard[active="false"] QLabel#capValue {{
+        color: {TEXT_FAINT};
     }}
     QLabel#heroPos {{
         color: {TEXT};
-        font-size: 44px;
+        font-size: 56px;
         font-weight: 700;
-        letter-spacing: -1px;
+        letter-spacing: -2px;
+    }}
+    QLabel#heroPos[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#heroPos[tone="warn"] {{
+        color: {WARN};
     }}
     QLabel#capAct {{
-        color: {ACCENT};
-        font-size: 14px;
+        color: {TEXT_MUTED};
+        font-size: 15px;
         font-weight: 700;
+    }}
+    QLabel#capAct[tone="hold"] {{
+        color: {SUCCESS};
+    }}
+    QLabel#capAct[tone="release"] {{
+        color: {WARN};
+    }}
+    QLabel#capAct[tone="faint"] {{
+        color: {TEXT_FAINT};
     }}
     QLabel#capMeta {{
         color: {TEXT_MUTED};
         font-size: 12px;
+        font-weight: 600;
+    }}
+    QLabel#capMeta[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#capMeta[tone="warn"] {{
+        color: {WARN};
+    }}
+    QLabel#capMeta[tone="ok"] {{
+        color: {SUCCESS};
+    }}
+    QLabel#capMeta[tone="accent"] {{
+        color: {ACCENT};
     }}
     QLabel#licenseBanner {{
         color: {TEXT_MUTED};
@@ -139,8 +213,15 @@ def global_qss() -> str:
         letter-spacing: 1px;
     }}
     QLabel#castRemain {{
-        font-size: 26px;
+        font-size: 32px;
         font-weight: 700;
+        letter-spacing: -0.5px;
+        color: {TEXT};
+    }}
+    QLabel#castRemain[tone="faint"] {{
+        color: {TEXT_FAINT};
+    }}
+    QLabel#castRemain[tone="live"] {{
         color: {ACCENT};
     }}
     QPlainTextEdit {{

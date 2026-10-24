@@ -88,6 +88,7 @@ from tools.shell_theme import (
     TEXT_MUTED,
     WARN,
     global_qss,
+    paint_tone,
 )
 from tools.macos_overlay import (
     elevate_over_fullscreen,
@@ -193,6 +194,7 @@ class PreviewApp(QMainWindow):
         self._holding: bool | None = None
         self._last_cast_session: CastSessionState | None = None
         self._last_cast_phase: CastPhase | None = None
+        self._cast_live = False
         self._had_bobber: bool | None = None
         self._intent_reason = ""
         self._last_detect_ms: float = 0.0
@@ -421,18 +423,86 @@ class PreviewApp(QMainWindow):
         if rem is None:
             return
         rem.setText(text)
-        # 主读数：进行中用强调色，待命用主字色，关闭用弱色
+        # 进行中用强调色，待命用主字色，关闭用弱色
         if active:
-            color = ACCENT
+            tone = "live"
         elif text in {"—", "-", ""}:
-            color = TEXT_FAINT
+            tone = "faint"
         else:
-            color = TEXT_MUTED
-        size = 20 if ("/" in text or "～" in text or "~" in text) else 26
-        rem.setStyleSheet(f"font-size:{size}px; font-weight:700; color:{color};")
+            tone = "idle"
+        paint_tone(rem, tone)
         # lbl_cast_remain_cap 已从主控摘掉，仅保留兼容字段
 
+    def _sync_cast_live(self) -> None:
+        """抛竿任务起止：常亮标签 + 开始 / 结束短闪（主控与浮窗同步）。"""
+        pipe = self._pipe
+        c_on = bool(getattr(self, "chk_c", None) is not None and self.chk_c.isChecked())
+        live = bool(c_on and pipe is not None and pipe.auto_cast.active)
+        badge = getattr(self, "lbl_cast_badge", None)
+        card = getattr(self, "card_cast", None)
+        if badge is not None:
+            badge.setVisible(c_on)
+            badge.setText("抛竿中" if live else "待命")
+            self._set_prop(badge, "live", live)
+        if card is not None:
+            self._set_prop(card, "live", live)
+        hud = getattr(self, "_hud", None)
+        if hud is not None:
+            hud.set_cast_live(live)
+        if live == self._cast_live:
+            return
+        self._cast_live = live
+        if live:
+            total = max(int(pipe.auto_cast.batch_total), int(pipe.auto_cast.remaining))
+            note = f"已开始 · 共 {total} 次"
+            key = "cast_start"
+        else:
+            note = f"已结束 · {self._cast_end_reason(c_on)}"
+            key = "cast_end"
+        self._flash_cast_card(note)
+        if hud is not None:
+            hud.flash(key)
+
+    def _cast_end_reason(self, c_on: bool) -> str:
+        if not c_on:
+            return "关闭自动抛竿"
+        pipe = self._pipe
+        detail = "" if pipe is None else (pipe.bus.snapshot().cast_phase_detail or "")
+        return {
+            "batch_done": "次数用尽",
+            "right_click": "右键",
+            "cancelled": "手动",
+        }.get(detail, "中止" if detail else "手动")
+
+    def _flash_cast_card(self, note: str) -> None:
+        card = getattr(self, "card_cast", None)
+        lbl = getattr(self, "lbl_cast_note", None)
+        if card is None or lbl is None:
+            return
+        lbl.setText(note)
+        lbl.show()
+        self._set_prop(card, "flash", True)
+        timer = getattr(self, "_cast_flash_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda: self._set_prop(self.card_cast, "flash", False))
+            self._cast_flash_timer = timer
+        timer.start(1500)
+
+    @staticmethod
+    def _set_prop(widget, name: str, on: bool) -> None:
+        val = "true" if on else "false"
+        if widget.property(name) == val:
+            return
+        widget.setProperty(name, val)
+        style = widget.style()
+        style.unpolish(widget)
+        style.polish(widget)
+        widget.update()
+
     def _refresh_cast_label(self) -> None:
+        self._sync_cast_live()
         pipe = self._pipe
         c_on = bool(getattr(self, "chk_c", None) is not None and self.chk_c.isChecked())
         cfg_txt = format_cast_count_range(
@@ -440,9 +510,7 @@ class PreviewApp(QMainWindow):
         )
         if not c_on:
             self.lbl_cast.setText("关")
-            self.lbl_cast.setStyleSheet(
-                f"font-size:12px; font-weight:700; color:{TEXT_FAINT};"
-            )
+            paint_tone(self.lbl_cast, "faint")
             self._set_cast_remain("—", active=False, cap="次数")
             self._set_arm_preview_visible(False)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
@@ -456,9 +524,7 @@ class PreviewApp(QMainWindow):
             )
             arm_txt = "就绪" if armed else "等待认漂"
             self.lbl_cast.setText(arm_txt)
-            self.lbl_cast.setStyleSheet(
-                f"font-size:12px; font-weight:700; color:{SUCCESS if armed else WARN};"
-            )
+            paint_tone(self.lbl_cast, "ok" if armed else "warn")
             self._set_cast_remain(cfg_txt, active=False, cap="次数")
             self._paint_arm_border(armed)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
@@ -472,9 +538,7 @@ class PreviewApp(QMainWindow):
         rem = pipe.auto_cast.remaining
         total = max(rem, int(pipe.auto_cast.batch_total) or 1)
         self.lbl_cast.setText(label)
-        self.lbl_cast.setStyleSheet(
-            f"font-size:12px; font-weight:700; color:{ACCENT};"
-        )
+        paint_tone(self.lbl_cast, "accent")
         self._set_cast_remain(f"{rem}/{total}", active=True, cap="剩/共")
         armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
         self._paint_arm_border(armed)
@@ -1648,16 +1712,14 @@ class PreviewApp(QMainWindow):
     def _refresh_pos(self) -> None:
         if self.hit is None:
             self.lbl_pos.setText("—")
-            color = TEXT_FAINT
+            tone = "faint"
         elif self.hit.bar_width <= 0:
             self.lbl_pos.setText("无条")
-            color = WARN
+            tone = "warn"
         else:
             self.lbl_pos.setText(f"{self.hit.pos:.1f}")
-            color = SUCCESS
-        self.lbl_pos.setStyleSheet(
-            f"font-size:28px; font-weight:700; color:{color};"
-        )
+            tone = "ok"
+        paint_tone(self.lbl_pos, tone)
         self._refresh_b_meta()
         self._refresh_hud_metrics()
 
@@ -1981,24 +2043,16 @@ class PreviewApp(QMainWindow):
         if act is not None:
             if not act_on:
                 act.setText("关")
-                act.setStyleSheet(
-                    f"font-size:14px; font-weight:700; color:{TEXT_FAINT};"
-                )
+                paint_tone(act, "faint")
             elif intent is True:
                 act.setText("按住")
-                act.setStyleSheet(
-                    f"font-size:14px; font-weight:700; color:{SUCCESS};"
-                )
+                paint_tone(act, "hold")
             elif intent is False:
                 act.setText("松开")
-                act.setStyleSheet(
-                    f"font-size:14px; font-weight:700; color:{WARN};"
-                )
+                paint_tone(act, "release")
             else:
                 act.setText("—")
-                act.setStyleSheet(
-                    f"font-size:14px; font-weight:700; color:{TEXT_MUTED};"
-                )
+                paint_tone(act, "idle")
 
         issues: list[str] = []
         controlling = act_on and not free and not yielding

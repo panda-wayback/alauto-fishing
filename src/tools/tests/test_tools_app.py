@@ -410,6 +410,34 @@ def test_toggle_c_gates_cast_and_right_click(env):
     _close(win, env)
 
 
+def test_cast_start_and_end_are_shown_on_card_and_hud(env):
+    win = _make(env)
+    pipe = _pipe()
+    win.bar_cast_count.setRange(3.0, 3.0)
+    win.chk_c.setChecked(True)
+    assert win.lbl_cast_badge.text() == "待命"
+    assert win.lbl_cast_badge.property("live") == "false"
+    assert win._hud.lbl_cast_badge.isHidden()
+    win._cursor_arm.force_armed(True)
+    win._on_cast_right_click()
+    win._refresh_cast_label()
+    assert pipe.auto_cast.active
+    assert win.lbl_cast_badge.text() == "抛竿中"
+    assert win.card_cast.property("live") == "true"
+    assert win.card_cast.property("flash") == "true"
+    assert win.lbl_cast_note.text() == "已开始 · 共 3 次"
+    assert not win._hud.lbl_cast_badge.isHidden()
+    assert win._hud.lbl_phase.toolTip() == "开始抛竿"
+    win._on_cast_right_click()
+    win._refresh_cast_label()
+    assert win.lbl_cast_badge.text() == "待命"
+    assert win.card_cast.property("live") == "false"
+    assert win.lbl_cast_note.text().startswith("已结束")
+    assert win._hud.lbl_cast_badge.isHidden()
+    assert win._hud.lbl_phase.toolTip() == "结束抛竿"
+    _close(win, env)
+
+
 def test_restore_c_on_from_settings(env):
     save_shell_settings(ShellSettings(auto_cast_enabled=True))
     win = _make(env)

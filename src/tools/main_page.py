@@ -1,4 +1,4 @@
-"""主控页：A / B / C 三行能力卡（精简主读数）。"""
+"""主控页：拉线主卡 + 起勾 / 抛竿并排次卡。"""
 
 from __future__ import annotations
 
@@ -27,50 +27,41 @@ def _sync_cap_active(card: QFrame, chk: QCheckBox) -> None:
     style = card.style()
     style.unpolish(card)
     style.polish(card)
+    for lbl in card.findChildren(QLabel):
+        style.unpolish(lbl)
+        style.polish(lbl)
     card.update()
 
 
-def _cap_card(*, chk: QCheckBox) -> tuple[QFrame, QHBoxLayout, QHBoxLayout]:
-    """返回 (card, head_row, body_row)。body_row 用于横排主读数。"""
+def _make_card(chk: QCheckBox, *, hero: bool) -> tuple[QFrame, QHBoxLayout, QVBoxLayout]:
+    """返回 (card, 顶栏, 卡身)。顶栏放勾选，动作字可加在顶栏右侧。"""
     card = QFrame()
-    card.setObjectName("capabilityCard")
+    card.setObjectName("capabilityHero" if hero else "capabilityCard")
     root = QVBoxLayout(card)
-    root.setContentsMargins(0, 0, 0, 0)
-    root.setSpacing(0)
+    if hero:
+        root.setContentsMargins(18, 16, 18, 14)
+        root.setSpacing(6)
+    else:
+        root.setContentsMargins(14, 12, 14, 12)
+        root.setSpacing(8)
 
-    head = QFrame()
-    head.setObjectName("capabilityHead")
-    hl = QHBoxLayout(head)
-    hl.setContentsMargins(10, 7, 10, 7)
-    hl.setSpacing(8)
+    head = QHBoxLayout()
+    head.setSpacing(8)
+    head.setContentsMargins(0, 0, 0, 0)
     chk.setObjectName("capSwitch")
     chk.setCursor(Qt.CursorShape.PointingHandCursor)
-    hl.addWidget(chk, 0)
-    hl.addStretch(1)
-    root.addWidget(head)
+    head.addWidget(chk, 0)
+    head.addStretch(1)
+    root.addLayout(head)
 
-    body = QWidget()
-    body_l = QHBoxLayout(body)
-    body_l.setContentsMargins(10, 8, 10, 10)
-    body_l.setSpacing(10)
-    body_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
-    root.addWidget(body)
+    body = QVBoxLayout()
+    body.setSpacing(2)
+    body.setContentsMargins(0, 0, 0, 0)
+    root.addLayout(body)
 
     chk.toggled.connect(lambda _=False, c=card, k=chk: _sync_cap_active(c, k))
     _sync_cap_active(card, chk)
-    return card, hl, body_l
-
-
-def _hero_block(key: str, value: QLabel) -> QVBoxLayout:
-    col = QVBoxLayout()
-    col.setSpacing(2)
-    col.setContentsMargins(0, 0, 0, 0)
-    k = QLabel(key)
-    k.setObjectName("capKey")
-    col.addWidget(k)
-    value.setObjectName("capValue")
-    col.addWidget(value)
-    return col
+    return card, head, body
 
 
 def build_main_page(host: "PreviewApp") -> QWidget:
@@ -155,18 +146,11 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.lbl_cast_hint = _ghost("castHint")
 
     caps = QVBoxLayout()
-    caps.setSpacing(6)
+    caps.setSpacing(10)
     caps.setContentsMargins(0, 0, 0, 0)
 
-    # —— A ——
-    a_card, _a_head, a_body = _cap_card(chk=host.chk_a)
-    host.lbl_session = QLabel("关")
-    a_body.addLayout(_hero_block("会话", host.lbl_session), 0)
-    a_body.addStretch(1)
-    caps.addWidget(a_card)
-
-    # —— B ——
-    b_card, b_head, b_body = _cap_card(chk=host.chk_b)
+    # —— B 主卡：拉线 ——
+    b_card, b_head, b_body = _make_card(host.chk_b, hero=True)
     host.lbl_b_act = QLabel("—")
     host.lbl_b_act.setObjectName("capAct")
     host.lbl_b_act.setAlignment(
@@ -174,26 +158,39 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     )
     b_head.addWidget(host.lbl_b_act, 0)
     host.lbl_pos = QLabel("—")
-    host.lbl_pos.setObjectName("capValue")
-    b_body.addLayout(_hero_block("POS", host.lbl_pos), 0)
-    b_body.addStretch(1)
+    host.lbl_pos.setObjectName("heroPos")
+    host.lbl_pos.setProperty("tone", "faint")
+    b_body.addWidget(host.lbl_pos)
+    pos_k = QLabel("POS")
+    pos_k.setObjectName("capKey")
+    b_body.addWidget(pos_k)
     caps.addWidget(b_card)
 
-    # —— C ——
-    c_card, _c_head, c_body = _cap_card(chk=host.chk_c)
+    # —— A / C 次卡 ——
+    a_card, _a_head, a_body = _make_card(host.chk_a, hero=False)
+    host.lbl_session = QLabel("关")
+    host.lbl_session.setObjectName("capValue")
+    a_body.addWidget(host.lbl_session)
+    a_body.addStretch(1)
+
+    c_card, c_head, c_body = _make_card(host.chk_c, hero=False)
+    host.card_cast = c_card
+    host.lbl_cast_badge = QLabel("待命")
+    host.lbl_cast_badge.setObjectName("castBadge")
+    host.lbl_cast_badge.setProperty("live", "false")
+    host.lbl_cast_badge.hide()
+    c_head.addWidget(host.lbl_cast_badge, 0)
     host.lbl_cast_remain = QLabel("—")
     host.lbl_cast_remain.setObjectName("castRemain")
+    host.lbl_cast_remain.setProperty("tone", "faint")
     host.lbl_cast_remain.setToolTip("待命=配置次数；进行中=剩余/共")
     host.lbl_cast_remain_cap = QLabel("")
     host.lbl_cast_remain_cap.hide()
-    c_body.addLayout(_hero_block("抛竿", host.lbl_cast_remain), 0)
-    c_side = QVBoxLayout()
-    c_side.setSpacing(2)
-    host.lbl_cast = QLabel("关")
-    host.lbl_cast.setObjectName("capMeta")
-    c_side.addWidget(host.lbl_cast)
-    c_side.addStretch(1)
-    c_body.addLayout(c_side, 1)
+    c_row = QHBoxLayout()
+    c_row.setSpacing(8)
+    c_row.setContentsMargins(0, 4, 0, 0)
+    c_row.addWidget(host.lbl_cast_remain, 0, Qt.AlignmentFlag.AlignVCenter)
+    c_row.addStretch(1)
     host.lbl_arm_preview = QLabel()
     host.lbl_arm_preview.setFixedSize(36, 36)
     host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -202,8 +199,23 @@ def build_main_page(host: "PreviewApp") -> QWidget:
         f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
     )
     host.lbl_arm_preview.hide()
-    c_body.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
-    caps.addWidget(c_card)
+    c_row.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
+    c_body.addLayout(c_row)
+    host.lbl_cast = QLabel("关")
+    host.lbl_cast.setObjectName("capMeta")
+    host.lbl_cast.setProperty("tone", "faint")
+    c_body.addWidget(host.lbl_cast)
+    host.lbl_cast_note = QLabel("")
+    host.lbl_cast_note.setObjectName("castNote")
+    host.lbl_cast_note.hide()
+    c_body.addWidget(host.lbl_cast_note)
+
+    pair = QHBoxLayout()
+    pair.setSpacing(10)
+    pair.setContentsMargins(0, 0, 0, 0)
+    pair.addWidget(a_card, 1)
+    pair.addWidget(c_card, 1)
+    caps.addLayout(pair)
 
     main_l.addLayout(caps)
 

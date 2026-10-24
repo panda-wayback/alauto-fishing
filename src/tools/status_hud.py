@@ -40,7 +40,11 @@ _PHASE_STYLE: dict[str, tuple[str, str]] = {
     "cast_wait": ("抛·等", TEXT_MUTED),
     "cast_aim": ("瞄准", WARN),
     "cast_charge": ("蓄力", ACCENT),
+    "cast_start": ("开始抛竿", SUCCESS),
+    "cast_end": ("结束抛竿", WARN),
 }
+
+_CHROME_FLASH = ("heard", "game_start", "game_end", "cast_start", "cast_end")
 
 _FLASH_MS = 1200
 
@@ -69,6 +73,14 @@ class StatusHudPanel(QWidget):
         metrics.setContentsMargins(0, 0, 0, 0)
         self.lbl_pos = self._row(metrics, "POS")
         self.lbl_cast = self._row(metrics, "抛竿")
+        self.lbl_cast_badge = QLabel("抛竿中")
+        self.lbl_cast_badge.setStyleSheet(
+            f"font-size:10px; font-weight:700; color:{ACCENT_ON}; background:{ACCENT}; "
+            f"border-radius:3px; padding:0 4px;"
+        )
+        self.lbl_cast_badge.hide()
+        cast_row = metrics.itemAt(metrics.count() - 1).layout()
+        cast_row.insertWidget(1, self.lbl_cast_badge, 0)
         self.lbl_mouse = self._row(metrics, "拉线")
         body.addLayout(metrics, 1)
 
@@ -264,9 +276,10 @@ class StatusHudPanel(QWidget):
             f"font-size:11px; font-weight:700; color:{color}; "
             f"background:transparent;"
         )
-        self._apply_panel_chrome(
-            color if key in ("heard", "game_start", "game_end") else None
-        )
+        self._apply_panel_chrome(color if key in _CHROME_FLASH else None)
+
+    def set_cast_live(self, live: bool) -> None:
+        self.lbl_cast_badge.setVisible(bool(live))
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
