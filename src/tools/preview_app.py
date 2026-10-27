@@ -1788,7 +1788,11 @@ class PreviewApp(QMainWindow):
     def _start_cursor_arm(self) -> None:
         if self._cursor_arm is None:
             self._cursor_arm = CursorArmWatcher(
-                interval_s=0.3,
+                # 认漂加严后，偏保守的判定会偶尔让单帧漏判；轮询间隔越大，
+                # 漏判后等下一帧刷新「就绪」的感知延迟就越明显。读一次系统光标
+                # 位图 + 判定共计 <1ms（数量级远小于间隔本身），调低间隔不会
+                # 带来明显开销，换取更快跟手。
+                interval_s=0.1,
                 size=100,
                 on_armed_changed=lambda armed: self._arm_bridge.armed_changed.emit(
                     bool(armed)
