@@ -4,7 +4,7 @@ modules: []
 input:
   - name: autofish.auto_cast.cursor_arm.see_surface_bobber(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
-    desc: 判定光标小图是否呈漂形（按不透明像素占比够黄羽 / 红带 / 白肚，且三色加权行质心自上而下依次为黄羽→红带→白肚）；空图或过小为 False
+    desc: 判定光标小图是否呈漂形（按不透明像素占比够黄羽 / 红带 / 白肚，三色合计占不透明像素比例够高，且三色加权行质心自上而下依次为黄羽→红带→白肚）；空图或过小为 False
   - name: autofish.auto_cast.cursor_arm.grab_system_cursor()
     type: 无参
     desc: 读系统当前光标 RGBA；mss 截不到该层。macOS 用 NSCursor.currentSystemCursor；Windows 用 GetCursorInfo；失败 None
@@ -26,7 +26,7 @@ input:
 output:
   - name: see_surface_bobber(rgb)
     type: bool
-    desc: True=光标图三色占比达标且纵向顺序（黄羽→红带→白肚）符合漂形
+    desc: True=光标图三色各自占比达标、三色合计占比达标、且纵向顺序（黄羽→红带→白肚）符合漂形
   - name: grab_system_cursor()
     type: "np.ndarray uint8 (H, W, 4) RGBA | None"
     desc: 当前系统光标位图
@@ -41,7 +41,10 @@ output:
     desc: 翻转 / 每帧成功读取时在观察者线程回调
 contract:
   - 认漂输入是系统光标位图，不是 mss 游戏画面截屏（mss 不含系统合成光标）
-  - 认漂不只看三色占比：还要求黄羽 / 红带 / 白肚三掩膜的加权行质心自上而下依次排列（容差 4% 图高），
+  - 认漂不只看三色各自占比：还要求黄 / 红 / 肚三色合计占不透明像素比例 ≥ 45%，
+    排除三色占比虽都达标、但图标里还混了大片三色之外的背景 / 描边 / 涟漪等装饰色的图标
+    （如可互动提示、篝火类图标）
+  - 还要求黄羽 / 红带 / 白肚三掩膜的加权行质心自上而下依次排列（容差 4% 图高），
     排除色调偏金黄但非该纵向分层结构的图标（如系统光标主题里的箭头 / 忙碌 / 链接选择图标）
   - 不 YOLO、不调 Detect / FindBobber
   - Watcher 仅 enabled 时读取；interval_s 默认 0.3；空闲 sleep
@@ -55,5 +58,6 @@ errors:
 tests:
   - 合成含黄+红+白的不透明斑、按漂形自上而下排列 → see_surface_bobber True；透明/纯蓝 → False
   - 合成同样凑够黄+红+白占比但纵向顺序相反（白肚在上、黄羽在下）的图标 → see_surface_bobber False
+  - 合成顺序与占比均达标、但整图被三色之外的不透明装饰色占满（三色合计占比不足）的图标 → see_surface_bobber False
   - grab_system_cursor 在 mock 下返回帧；失败 None
   - Watcher：enabled 后 armed 随 detect；on_frame 收到帧；False 清空

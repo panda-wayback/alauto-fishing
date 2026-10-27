@@ -57,6 +57,33 @@ def test_see_surface_bobber_golden_icon_wrong_order_false():
     assert see_surface_bobber(_golden_icon_wrong_order_rgba()) is False
 
 
+def _decorative_icon_low_coverage_rgba() -> np.ndarray:
+    """顺序对、三色占比也各自达标，但整图大片是三色之外的不透明装饰色
+    （模拟游戏里的篝火 / 可互动提示类图标：火焰顶 + 杯身，外围还有大片
+    深色描边与水纹涟漪），合计三色占比明显偏低。
+    """
+    img = np.zeros((80, 80, 4), dtype=np.uint8)
+    # 大片不透明深灰背景/涟漪装饰（非黄/红/肚三色），占满整图
+    img[..., 0] = 60
+    img[..., 1] = 65
+    img[..., 2] = 75
+    img[..., 3] = 255
+    # 顺序正确的小块黄羽 / 红带 / 乳白肚，但面积相对整图很小
+    m = _blob(80, 80, 55, 40, 6)
+    img[m] = (230, 220, 200, 255)
+    m = _blob(80, 80, 46, 40, 4)
+    img[m] = (200, 40, 40, 255)
+    m = _blob(80, 80, 32, 40, 9)
+    img[m] = (240, 180, 40, 255)
+    return img
+
+
+def test_see_surface_bobber_low_color_coverage_false():
+    img = _decorative_icon_low_coverage_rgba()
+    # 三色各自占比与顺序都满足，只差「三色合计占比」这一道门槛
+    assert see_surface_bobber(img) is False
+
+
 def test_see_surface_bobber_plain_blue_false():
     img = np.zeros((80, 80, 4), dtype=np.uint8)
     img[..., 0:3] = (40, 90, 160)
