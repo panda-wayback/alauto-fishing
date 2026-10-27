@@ -1110,7 +1110,7 @@ class PreviewApp(QMainWindow):
     def _on_restore_defaults(self) -> None:
         reply = QMessageBox.question(
             self,
-            "恢复默认",
+            "恢复默认设置",
             "将把抛杆、拉漂、开钓和截图范围恢复为默认，并清空手动条界与参考图。\n"
             "模板、录音和授权会保留。\n\n"
             "继续？",

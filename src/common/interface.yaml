@@ -190,7 +190,7 @@ tests:
   - 其它平台 current_status 三项均为 None
   - macOS current_status 反映屏幕录制 / 辅助功能授权结果，is_admin 为 None
   - macOS 授权查询库不可用时 current_status 不抛并视为未授权
-  - Windows current_status 反映截屏探测与管理员状态，input_ok 为 True
+  - Windows current_status 反映截屏探测与管理员状态，input_ok 为 True；非管理员 input_label 为「正常使用功能需要管理员权限(鼠标操作权限)」
   - PermissionStatus 不可修改
   - macOS request_screen_access 请求授权并打开屏幕录制设置页
   - Windows request_screen_access 按截屏探测返回成功 / 失败句

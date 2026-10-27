@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.shell_log import PageLogPopup
-from tools.shell_theme import BORDER, TEXT_MUTED
+from tools.shell_theme import BORDER
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
@@ -241,16 +241,9 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     main_l.addLayout(foot)
 
     # —— 底部恢复默认 + 权限栏：放在主控最下方，启动即可直接操作，不必切到「更多」页 ——
-    restore = QGroupBox("恢复默认")
+    restore = QGroupBox("恢复默认设置")
     restore_l = QVBoxLayout(restore)
-    hint_restore = QLabel(
-        "把拉线、起勾、抛竿和截图范围恢复为默认，并清空手动条界；"
-        "不删除模板、录音和授权"
-    )
-    hint_restore.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
-    hint_restore.setWordWrap(True)
-    restore_l.addWidget(hint_restore)
-    host.btn_restore_defaults = QPushButton("恢复默认")
+    host.btn_restore_defaults = QPushButton("恢复默认设置")
     host.btn_restore_defaults.setObjectName("btnGhost")
     host.btn_restore_defaults.setToolTip(
         "恢复打包默认（没有则用内建缺省），并按当前主屏重算截图框"
@@ -270,6 +263,7 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.btn_perm_screen.setVisible(sys.platform != "win32")
     perm_l.addWidget(host.btn_perm_screen)
     host.lbl_perm_input = QLabel("控鼠…")
+    host.lbl_perm_input.setWordWrap(True)
     perm_l.addWidget(host.lbl_perm_input)
     host.btn_perm_input = QPushButton("授权控鼠")
     host.btn_perm_input.clicked.connect(host._on_perm_input)

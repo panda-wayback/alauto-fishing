@@ -242,7 +242,7 @@ def _status_windows() -> PermissionStatus:
         input_label=(
             "已是管理员（利于控鼠）"
             if admin
-            else "非管理员（游戏提权时请提权重启）"
+            else "正常使用功能需要管理员权限(鼠标操作权限)"
         ),
         is_admin=admin,
     )

@@ -121,7 +121,11 @@ def test_windows_status(monkeypatch, runs, admin, screen):
     assert st.screen_label == ("截屏可用" if screen else "截屏异常")
     assert st.input_ok is True
     assert st.is_admin is admin
-    assert ("已是管理员" in st.input_label) is admin
+    assert st.input_label == (
+        "已是管理员（利于控鼠）"
+        if admin
+        else "正常使用功能需要管理员权限(鼠标操作权限)"
+    )
     assert calls == [] and runs == []
 
 
