@@ -38,6 +38,25 @@ def test_see_surface_bobber_yellow_red_white():
     assert see_surface_bobber(_bobber_rgba()) is True
 
 
+def _golden_icon_wrong_order_rgba() -> np.ndarray:
+    """同样凑够黄/红/白三色占比，但纵向顺序与漂形相反（模拟系统光标主题图标误判）。"""
+    img = np.zeros((80, 80, 4), dtype=np.uint8)
+    img[..., 2] = 160
+    img[..., 3] = 0
+    # 白肚在最上、红带居中、黄羽在最下：与真漂（黄→红→白）顺序相反
+    m = _blob(80, 80, 25, 40, 14)
+    img[m] = (230, 220, 200, 255)
+    m = _blob(80, 80, 42, 40, 8)
+    img[m] = (200, 40, 40, 255)
+    m = _blob(80, 80, 55, 40, 10)
+    img[m] = (240, 180, 40, 255)
+    return img
+
+
+def test_see_surface_bobber_golden_icon_wrong_order_false():
+    assert see_surface_bobber(_golden_icon_wrong_order_rgba()) is False
+
+
 def test_see_surface_bobber_plain_blue_false():
     img = np.zeros((80, 80, 4), dtype=np.uint8)
     img[..., 0:3] = (40, 90, 160)
