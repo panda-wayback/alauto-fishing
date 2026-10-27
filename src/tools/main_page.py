@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from tools.shell_log import PageLogPopup
-from tools.shell_theme import BORDER
+from tools.shell_theme import BORDER, TEXT_MUTED
 
 if TYPE_CHECKING:
     from tools.preview_app import PreviewApp
@@ -240,19 +240,34 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     foot.addWidget(host.btn_float, 0)
     main_l.addLayout(foot)
 
-    # —— 底部权限栏：置顶 + 屏幕录制 / 控鼠（或以管理员重启）——
-    # 放在主控最下方，启动即可直接操作，不必切到「更多」页
+    # —— 底部恢复默认 + 权限栏：放在主控最下方，启动即可直接操作，不必切到「更多」页 ——
+    restore = QGroupBox("恢复默认")
+    restore_l = QVBoxLayout(restore)
+    hint_restore = QLabel(
+        "把拉线、起勾、抛竿和截图范围恢复为默认，并清空手动条界；"
+        "不删除模板、录音和授权"
+    )
+    hint_restore.setStyleSheet(f"color:{TEXT_MUTED}; font-size:11px;")
+    hint_restore.setWordWrap(True)
+    restore_l.addWidget(hint_restore)
+    host.btn_restore_defaults = QPushButton("恢复默认")
+    host.btn_restore_defaults.setObjectName("btnGhost")
+    host.btn_restore_defaults.setToolTip(
+        "恢复打包默认（没有则用内建缺省），并按当前主屏重算截图框"
+    )
+    host.btn_restore_defaults.clicked.connect(host._on_restore_defaults)
+    restore_l.addWidget(host.btn_restore_defaults)
+    main_l.addWidget(restore)
+
+    # 屏幕录制 / 控鼠（或以管理员重启）；置顶已去掉，不在界面上提供开关
     perm = QGroupBox("权限")
     perm_l = QVBoxLayout(perm)
-    host.chk_stay_on_top = QCheckBox("置顶")
-    host.chk_stay_on_top.setChecked(bool(host._settings.stay_on_top))
-    host.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层")
-    host.chk_stay_on_top.toggled.connect(host._on_stay_on_top_toggled)
-    perm_l.addWidget(host.chk_stay_on_top)
     host.lbl_perm_screen = QLabel("屏幕…")
     perm_l.addWidget(host.lbl_perm_screen)
     host.btn_perm_screen = QPushButton("授权屏幕")
     host.btn_perm_screen.clicked.connect(host._on_perm_screen)
+    # Windows 没有屏幕隐私开关，状态文字已反映探测结果，不放测试按钮
+    host.btn_perm_screen.setVisible(sys.platform != "win32")
     perm_l.addWidget(host.btn_perm_screen)
     host.lbl_perm_input = QLabel("控鼠…")
     perm_l.addWidget(host.lbl_perm_input)

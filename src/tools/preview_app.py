@@ -299,12 +299,12 @@ class PreviewApp(QMainWindow):
         self._nav_btns: list[QPushButton] = []
         self.stack = QStackedWidget()
         nav_items = (
-            ("主控", "日常开关、状态与权限"),
+            ("主控", "日常开关、状态、权限与恢复默认"),
             ("自动拉线", "ROI / 条界 / 策略"),
             ("自动抛竿", "次数 · 快捷键 · 满蓄 · 等待"),
             ("自动起勾", "设备 / 模板 / 阈值 / 第一下"),
             ("回测", "长录音与命中回测"),
-            ("更多", "恢复默认 / 打包默认"),
+            ("更多", "打包默认"),
         )
         for i, (name, tip) in enumerate(nav_items):
             btn = QPushButton(name)
@@ -637,7 +637,7 @@ class PreviewApp(QMainWindow):
             sound_enabled=bool(self.chk_a.isChecked()),
             auto_bobber_enabled=bool(self.chk_b.isChecked()),
             auto_cast_enabled=bool(self.chk_c.isChecked()),
-            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+            stay_on_top=bool(self._settings.stay_on_top),
         )
 
     def _persist_settings(self) -> None:
@@ -881,7 +881,7 @@ class PreviewApp(QMainWindow):
             self.setWindowFlag(Qt.WindowType.FramelessWindowHint, False)
             self.setWindowFlag(
                 Qt.WindowType.WindowStaysOnTopHint,
-                bool(self.chk_stay_on_top.isChecked()),
+                bool(self._settings.stay_on_top),
             )
             self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
             self.setStyleSheet(global_qss())
@@ -917,7 +917,7 @@ class PreviewApp(QMainWindow):
         if self._compact:
             return
         restore_window_level(
-            self, floating=bool(self.chk_stay_on_top.isChecked())
+            self, floating=bool(self._settings.stay_on_top)
         )
         hide_miniaturize_button(self)
 
@@ -1071,12 +1071,13 @@ class PreviewApp(QMainWindow):
         else:
             self.lbl_perm_input.setStyleSheet(self._perm_style(st.input_ok))
         if st.platform == "darwin":
+            self.btn_perm_screen.setVisible(True)
             self.btn_perm_screen.setText("授权屏幕录制")
             self.btn_perm_input.setText("授权辅助功能")
             self.btn_perm_input.setEnabled(True)
             self.btn_perm_reset.setVisible(True)
         elif st.platform == "win32":
-            self.btn_perm_screen.setText("测试截屏")
+            self.btn_perm_screen.setVisible(False)
             self.btn_perm_reset.setVisible(False)
             if st.is_admin:
                 self.btn_perm_input.setText("已是管理员")
@@ -1085,18 +1086,10 @@ class PreviewApp(QMainWindow):
                 self.btn_perm_input.setText("以管理员重启")
                 self.btn_perm_input.setEnabled(True)
         else:
+            self.btn_perm_screen.setVisible(True)
             self.btn_perm_screen.setText("屏幕")
             self.btn_perm_input.setText("控鼠")
             self.btn_perm_reset.setVisible(False)
-
-    def _on_stay_on_top_toggled(self, checked: bool) -> None:
-        was_visible = self.isVisible()
-        self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, checked)
-        self.setWindowFlag(Qt.WindowType.WindowMinimizeButtonHint, False)
-        if was_visible:
-            self.show()
-        QTimer.singleShot(0, self._apply_no_minimize)
-        self._persist_settings()
 
     def _on_save_bundled_defaults(self) -> None:
         self._persist_settings()
@@ -1133,9 +1126,6 @@ class PreviewApp(QMainWindow):
         defaults = load_default_shell_settings()
         self._persist_timer.stop()
 
-        self.chk_stay_on_top.blockSignals(True)
-        self.chk_stay_on_top.setChecked(bool(defaults.stay_on_top))
-        self.chk_stay_on_top.blockSignals(False)
         self.range_axis.setRanges(
             defaults.press_lo,
             defaults.press_hi,
@@ -1199,7 +1189,7 @@ class PreviewApp(QMainWindow):
             auto_bobber_enabled=bool(self.chk_b.isChecked()),
             sound_enabled=bool(self.chk_a.isChecked()),
             auto_cast_enabled=bool(self.chk_c.isChecked()),
-            stay_on_top=bool(self.chk_stay_on_top.isChecked()),
+            stay_on_top=bool(defaults.stay_on_top),
         )
         save_shell_settings(self._settings)
         self.lbl_hint.setText("已恢复默认")
