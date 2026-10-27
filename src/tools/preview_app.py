@@ -299,12 +299,12 @@ class PreviewApp(QMainWindow):
         self._nav_btns: list[QPushButton] = []
         self.stack = QStackedWidget()
         nav_items = (
-            ("主控", "日常开关与状态"),
+            ("主控", "日常开关、状态与权限"),
             ("自动拉线", "ROI / 条界 / 策略"),
             ("自动抛竿", "次数 · 快捷键 · 满蓄 · 等待"),
             ("自动起勾", "设备 / 模板 / 阈值 / 第一下"),
             ("回测", "长录音与命中回测"),
-            ("更多", "权限与置顶"),
+            ("更多", "恢复默认 / 打包默认"),
         )
         for i, (name, tip) in enumerate(nav_items):
             btn = QPushButton(name)

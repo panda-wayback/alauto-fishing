@@ -1,14 +1,11 @@
-"""更多页：权限、恢复默认、打包默认。"""
+"""更多页：恢复默认、打包默认（权限 / 置顶已移到主控页底部）。"""
 
 from __future__ import annotations
 
-import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtWidgets import (
-    QCheckBox,
     QGroupBox,
-    QHBoxLayout,
     QLabel,
     QPushButton,
     QScrollArea,
@@ -26,7 +23,7 @@ if TYPE_CHECKING:
 
 
 def build_more_page(host: "PreviewApp") -> QWidget:
-    # —— 更多：权限 ——
+    # —— 更多：恢复默认 / 打包默认 ——
     page_more = QWidget()
     more_scroll = QScrollArea()
     more_scroll.setWidgetResizable(True)
@@ -35,38 +32,6 @@ def build_more_page(host: "PreviewApp") -> QWidget:
     more_l = QVBoxLayout(more_inner)
     more_l.setContentsMargins(0, 0, 4, 0)
     more_l.setSpacing(8)
-    
-    perm = QGroupBox("权限")
-    perm_l = QVBoxLayout(perm)
-    host.chk_stay_on_top = QCheckBox("置顶")
-    host.chk_stay_on_top.setChecked(bool(host._settings.stay_on_top))
-    host.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层")
-    host.chk_stay_on_top.toggled.connect(host._on_stay_on_top_toggled)
-    perm_l.addWidget(host.chk_stay_on_top)
-    host.lbl_perm_screen = QLabel("屏幕…")
-    perm_l.addWidget(host.lbl_perm_screen)
-    host.btn_perm_screen = QPushButton("授权屏幕")
-    host.btn_perm_screen.clicked.connect(host._on_perm_screen)
-    perm_l.addWidget(host.btn_perm_screen)
-    host.lbl_perm_input = QLabel("控鼠…")
-    perm_l.addWidget(host.lbl_perm_input)
-    host.btn_perm_input = QPushButton("授权控鼠")
-    host.btn_perm_input.clicked.connect(host._on_perm_input)
-    perm_l.addWidget(host.btn_perm_input)
-    row_perm = QHBoxLayout()
-    host.btn_perm_refresh = QPushButton("刷新")
-    host.btn_perm_refresh.clicked.connect(host._refresh_permissions)
-    row_perm.addWidget(host.btn_perm_refresh)
-    host.btn_perm_reset = QPushButton("清理授权")
-    host.btn_perm_reset.setToolTip(
-        "清除本应用屏幕录制/辅助功能记录并打开系统设置（仅 macOS）"
-    )
-    host.btn_perm_reset.clicked.connect(host._on_perm_reset)
-    host.btn_perm_reset.setVisible(sys.platform == "darwin")
-    row_perm.addWidget(host.btn_perm_reset)
-    row_perm.addStretch(1)
-    perm_l.addLayout(row_perm)
-    more_l.addWidget(perm)
 
     pkg_on = load_expire_on()
     if pkg_on is not None:

@@ -1,13 +1,15 @@
-"""主控页：拉线主卡 + 起勾 / 抛竿并排次卡。"""
+"""主控页：拉线主卡 + 起勾 / 抛竿并排次卡 + 底部权限栏。"""
 
 from __future__ import annotations
 
+import sys
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
+    QGroupBox,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -237,6 +239,40 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.btn_float.clicked.connect(lambda: host._set_compact_mode(True))
     foot.addWidget(host.btn_float, 0)
     main_l.addLayout(foot)
+
+    # —— 底部权限栏：置顶 + 屏幕录制 / 控鼠（或以管理员重启）——
+    # 放在主控最下方，启动即可直接操作，不必切到「更多」页
+    perm = QGroupBox("权限")
+    perm_l = QVBoxLayout(perm)
+    host.chk_stay_on_top = QCheckBox("置顶")
+    host.chk_stay_on_top.setChecked(bool(host._settings.stay_on_top))
+    host.chk_stay_on_top.setToolTip("勾选后本窗始终在最上层")
+    host.chk_stay_on_top.toggled.connect(host._on_stay_on_top_toggled)
+    perm_l.addWidget(host.chk_stay_on_top)
+    host.lbl_perm_screen = QLabel("屏幕…")
+    perm_l.addWidget(host.lbl_perm_screen)
+    host.btn_perm_screen = QPushButton("授权屏幕")
+    host.btn_perm_screen.clicked.connect(host._on_perm_screen)
+    perm_l.addWidget(host.btn_perm_screen)
+    host.lbl_perm_input = QLabel("控鼠…")
+    perm_l.addWidget(host.lbl_perm_input)
+    host.btn_perm_input = QPushButton("授权控鼠")
+    host.btn_perm_input.clicked.connect(host._on_perm_input)
+    perm_l.addWidget(host.btn_perm_input)
+    row_perm = QHBoxLayout()
+    host.btn_perm_refresh = QPushButton("刷新")
+    host.btn_perm_refresh.clicked.connect(host._refresh_permissions)
+    row_perm.addWidget(host.btn_perm_refresh)
+    host.btn_perm_reset = QPushButton("清理授权")
+    host.btn_perm_reset.setToolTip(
+        "清除本应用屏幕录制/辅助功能记录并打开系统设置（仅 macOS）"
+    )
+    host.btn_perm_reset.clicked.connect(host._on_perm_reset)
+    host.btn_perm_reset.setVisible(sys.platform == "darwin")
+    row_perm.addWidget(host.btn_perm_reset)
+    row_perm.addStretch(1)
+    perm_l.addLayout(row_perm)
+    main_l.addWidget(perm)
 
     page_main = QWidget()
     page_l = QVBoxLayout(page_main)
