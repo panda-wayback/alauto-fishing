@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build-macos:
     name: Build macOS
-    runs-on: macos-14
+    runs-on: macos-15
     outputs:
       suffix: ${{ steps.build.outputs.suffix }}
       app_name: ${{ steps.build.outputs.app_name }}
