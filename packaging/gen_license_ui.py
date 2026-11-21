@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""密钥生成小窗：7/30 天、批量、列表可复制。
+"""密钥生成小窗：自选天数、批量、列表可复制。
 
 用法（仓库根）:
   PYTHONPATH=src python packaging/gen_license_ui.py
@@ -23,7 +23,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
-    QRadioButton,
     QSpinBox,
     QVBoxLayout,
     QWidget,
@@ -38,16 +37,17 @@ class GenLicenseWindow(QMainWindow):
         self.setWindowTitle("生成激活密钥")
         self.resize(560, 420)
 
-        self._opt_7 = QRadioButton("7 天")
-        self._opt_30 = QRadioButton("30 天")
-        self._opt_30.setChecked(True)
+        self._days_box = QSpinBox()
+        self._days_box.setObjectName("days")
+        self._days_box.setRange(1, 9999)
+        self._days_box.setValue(30)
         days_row = QHBoxLayout()
         days_row.addWidget(QLabel("天数："))
-        days_row.addWidget(self._opt_7)
-        days_row.addWidget(self._opt_30)
+        days_row.addWidget(self._days_box)
         days_row.addStretch(1)
 
         self._count = QSpinBox()
+        self._count.setObjectName("count")
         self._count.setRange(1, 200)
         self._count.setValue(1)
         count_row = QHBoxLayout()
@@ -86,7 +86,7 @@ class GenLicenseWindow(QMainWindow):
         self.setCentralWidget(root)
 
     def _days(self) -> int:
-        return 7 if self._opt_7.isChecked() else 30
+        return int(self._days_box.value())
 
     def _on_generate(self) -> None:
         n = int(self._count.value())

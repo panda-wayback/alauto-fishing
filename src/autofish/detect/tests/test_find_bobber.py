@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 from autofish.detect import FindBobber
+from autofish.detect.image_io import read_image, write_image
 from common.paths import bundle_root
 
 cli = importlib.import_module("autofish.detect.check_find_bobber_baseline")
@@ -21,7 +22,9 @@ SAMPLE = next(c for c in BASELINE["cases"] if c["file"].startswith("a95613986460
 
 
 def load_rgb(name: str) -> np.ndarray:
-    return cv2.cvtColor(cv2.imread(str(TEST_DIR / name)), cv2.COLOR_BGR2RGB)
+    bgr = read_image(TEST_DIR / name)
+    assert bgr is not None, name
+    return cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
 
 
 def assert_matches(loc, case, *, k: float = 1.0) -> None:
@@ -108,7 +111,7 @@ def test_cli_passes_on_repo_baseline():
 def _fake_root(tmp_path, monkeypatch, cases):
     test_dir = tmp_path / "data" / "test"
     test_dir.mkdir(parents=True)
-    cv2.imwrite(str(test_dir / "blank.png"), np.zeros((300, 400, 3), np.uint8))
+    assert write_image(test_dir / "blank.png", np.zeros((300, 400, 3), np.uint8))
     if cases is not None:
         (test_dir / "find_bobber_baseline.json").write_text(
             json.dumps({"tolerance": TOL, "cases": cases}), encoding="utf-8"

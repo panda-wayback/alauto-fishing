@@ -7,6 +7,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -324,6 +325,26 @@ def _expand_button(win):
 def _close(win, env):
     win.close()
     env.app.processEvents()
+
+
+def test_bar_ref_roundtrip_non_ascii_path(env, tmp_path):
+    folder = tmp_path / "中文目录"
+    folder.mkdir()
+    win = PreviewApp(roi_path=folder / "roi.json")
+    env.app.processEvents()
+    rgb = np.zeros((20, 30, 3), np.uint8)
+    rgb[5, 5] = (10, 20, 30)
+    win.roi = None
+    win._save_bar_ref(rgb)
+    assert bar_ref_path(win.roi_path).is_file()
+    win._bar_ref_saved = False
+    win.bar_canvas.set_rgb(None)
+    win._load_bar_ref_image()
+    assert win._bar_ref_saved
+    loaded = win.bar_canvas._rgb
+    assert loaded.shape == rgb.shape
+    assert loaded[5, 5].tolist() == [10, 20, 30]
+    _close(win, env)
 
 
 def test_default_roi_written_and_monitor_on(env):

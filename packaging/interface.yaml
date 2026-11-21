@@ -26,7 +26,7 @@ input:
     type: "DAYS: 正整数可用天数；N: 正整数条数，默认 1"
     desc: 命令行签发激活密钥
   - name: python packaging/gen_license_ui.py（make license-ui）
-    type: CLI 无参数；窗口内选 7 天 / 30 天（默认 30）、数量 1～200，按钮「生成」「复制全部」「清空」
+    type: CLI 无参数；窗口内填可用天数 1～9999（默认 30）、数量 1～200，按钮「生成」「复制全部」「清空」
     desc: 打开密钥生成小窗
   - name: python packaging/clear_license.py（make clear-license）
     type: CLI 无参数
@@ -128,4 +128,4 @@ tests:
   - build_windows.sh 遇残留 data 备份目录时退出码 1 且不调用 PyInstaller
   - build_windows.ps1 可被 PowerShell 解析（无 pwsh 时跳过）
   - build_license_macos.sh 产出 dist/albn-license-keygen-<后缀>.app、删除中间目录、写 .build_keygen_macos_name，且不运行 write_expire.py
-  - gen_license_ui 窗口默认 30 天；按 7 天×3 与 30 天×2 生成后列表追加为 5 条且天数正确；复制全部进剪贴板；清空后列表为空
+  - gen_license_ui 窗口默认 30 天、天数范围 1～9999；按 14 天×3 与 90 天×2 生成后列表追加为 5 条且天数正确；复制全部进剪贴板；清空后列表为空

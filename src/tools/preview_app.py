@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from autofish.act.mouse import os_left_down
 from autofish.detect.api import apply_manual_bar, apply_program_bar, get_detector
 from autofish.detect.bobber_anchor import BobberAnchorDetector
+from autofish.detect.image_io import read_image, write_image
 from autofish.detect.bobber import BobberHit
 from autofish.capture.screen import (
     DEFAULT_SCREEN_PATH,
@@ -1323,7 +1324,7 @@ class PreviewApp(QMainWindow):
         try:
             import cv2
 
-            bgr = cv2.imread(str(ref))
+            bgr = read_image(ref)
             if bgr is None:
                 return
             rgb = np.ascontiguousarray(bgr[:, :, ::-1])
@@ -1398,12 +1399,10 @@ class PreviewApp(QMainWindow):
         *,
         bar_box: tuple[float, float, float, float] | None = None,
     ) -> None:
-        import cv2
-
         ref = bar_ref_path(self.roi_path)
         ref.parent.mkdir(parents=True, exist_ok=True)
         bgr = np.ascontiguousarray(rgb[:, :, ::-1])
-        cv2.imwrite(str(ref), bgr)
+        write_image(ref, bgr)
         self._write_bar_ref_meta(bar_box)
         self.bar_canvas.set_rgb(rgb)
         # 蓝框必须与参考图像素同帧，避免实时锁叠到旧图上错位

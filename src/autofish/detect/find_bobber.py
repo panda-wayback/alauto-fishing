@@ -13,6 +13,7 @@ try:
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
+from autofish.detect.image_io import read_image
 from common.paths import assets_dir
 
 _ASSET_DIR = assets_dir() / "bobber_anchor"
@@ -180,7 +181,7 @@ def _map_loc(loc: BobberLoc, inv_sf: float) -> BobberLoc:
 
 
 def _load_rgb_alpha(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    bgr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    bgr = read_image(path, cv2.IMREAD_UNCHANGED)
     if bgr is None:
         raise FileNotFoundError(f"无法读取模板: {path}")
     if bgr.ndim == 2:

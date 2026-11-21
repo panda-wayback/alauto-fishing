@@ -61,6 +61,13 @@ input:
   - name: autofish.detect.bobber.green_zone_mask(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3) RGB"
     desc: 计算绿区掩膜（预览叠层用）
+  # ---- 读图 / 写图（路径可含非 ASCII）----
+  - name: autofish.detect.image_io.read_image(path, flags=cv2.IMREAD_COLOR)
+    type: "path: str | pathlib.Path; flags: int（cv2 读图标志）"
+    desc: 从路径读图；路径可含非 ASCII
+  - name: autofish.detect.image_io.write_image(path, image)
+    type: "path: str | pathlib.Path; image: np.ndarray（BGR 或 BGRA）"
+    desc: 把图写入路径；路径可含非 ASCII
   # ---- CLI ----
   - name: python -m autofish.detect.check_find_bobber_baseline
     type: "无参数；读 <资源根>/data/test/find_bobber_baseline.json 及同目录图片（资源根=common.paths.bundle_root()）"
@@ -93,6 +100,12 @@ output:
   - name: green_zone_mask(rgb)
     type: "np.ndarray uint8 (H, W)，值 0 / 255"
     desc: 255=亮绿安全区像素
+  - name: read_image(path, flags=cv2.IMREAD_COLOR)
+    type: np.ndarray | None
+    desc: 解码后的图；文件为空或无法解码为 None
+  - name: write_image(path, image)
+    type: bool
+    desc: True=已写入；编码失败为 False
   - name: check_find_bobber_baseline 退出码与 stdout
     type: "int：0 全部通过；1 有回归；2 缺基线文件"
     desc: 逐图打印 [OK] / [FAIL]；HIT 用例按基线 tolerance（center_px / box_px / score_min_delta）比对，MISS 用例要求无命中
@@ -110,6 +123,7 @@ contract:
   - 未锁条且自动定界失败时返回仅漂命中（不假装有条），且不写入程序锁
   - get_detector() / detect / apply_manual_bar 共享同一进程内有状态单例，非线程安全；独立实例请用 BobberAnchorDetector(...)
   - FindBobber 首次命中后锁定该尺度档供后续帧优先使用；有 search_box 时只在该区域内找漂
+  - 漂模板、端帽与 read_image / write_image 的路径可含非 ASCII（含中文）；文件不存在时读抛 FileNotFoundError，内容无法解码时 read_image 返回 None，FindBobber / BobberAnchorDetector 构造抛 FileNotFoundError
   - DetectorWorker 只认最新帧：识别期间积压的帧只保留最新一帧，其余抛弃不识；已开始识别的帧识别完仍发布 Pos
   - DetectorWorker 忽略 seq 不大于上次已识别帧的帧；每次 start 重置帧序
   - DetectorWorker 单帧识别抛异常不退出线程，该帧以 pos=None、hit=None、detect_ms=0 发布
@@ -121,7 +135,7 @@ depends:
   - src/common
 errors:
   - code: FileNotFoundError
-    desc: FindBobber / BobberAnchorDetector 构造（含 get_detector、detect 首次调用）时漂模板或端帽资源不存在或不可读
+    desc: FindBobber / BobberAnchorDetector 构造（含 get_detector、detect 首次调用）时漂模板或端帽不存在或无法解码；read_image 的路径不存在
   - code: ValueError
     desc: green_zone_mask 输入不是 (H, W, 3)
 tests:
@@ -136,6 +150,7 @@ tests:
   - apply_manual_bar(None) 清除手动界后恢复自动条界
   - get_detector 返回同一个 bobber_anchor 单例；BobberHit 即 events 的 BobberHit
   - 资源路径不存在时 FindBobber / BobberAnchorDetector 构造抛 FileNotFoundError
+  - 含中文的目录中，read_image / write_image 往返像素一致；FindBobber 能打开该副本；内容不是图像时 read_image 为 None 且 FindBobber 抛 FileNotFoundError；read_image 缺文件抛 FileNotFoundError
   - pixel_to_pos 端点、夹取与 width≤1
   - green_zone_mask 输出 0/255 掩膜、绿为 255 其它为 0，非 3 通道抛 ValueError
   - FindBobber 空白与非 3 通道输入返回 None / []

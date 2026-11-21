@@ -15,6 +15,7 @@ from autofish.detect import (
     get_detector,
 )
 from autofish.detect.bobber import green_zone_mask, pixel_to_pos
+from autofish.detect.image_io import read_image
 from common.paths import bundle_root
 
 TEST_DIR = bundle_root() / "data" / "test"
@@ -26,7 +27,7 @@ SAMPLE = next(c for c in HIT_CASES if c["file"].startswith("a956139864609deb"))
 
 @lru_cache(maxsize=None)
 def load_rgb(name: str) -> np.ndarray:
-    bgr = cv2.imread(str(TEST_DIR / name))
+    bgr = read_image(TEST_DIR / name)
     assert bgr is not None, name
     rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
     rgb.setflags(write=False)
@@ -214,6 +215,31 @@ def test_missing_assets_raise(tmp_path):
         BobberAnchorDetector(endcap_left_path=missing)
     with pytest.raises(FileNotFoundError):
         BobberAnchorDetector(bobber_path=missing)
+
+
+def test_non_ascii_path_roundtrip_and_unreadable(tmp_path):
+    from autofish.detect.image_io import read_image, write_image
+
+    src = bundle_root() / "assets" / "bobber_anchor" / "bobber.png"
+    raw = read_image(src, cv2.IMREAD_UNCHANGED)
+    assert raw is not None
+    folder = tmp_path / "中文目录"
+    folder.mkdir()
+    dest = folder / "鱼漂.png"
+    assert write_image(dest, raw)
+    again = read_image(dest, cv2.IMREAD_UNCHANGED)
+    assert again is not None
+    assert again.shape == raw.shape
+    assert np.array_equal(again, raw)
+    FindBobber(dest)
+
+    bad = folder / "坏图.png"
+    bad.write_bytes(b"not an image")
+    assert read_image(bad) is None
+    with pytest.raises(FileNotFoundError):
+        FindBobber(bad)
+    with pytest.raises(FileNotFoundError):
+        read_image(folder / "没有.png")
 
 
 def test_pixel_to_pos():

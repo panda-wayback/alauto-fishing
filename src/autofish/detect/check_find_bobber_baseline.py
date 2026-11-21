@@ -13,6 +13,7 @@ from pathlib import Path
 import cv2
 
 from autofish.detect.find_bobber import FindBobber
+from autofish.detect.image_io import read_image
 from common.paths import bundle_root
 
 
@@ -38,7 +39,11 @@ def main() -> int:
             print(f"[FAIL] 缺图 {name}")
             failed += 1
             continue
-        bgr = cv2.imread(str(path))
+        bgr = read_image(path)
+        if bgr is None:
+            print(f"[FAIL] 无法读取 {name}")
+            failed += 1
+            continue
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         loc = finder.find(rgb)
         want = case["status"]

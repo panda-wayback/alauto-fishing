@@ -380,7 +380,6 @@ def test_gen_license_ui_generate_append_copy_clear(monkeypatch):
         QMessageBox,
         QPlainTextEdit,
         QPushButton,
-        QRadioButton,
         QSpinBox,
     )
 
@@ -389,26 +388,28 @@ def test_gen_license_ui_generate_append_copy_clear(monkeypatch):
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     win = ui.GenLicenseWindow()
     try:
-        radios = {r.text(): r for r in win.findChildren(QRadioButton)}
         buttons = {b.text(): b for b in win.findChildren(QPushButton)}
-        spin = win.findChild(QSpinBox)
+        spins = {s.objectName(): s for s in win.findChildren(QSpinBox)}
+        days = spins["days"]
+        count = spins["count"]
         out = win.findChild(QPlainTextEdit)
-        assert radios["30 天"].isChecked()
-        assert (spin.minimum(), spin.maximum()) == (1, 200)
+        assert days.value() == 30
+        assert (days.minimum(), days.maximum()) == (1, 9999)
+        assert (count.minimum(), count.maximum()) == (1, 200)
 
-        radios["7 天"].setChecked(True)
-        spin.setValue(3)
+        days.setValue(14)
+        count.setValue(3)
         buttons["生成"].click()
         lines = out.toPlainText().splitlines()
         assert len(lines) == 3
-        assert all(license_mod.parse_key(k)["days"] == 7 for k in lines)
+        assert all(license_mod.parse_key(k)["days"] == 14 for k in lines)
 
-        radios["30 天"].setChecked(True)
-        spin.setValue(2)
+        days.setValue(90)
+        count.setValue(2)
         buttons["生成"].click()
         lines = out.toPlainText().splitlines()
         assert len(lines) == 5
-        assert [license_mod.parse_key(k)["days"] for k in lines[3:]] == [30, 30]
+        assert [license_mod.parse_key(k)["days"] for k in lines[3:]] == [90, 90]
 
         buttons["复制全部"].click()
         assert QGuiApplication.clipboard().text().splitlines() == lines

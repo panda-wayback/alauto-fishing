@@ -13,6 +13,7 @@ except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 opencv-python-headless") from exc
 
 from autofish.detect.bobber import BobberHit, pixel_to_pos
+from autofish.detect.image_io import read_image
 from autofish.detect.find_bobber import (
     BODY_Y0,
     BODY_Y1,
@@ -43,7 +44,7 @@ def _resolve_endcap(preferred: Path, fallback: Path) -> Path:
 
 
 def _load_rgb_alpha(path: Path) -> tuple[np.ndarray, np.ndarray]:
-    bgr = cv2.imread(str(path), cv2.IMREAD_UNCHANGED)
+    bgr = read_image(path, cv2.IMREAD_UNCHANGED)
     if bgr is None:
         raise FileNotFoundError(f"无法读取模板: {path}")
     if bgr.ndim == 2:
