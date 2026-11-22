@@ -18,6 +18,7 @@ def no_system_side_effects(monkeypatch):
     for name in SYSTEM_MODULES:
         monkeypatch.setitem(sys.modules, name, None)
     monkeypatch.setattr(ctypes, "windll", None, raising=False)
+    perms._reset_probe_sticky_for_tests()
     runs = []
 
     def fake_run(cmd, *args, **kwargs):
@@ -162,6 +163,36 @@ def test_windows_probe_uses_primary_and_retries(monkeypatch, runs):
     assert st.screen_label == "截屏可用"
     assert grabbed[0]["left"] == 0 and grabbed[0]["top"] == 0
     assert len(grabbed) == 2
+
+
+def test_windows_probe_hysteresis_keeps_ok_on_transient_fail(monkeypatch, runs):
+    """曾成功后，偶发失败仍显示可用；连续失败才异常。"""
+    monkeypatch.setattr(sys, "platform", "win32")
+    _fake_windll(monkeypatch, admin=True)
+    state = {"ok": True}
+
+    class Sct:
+        monitors = [{"left": 0, "top": 0, "width": 800, "height": 600}]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def grab(self, box):
+            if not state["ok"]:
+                raise RuntimeError("busy")
+            return SimpleNamespace(width=box["width"])
+
+    _module(monkeypatch, "mss", mss=Sct)
+    assert perms.current_status().screen_ok is True
+    state["ok"] = False
+    assert perms.current_status().screen_ok is True
+    assert perms.current_status().screen_ok is True
+    assert perms.current_status().screen_ok is False
+    state["ok"] = True
+    assert perms.current_status().screen_ok is True
 
 
 def test_permission_status_is_immutable(monkeypatch):

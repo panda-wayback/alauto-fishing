@@ -23,8 +23,8 @@ modules:
     function: 自动抛杆控制：快捷键发起有限次数任务，按鼠标位置定目标力度，按时长蓄力后松开
 input:
   # ---- 流水线编排 ----
-  - name: autofish.AutofishPipeline(*, capture_fps=45.0, cast_wait_lo_s=3.0, cast_wait_hi_s=3.0, cast_full_charge_s=1.0)
-    type: "capture_fps: float（截帧频率，< 1 按 1）；cast_*: 转交 autofish.auto_cast.AutoCastWorker 构造参数"
+  - name: autofish.AutofishPipeline(*, capture_fps=None, cast_wait_lo_s=3.0, cast_wait_hi_s=3.0, cast_full_charge_s=1.0)
+    type: "capture_fps: float | None（None=平台默认：Windows 20 / 其它 30；<1 按 1）；cast_*: 转交 autofish.auto_cast.AutoCastWorker 构造参数"
     desc: 组装总线、鱼漂状态机与 Capture / Detect / Decide / Act / AutoCast；构造时不启动线程、不截屏、不按鼠标
   - name: AutofishPipeline.set_roi_manual(roi)
     type: "roi: autofish.locate.Roi"

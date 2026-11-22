@@ -1504,7 +1504,8 @@ class PreviewApp(QMainWindow):
         if self._pipe is None:
             s = self._settings
             pipe = AutofishPipeline(
-                capture_fps=30.0,
+                # None → 平台默认（Windows 20fps，降低弱机 GDI 压力）
+                capture_fps=None,
                 cast_wait_lo_s=s.cast_wait_lo_s,
                 cast_wait_hi_s=s.cast_wait_hi_s,
                 cast_full_charge_s=s.cast_full_charge_s,

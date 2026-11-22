@@ -23,6 +23,14 @@ class PermissionStatus:
     """Windows 是否管理员；其它平台 None。"""
 
 
+# Windows 权限栏探测：曾经成功后，连续失败才改判异常（弱机瞬时 BitBlt 不误报）；
+# 从未成功过则一次失败即异常（缺 mss / 真挂了）。
+_PROBE_FAIL_NEED = 3
+_probe_fail_streak = 0
+_probe_sticky_ok = False
+_probe_ever_ok = False
+
+
 def current_status() -> PermissionStatus:
     if sys.platform == "darwin":
         return _status_macos()
@@ -45,7 +53,8 @@ def request_screen_access() -> str:
         _macos_open_screen_settings()
         return "已请求屏幕录制授权，并打开系统设置；勾选本程序后返回。"
     if sys.platform == "win32":
-        ok = _probe_screen_grab()
+        ok = _probe_screen_grab_raw()
+        _set_probe_sticky(ok)
         return "截屏测试成功。" if ok else "截屏测试失败：检查杀软或显示驱动。"
     return "当前系统无需专门的屏幕隐私授权。"
 
@@ -257,7 +266,34 @@ def _windows_is_admin() -> bool:
         return False
 
 
+def _reset_probe_sticky_for_tests() -> None:
+    """测试用：清探测迟滞状态。"""
+    global _probe_fail_streak, _probe_sticky_ok, _probe_ever_ok
+    _probe_fail_streak = 0
+    _probe_sticky_ok = False
+    _probe_ever_ok = False
+
+
+def _set_probe_sticky(ok: bool) -> None:
+    global _probe_fail_streak, _probe_sticky_ok, _probe_ever_ok
+    if ok:
+        _probe_fail_streak = 0
+        _probe_sticky_ok = True
+        _probe_ever_ok = True
+        return
+    _probe_fail_streak += 1
+    if not _probe_ever_ok or _probe_fail_streak >= _PROBE_FAIL_NEED:
+        _probe_sticky_ok = False
+
+
 def _probe_screen_grab() -> bool:
+    """带迟滞的探测结果：供权限栏；曾成功后的瞬时失败不立刻判异常。"""
+    ok = _probe_screen_grab_raw()
+    _set_probe_sticky(ok)
+    return _probe_sticky_ok
+
+
+def _probe_screen_grab_raw() -> bool:
     """在主屏内截一小块。虚拟桌面左上角可能落在显示器之间的空隙，不能用来判断。"""
     try:
         import mss

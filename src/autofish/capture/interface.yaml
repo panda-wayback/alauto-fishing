@@ -2,8 +2,11 @@ name: capture
 function: 按手框 ROI 截屏并发布帧
 modules: []
 input:
-  - name: autofish.capture.CaptureWorker(bus, *, fps=30.0)
-    type: "bus: autofish.events.bus.AutofishBus; fps: float（<1 按 1 处理）"
+  - name: autofish.capture.default_capture_fps()
+    type: 无参
+    desc: 平台默认截屏频率；Windows 为 20，其它为 30
+  - name: autofish.capture.CaptureWorker(bus, *, fps=None)
+    type: "bus: autofish.events.bus.AutofishBus; fps: float | None（None=default_capture_fps()；<1 按 1 处理）"
     desc: 新建截帧工人，按 fps 节奏截当前 ROI
   - name: CaptureWorker.start() / CaptureWorker.stop(timeout=2.0)
     type: "无参 / timeout: float 秒"
@@ -39,6 +42,9 @@ output:
   - name: CaptureWorker.is_running()
     type: bool
     desc: 后台线程是否存活
+  - name: CaptureWorker.suspended / .restart_fails / .last_error
+    type: "bool / int / str"
+    desc: 是否因连续重启失败暂停截屏；当前连续重启失败次数；最近一次错误说明
   - name: grab_roi(roi)
     type: "np.ndarray uint8 (H, W, 3) RGB，C 连续"
     desc: ROI 物理像素帧；(W, H) = roi_frame_size(roi)
@@ -62,7 +68,10 @@ contract:
   - ROI 变化（新版本或清空）后下一轮即按新 ROI 截或停截；帧携带截取时的 roi_version，旧版本帧由总线丢弃
   - 帧保留物理像素，不缩回逻辑点；帧尺寸 = roi_frame_size(roi)
   - 主屏缩放倍率在进程内首次计算后固定
-  - 单次截屏失败不终止工人，也不发布帧；该线程的截屏会话被丢弃，下一轮重新建立后再试
+  - CaptureWorker 为常驻服务：start 后线程一直跑到 stop；单次截屏失败不退出线程、不发布帧
+  - 单次失败必须重启本线程 mss 会话（close + warmup）；重启成功则短退避后继续截；连续重启失败满 5 次才暂停截屏执行（suspended），约每 2 秒再尝试拉起；拉起成功后恢复出帧
+  - 暂停期间不发布帧；线程仍存活，监控开关无需重开
+  - default_capture_fps：Windows 20、其它 30；CaptureWorker(fps=None) 与流水线未指定时用该默认
   - 截屏可在任意线程调用；每个线程使用独立截屏会话
   - 不修改 ROI、不识图、不操作鼠标
 depends:
@@ -84,4 +93,5 @@ tests:
   - CaptureWorker 有 ROI 时持续发布 FrameEvent，版本正确、尺寸为物理像素、seq 从 1 递增
   - CaptureWorker 无 ROI 时不截屏、不发帧
   - CaptureWorker 跟随 ROI 版本变化出新尺寸帧，清空 ROI 后停止发帧
-  - 截屏失败时工人不退出、不发帧，会话被丢弃；恢复后用新会话继续发帧
+  - 截屏失败时工人不退出、不发帧；重启会话成功后继续；连续重启失败满 5 次进入 suspended，恢复后继续发帧
+  - default_capture_fps 在 win32 为 20、其它平台为 30

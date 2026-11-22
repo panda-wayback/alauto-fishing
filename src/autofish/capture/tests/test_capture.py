@@ -236,6 +236,80 @@ def test_worker_survives_grab_failure(fake_mss):
         assert wait_until(lambda: len(calls) >= 2)
         assert frames == [] and worker.is_running()
         fail["on"] = False
-        assert wait_until(lambda: len(frames) >= 1)
+        assert wait_until(lambda: len(frames) >= 1, timeout=5.0)
+        assert worker.restart_fails == 0
+        assert worker.suspended is False
+    finally:
+        worker.stop()
+
+
+def test_default_capture_fps_platform():
+    from autofish.capture.worker import default_capture_fps
+    import sys
+
+    fps = default_capture_fps()
+    if sys.platform == "win32":
+        assert fps == 20.0
+    else:
+        assert fps == 30.0
+
+
+def test_worker_failure_backoff_increases_wait(fake_mss, monkeypatch):
+    """抓帧失败但会话能重启时短退避，工人仍存活且不 suspend。"""
+    _calls, fail = fake_mss
+    fail["on"] = True
+    waits: list[float] = []
+    bus = AutofishBus()
+    bus.publish_roi(
+        RoiEvent(roi=Roi(0, 0, 20, 10), version=1, ts=time.time(), source="manual")
+    )
+    worker = CaptureWorker(bus, fps=50)
+    real_wait = worker._stop.wait
+
+    def tracking_wait(timeout=None):
+        waits.append(float(timeout or 0.0))
+        return real_wait(timeout=timeout)
+
+    monkeypatch.setattr(worker._stop, "wait", tracking_wait)
+
+    def flaky_restart():
+        from autofish.capture import screen as screen_mod
+
+        screen_mod.close_session()
+        fail["on"] = False
+        try:
+            screen_mod.warmup()
+            return True
+        finally:
+            fail["on"] = True
+
+    monkeypatch.setattr(worker, "_restart_session", flaky_restart)
+    worker.start()
+    try:
+        assert wait_until(lambda: worker._grab_fails >= 3)
+        assert worker.is_running()
+        assert worker.suspended is False
+        assert any(w >= 0.1 for w in waits)
+    finally:
+        worker.stop()
+
+
+def test_worker_suspends_after_restart_fails(fake_mss, monkeypatch):
+    """连续重启会话失败才暂停执行；线程仍在。"""
+    _calls, fail = fake_mss
+    fail["on"] = True
+    bus = AutofishBus()
+    bus.publish_roi(
+        RoiEvent(roi=Roi(0, 0, 20, 10), version=1, ts=time.time(), source="manual")
+    )
+    monkeypatch.setattr("autofish.capture.worker._SUSPEND_RETRY_S", 0.05)
+    monkeypatch.setattr("autofish.capture.worker._MAX_RESTART_FAILS", 3)
+    worker = CaptureWorker(bus, fps=100)
+    monkeypatch.setattr(worker, "_restart_session", lambda: False)
+    worker.start()
+    try:
+        assert wait_until(lambda: worker.suspended, timeout=3.0)
+        assert worker.is_running()
+        assert worker.restart_fails >= 3
     finally:
         worker.stop()

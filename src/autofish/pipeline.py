@@ -7,7 +7,7 @@ import time
 from autofish.act.worker import ActWorker
 from autofish.auto_cast import AutoCastWorker
 from autofish.events.bus import AutofishBus, AutofishSnapshot
-from autofish.capture import warmup as warmup_capture
+from autofish.capture import default_capture_fps, warmup as warmup_capture
 from autofish.capture.worker import CaptureWorker
 from autofish.decide.worker import DecideWorker
 from autofish.detect.worker import DetectorWorker
@@ -24,14 +24,15 @@ class AutofishPipeline:
     def __init__(
         self,
         *,
-        capture_fps: float = 45.0,
+        capture_fps: float | None = None,
         cast_wait_lo_s: float = 3.0,
         cast_wait_hi_s: float = 3.0,
         cast_full_charge_s: float = 1.0,
     ) -> None:
         self.bus = AutofishBus()
         self.fsm = FishingStateMachine(self.bus)
-        self.capture = CaptureWorker(self.bus, fps=capture_fps)
+        fps = default_capture_fps() if capture_fps is None else float(capture_fps)
+        self.capture = CaptureWorker(self.bus, fps=fps)
         self.detector = DetectorWorker(self.bus)
         self.decide = DecideWorker(self.bus)
         self.act = ActWorker(self.bus)

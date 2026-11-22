@@ -15,6 +15,7 @@ __all__ = [
     "DEFAULT_SCREEN_PATH",
     "CaptureWorker",
     "ScreenGrab",
+    "default_capture_fps",
     "grab_primary",
     "grab_roi",
     "load_screen",
@@ -29,4 +30,8 @@ def __getattr__(name: str):
         from autofish.capture.worker import CaptureWorker
 
         return CaptureWorker
+    if name == "default_capture_fps":
+        from autofish.capture.worker import default_capture_fps
+
+        return default_capture_fps
     raise AttributeError(name)
