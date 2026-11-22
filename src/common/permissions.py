@@ -258,19 +258,30 @@ def _windows_is_admin() -> bool:
 
 
 def _probe_screen_grab() -> bool:
-    """轻量截一小块，验证截屏链路。"""
+    """在主屏内截一小块。虚拟桌面左上角可能落在显示器之间的空隙，不能用来判断。"""
     try:
         import mss
-
-        with mss.mss() as sct:
-            mon = sct.monitors[0]
-            box = {
-                "left": int(mon["left"]),
-                "top": int(mon["top"]),
-                "width": min(16, int(mon["width"])),
-                "height": min(16, int(mon["height"])),
-            }
-            shot = sct.grab(box)
-            return shot is not None and shot.width > 0
     except Exception:
         return False
+    for _ in range(2):
+        try:
+            with mss.mss() as sct:
+                mons = list(sct.monitors)
+                mon = mons[1] if len(mons) > 1 else mons[0]
+                width = min(16, int(mon["width"]))
+                height = min(16, int(mon["height"]))
+                if width <= 0 or height <= 0:
+                    continue
+                shot = sct.grab(
+                    {
+                        "left": int(mon["left"]),
+                        "top": int(mon["top"]),
+                        "width": width,
+                        "height": height,
+                    }
+                )
+                if shot is not None and int(shot.width) > 0:
+                    return True
+        except Exception:
+            continue
+    return False

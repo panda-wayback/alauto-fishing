@@ -34,11 +34,35 @@ def _session() -> mss.mss:
     return sct
 
 
+def close_session() -> None:
+    """丢掉本线程的截屏会话。失败或线程退出后必须调用，否则 Windows 上会一直用坏掉的设备上下文。"""
+    sct = getattr(_tls, "sct", None)
+    if sct is None:
+        return
+    _tls.sct = None
+    closer = getattr(sct, "close", None)
+    if not callable(closer):
+        return
+    try:
+        closer()
+    except Exception:
+        pass
+
+
+def _grab(region: dict):
+    sct = _session()
+    try:
+        return sct.grab(region)
+    except Exception:
+        close_session()
+        raise
+
+
 def warmup() -> None:
     """预热 mss，避免冷启动首帧异常慢。"""
     sct = _session()
     mon = sct.monitors[1]
-    sct.grab(
+    _grab(
         {
             "left": int(mon["left"]),
             "top": int(mon["top"]),
@@ -54,7 +78,7 @@ def _primary_scale_once(mon: dict) -> float:
     with _scale_lock:
         if _scale_cache is not None:
             return _scale_cache
-        shot = _session().grab(mon)
+        shot = _grab(mon)
         physical_w = shot.width
         logical_w = int(mon["width"])
         _scale_cache = physical_w / logical_w if logical_w else 1.0
@@ -77,7 +101,7 @@ def grab_primary() -> ScreenGrab:
 
     sct = _session()
     mon = sct.monitors[1]
-    shot = sct.grab(mon)
+    shot = _grab(mon)
     bgra = np.asarray(shot, dtype=np.uint8)
     rgb = np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
     scale = _primary_scale_once(mon)
@@ -102,8 +126,7 @@ def roi_frame_size(roi: Roi) -> tuple[int, int]:
 
 def grab_roi(roi: Roi) -> np.ndarray:
     """截 ROI（逻辑点），返回物理像素 RGB，shape≈(height×scale, width×scale, 3)。"""
-    sct = _session()
-    shot = sct.grab(roi.as_mss())
+    shot = _grab(roi.as_mss())
     bgra = np.asarray(shot, dtype=np.uint8)
     return np.ascontiguousarray(bgra[:, :, :3][:, :, ::-1])
 

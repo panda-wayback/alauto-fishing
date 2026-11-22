@@ -202,6 +202,25 @@ def test_worker_follows_roi_change_and_clear(fake_mss):
         worker.stop()
 
 
+def test_grab_failure_discards_session(fake_mss, monkeypatch):
+    _, fail = fake_mss
+    created = {"n": 0}
+    fake_cls = mss.mss
+
+    class Counting(fake_cls):
+        def __init__(self):
+            created["n"] += 1
+
+    monkeypatch.setattr(mss, "mss", Counting)
+    fail["on"] = True
+    with pytest.raises(RuntimeError):
+        grab_roi(Roi(left=0, top=0, width=20, height=10))
+    fail["on"] = False
+    frame = grab_roi(Roi(left=0, top=0, width=20, height=10))
+    assert frame.shape[0] > 0
+    assert created["n"] >= 2
+
+
 def test_worker_survives_grab_failure(fake_mss):
     calls, fail = fake_mss
     fail["on"] = True

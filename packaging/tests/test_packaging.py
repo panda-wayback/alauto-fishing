@@ -169,21 +169,31 @@ def test_write_expire_writes_expire_json(tmp_path, repo_expire_guard):
     assert date.fromisoformat(raw["expire_on"]) == built + timedelta(days=30)
 
 
-@pytest.mark.parametrize("days", [None, "", "  ", "0", "-5"])
-def test_write_expire_unset_or_nonpositive_clears(tmp_path, days, repo_expire_guard):
+@pytest.mark.parametrize("days", [None, "", "  "])
+def test_write_expire_unset_defaults_to_30(tmp_path, days, repo_expire_guard):
+    res = _run_write_expire(tmp_path, days)
+    assert res.returncode == 0, res.stderr
+    raw = json.loads((tmp_path / "assets" / "expire.json").read_text(encoding="utf-8"))
+    built = date.fromisoformat(raw["built_on"])
+    assert raw["days"] == 30
+    assert date.fromisoformat(raw["expire_on"]) == built + timedelta(days=30)
+
+
+def test_write_expire_zero_clears(tmp_path, repo_expire_guard):
     target = tmp_path / "assets" / "expire.json"
     target.parent.mkdir(parents=True)
     target.write_text('{"expire_on": "2000-01-01"}', encoding="utf-8")
-    res = _run_write_expire(tmp_path, days)
+    res = _run_write_expire(tmp_path, "0")
     assert res.returncode == 0, res.stderr
     assert not target.exists()
 
 
-def test_write_expire_invalid_exits_2_and_keeps_file(tmp_path, repo_expire_guard):
+@pytest.mark.parametrize("days", ["abc", "-5"])
+def test_write_expire_invalid_exits_2_and_keeps_file(tmp_path, days, repo_expire_guard):
     target = tmp_path / "assets" / "expire.json"
     target.parent.mkdir(parents=True)
     target.write_text('{"expire_on": "2000-01-01"}', encoding="utf-8")
-    res = _run_write_expire(tmp_path, "abc")
+    res = _run_write_expire(tmp_path, days)
     assert res.returncode == 2
     assert "ALBN_EXPIRE_DAYS invalid" in res.stderr
     assert target.read_text(encoding="utf-8") == '{"expire_on": "2000-01-01"}'

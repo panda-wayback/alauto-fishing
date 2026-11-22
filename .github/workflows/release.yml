@@ -13,9 +13,9 @@ on:
         required: false
         default: ""
       expire_days:
-        description: "试用天数（如 30=构建日起 30 天后过期）；留空=不过期"
+        description: "试用天数（默认 30=构建日起 30 天后过期；填 0=不过期）"
         required: false
-        default: ""
+        default: "30"
 
 permissions:
   contents: write

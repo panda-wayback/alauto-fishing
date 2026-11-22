@@ -20,8 +20,8 @@ input:
       ALBN_KEYGEN_BUNDLE_ID（缺省 com.albn.license-keygen）、ALBN_KEYGEN_DISPLAY_NAME（缺省 Albn License Keygen）
     desc: 仅 macOS；把密钥生成小窗打成独立 .app，仅供本机发密钥
   - name: python packaging/write_expire.py
-    type: "CLI 无参数；环境变量 ALBN_EXPIRE_DAYS: 正整数天数字符串 | 空 / 未设 / <=0"
-    desc: 构建前写入或清除包内到期文件
+    type: "CLI 无参数；环境变量 ALBN_EXPIRE_DAYS: 正整数天数字符串 | 0 | 空 / 未设"
+    desc: 构建前写入或清除包内到期文件。未设或空白按 30 天写；0 清除（不过期）
   - name: python packaging/gen_license_key.py DAYS [--count N]（make gen-license DAYS=30 COUNT=1）
     type: "DAYS: 正整数可用天数；N: 正整数条数，默认 1"
     desc: 命令行签发激活密钥
@@ -43,7 +43,7 @@ input:
     type: CLI 无参数；可选环境变量 ALBN_BUNDLE_ID
     desc: 清除本应用在 macOS 的屏幕录制与辅助功能授权记录，便于重打包后重新授权
   - name: .github/workflows/release.yml
-    type: "push main / push tag v*；workflow_dispatch 输入 tag（可空）、expire_days（可空，作为 ALBN_EXPIRE_DAYS）"
+    type: "push main / push tag v*；workflow_dispatch 输入 tag（可空）、expire_days（默认 30，0 为不过期，作为 ALBN_EXPIRE_DAYS）"
     desc: CI 以 ALBN_BUILD_SUFFIX=GITHUB_RUN_ID 调用 build_macos.sh 与 build_windows.sh，并按需发 GitHub Release
 output:
   - name: bash packaging/build_macos.sh
@@ -63,7 +63,8 @@ output:
       UTF-8 JSON {"expire_on": "YYYY-MM-DD", "days": int, "built_on": "YYYY-MM-DD"}；stdout 一行说明；退出码
     desc: >-
       正整数天数 → 写文件，built_on 为本机今天，expire_on = built_on + days，退出码 0；
-      空 / 未设 / <=0 → 删除已有文件，退出码 0；非整数 → stderr 报 "ALBN_EXPIRE_DAYS invalid"，退出码 2
+      空 / 未设 / 空白 → 按 30 天写入，退出码 0；0 → 删除已有文件，退出码 0；
+      非整数或负数 → stderr 报 "ALBN_EXPIRE_DAYS invalid"，退出码 2，不改动已有文件
   - name: python packaging/gen_license_key.py DAYS [--count N]
     type: stdout 每行一条密钥字符串（ALBN1.<载荷>.<签名>）；stderr 每条附注释 "# days=<DAYS> n=<随机串>"；退出码
     desc: 成功退出码 0；DAYS 或 N 非正整数退出码 2 且 stdout 无输出
@@ -89,7 +90,7 @@ contract:
   - clear_license.py 不删除 ROI 等其它用户状态文件；无目标文件时仍退出码 0
   - write_expire.py 写出的 expire.json 正是 common.expire 在运行时读取的包到期文件；不写则包不过期
   - write_expire.py 收到非法 ALBN_EXPIRE_DAYS 时不改动已有 expire.json
-  - build_macos.sh 与 build_windows.*（调试壳）在 PyInstaller 前运行 write_expire.py，故 ALBN_EXPIRE_DAYS 决定包是否带到期日；build_license_macos.sh 不写到期文件
+  - build_macos.sh 与 build_windows.*（调试壳）在 PyInstaller 前运行 write_expire.py；未设 ALBN_EXPIRE_DAYS 时包为 30 天到期，设为 0 则不过期；build_license_macos.sh 不写到期文件
   - 同一 ALBN_BUILD_SUFFIX 重复构建覆盖同名产物；不同后缀产物并存
   - build_windows.sh 与 build_windows.ps1 重打同名目录时保留其中已有的 data/ 子目录；若 build/data_backup_<后缀> 残留则不打包、退出码 1
   - build_windows.sh 与 build_windows.ps1 选解释器顺序一致：PYTHON → .venv/Scripts/python.exe →（仅 .sh）.venv/bin/python → .conda/python.exe → PATH 中 python
@@ -103,7 +104,7 @@ errors:
   - code: "gen_license_key.py 退出码 2"
     desc: DAYS 或 --count 非正整数 / 非整数
   - code: "write_expire.py 退出码 2"
-    desc: ALBN_EXPIRE_DAYS 不是整数
+    desc: ALBN_EXPIRE_DAYS 不是整数，或为负数
   - code: "build_*.sh 退出码 1"
     desc: PyInstaller 后未找到预期产物；或 build_windows.sh 发现残留的 data 备份目录
   - code: "build_*.sh 其它非 0 退出码"
@@ -114,8 +115,9 @@ tests:
   - clear_license.py 删除状态目录与旧版 data 下的授权/台账文件，保留其它文件；无文件时退出码 0
   - clear_license.py 清除后同一密钥再次激活按当天重新起算
   - write_expire.py 在 ALBN_EXPIRE_DAYS=30 时写出 expire_on = built_on + 30 的 expire.json（写到临时包资源根）
-  - write_expire.py 在 ALBN_EXPIRE_DAYS 未设、空、空白、0、负数时删除已有 expire.json 并退出码 0
-  - write_expire.py 在 ALBN_EXPIRE_DAYS 非整数时退出码 2 且不改动已有文件
+  - write_expire.py 在 ALBN_EXPIRE_DAYS 未设、空、空白时按 30 天写出 expire.json 并退出码 0
+  - write_expire.py 在 ALBN_EXPIRE_DAYS=0 时删除已有 expire.json 并退出码 0
+  - write_expire.py 在 ALBN_EXPIRE_DAYS 非整数或负数时退出码 2 且不改动已有文件
   - trim_analysis 剔除 WebEngine / haarcascade / QtQml 条目并保留其余
   - trim_analysis 在 pure 为 None 时正常工作
   - 三个 spec 文件可被 Python 编译（语法正确）

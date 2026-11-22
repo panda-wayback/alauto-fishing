@@ -129,6 +129,41 @@ def test_windows_status(monkeypatch, runs, admin, screen):
     assert calls == [] and runs == []
 
 
+def test_windows_probe_uses_primary_and_retries(monkeypatch, runs):
+    monkeypatch.setattr(sys, "platform", "win32")
+    _fake_windll(monkeypatch, admin=True)
+    grabbed = []
+
+    class Sct:
+        n = 0
+        monitors = [
+            {"left": -500, "top": 0, "width": 2420, "height": 1080},
+            {"left": 0, "top": 0, "width": 1920, "height": 1080},
+        ]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def grab(self, box):
+            Sct.n += 1
+            grabbed.append(dict(box))
+            if box["left"] < 0:
+                raise RuntimeError("virtual corner")
+            if Sct.n == 1:
+                raise RuntimeError("transient")
+            return SimpleNamespace(width=box["width"])
+
+    _module(monkeypatch, "mss", mss=Sct)
+    st = perms.current_status()
+    assert st.screen_ok is True
+    assert st.screen_label == "截屏可用"
+    assert grabbed[0]["left"] == 0 and grabbed[0]["top"] == 0
+    assert len(grabbed) == 2
+
+
 def test_permission_status_is_immutable(monkeypatch):
     monkeypatch.setattr(sys, "platform", "plan9")
     st = perms.current_status()

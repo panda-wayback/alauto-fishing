@@ -19,22 +19,26 @@ if str(_SRC) not in sys.path:
 
 from common.expire import clear_expire_file, write_expire_from_days  # noqa: E402
 
+DEFAULT_DAYS = 30
+
 
 def main() -> int:
     raw = (os.environ.get("ALBN_EXPIRE_DAYS") or "").strip()
     if not raw:
-        clear_expire_file()
-        print("ALBN_EXPIRE_DAYS unset: no expire (cleared expire.json)")
-        return 0
-    try:
-        days = int(raw)
-    except ValueError:
-        print(f"ALBN_EXPIRE_DAYS invalid: {raw!r}", file=sys.stderr)
-        return 2
-    if days <= 0:
-        clear_expire_file()
-        print("ALBN_EXPIRE_DAYS<=0: no expire")
-        return 0
+        days = DEFAULT_DAYS
+    else:
+        try:
+            days = int(raw)
+        except ValueError:
+            print(f"ALBN_EXPIRE_DAYS invalid: {raw!r}", file=sys.stderr)
+            return 2
+        if days < 0:
+            print(f"ALBN_EXPIRE_DAYS invalid: {raw!r}", file=sys.stderr)
+            return 2
+        if days == 0:
+            clear_expire_file()
+            print("ALBN_EXPIRE_DAYS=0: no expire")
+            return 0
     path = write_expire_from_days(days)
     print(f"wrote {path} (expire in {days} days)")
     return 0
