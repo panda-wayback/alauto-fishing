@@ -7,7 +7,7 @@ import time
 import numpy as np
 import pytest
 
-from autofish.auto_cast.cursor_arm import (
+from autofish.cursor_arm import (
     CursorArmWatcher,
     classify_cursor_shape,
     grab_around_cursor,
@@ -116,7 +116,7 @@ def test_see_fishing_hook_template_true_bobber_and_blue_false():
 
 
 def test_grab_system_cursor_mocked(monkeypatch):
-    from autofish.auto_cast.cursor_arm import grab as grab_mod
+    from autofish.cursor_arm import grab as grab_mod
 
     fake = np.zeros((32, 32, 4), dtype=np.uint8)
     fake[..., 3] = 255
@@ -129,7 +129,7 @@ def test_grab_system_cursor_mocked(monkeypatch):
 
 
 def test_grab_system_cursor_none(monkeypatch):
-    from autofish.auto_cast.cursor_arm import grab as grab_mod
+    from autofish.cursor_arm import grab as grab_mod
 
     monkeypatch.setattr(grab_mod, "_grab_macos", lambda: None)
     monkeypatch.setattr(grab_mod, "_grab_windows", lambda: None)
@@ -137,7 +137,7 @@ def test_grab_system_cursor_none(monkeypatch):
 
 
 def test_watcher_armed_follows_detect(monkeypatch):
-    from autofish.auto_cast.cursor_arm import watcher as wmod
+    from autofish.cursor_arm import watcher as wmod
 
     flips: list[bool] = []
     frames: list[tuple[np.ndarray, bool, str]] = []

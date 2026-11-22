@@ -168,6 +168,32 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     b_body.addWidget(pos_k)
     caps.addWidget(b_card)
 
+    # —— 光标外形公共态（不属于抛竿卡）——
+    arm_bar = QWidget()
+    arm_bar.setObjectName("cursorArmBar")
+    arm_l = QHBoxLayout(arm_bar)
+    arm_l.setContentsMargins(10, 6, 10, 6)
+    arm_l.setSpacing(10)
+    host.lbl_arm_title = QLabel("光标")
+    host.lbl_arm_title.setObjectName("capKey")
+    arm_l.addWidget(host.lbl_arm_title, 0, Qt.AlignmentFlag.AlignVCenter)
+    host.lbl_arm_preview = QLabel()
+    host.lbl_arm_preview.setFixedSize(36, 36)
+    host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    host.lbl_arm_preview.setToolTip("系统光标 · 绿=鱼漂 · 灰=鱼钩或其它")
+    host.lbl_arm_preview.setStyleSheet(
+        f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
+    )
+    arm_l.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
+    host.lbl_arm_shape = QLabel("—")
+    host.lbl_arm_shape.setObjectName("capMeta")
+    host.lbl_arm_shape.setProperty("tone", "faint")
+    arm_l.addWidget(host.lbl_arm_shape, 0, Qt.AlignmentFlag.AlignVCenter)
+    arm_l.addStretch(1)
+    host.cursor_arm_bar = arm_bar
+    arm_bar.hide()
+    caps.addWidget(arm_bar)
+
     # —— A / C 次卡 ——
     a_card, _a_head, a_body = _make_card(host.chk_a, hero=False)
     host.lbl_session = QLabel("关")
@@ -193,15 +219,6 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     c_row.setContentsMargins(0, 4, 0, 0)
     c_row.addWidget(host.lbl_cast_remain, 0, Qt.AlignmentFlag.AlignVCenter)
     c_row.addStretch(1)
-    host.lbl_arm_preview = QLabel()
-    host.lbl_arm_preview.setFixedSize(36, 36)
-    host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    host.lbl_arm_preview.setToolTip("系统光标 · 绿=鱼漂可开抛 · 灰=鱼钩或其它")
-    host.lbl_arm_preview.setStyleSheet(
-        f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
-    )
-    host.lbl_arm_preview.hide()
-    c_row.addWidget(host.lbl_arm_preview, 0, Qt.AlignmentFlag.AlignVCenter)
     c_body.addLayout(c_row)
     host.lbl_cast = QLabel("关")
     host.lbl_cast.setObjectName("capMeta")

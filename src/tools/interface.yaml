@@ -25,7 +25,7 @@ input:
     desc: 开关听水花开钓会话机（first_click_trigger）
   - name: UI 操作：主控勾选「自动抛竿」(C)
     type: "PreviewApp.chk_c: QCheckBox 勾选 / 取消"
-    desc: 开关自动抛竿模块（工人待命 + 光标认漂 + 右键 / F8·F9 + 光标小预览）；默认关
+    desc: 开关自动抛竿模块（工人待命 + 右键 / F8·F9 + 光标小预览）；光标观察在 A 或 C 开时共用；默认关
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: "PreviewApp.btn_float 点击；紧凑态文字为「主界面」的按钮点击"
     desc: 同一主窗在完整态与紧凑态之间切换
@@ -77,10 +77,10 @@ output:
     desc: 勾选 = set_decide_ranges(策略数轴区间) 后 start_decide + start_act（并确保监控开）；取消 = stop_act + stop_decide（监控不停）；auto_bobber_enabled 写入用户设置
   - name: UI 操作：主控勾选「自动起勾」(A)
     type: 对 first_click_trigger 的调用 + 设置落盘
-    desc: 勾选 = 按所选设备开监听并 set_session_enabled(True)，会话事件经流水线总线发布；取消 = set_session_enabled(False)；sound_enabled 写入用户设置
+    desc: 勾选 = 按所选设备开监听并 set_session_enabled(True)，并把共享光标外形接到起钩；取消 = set_session_enabled(False)；A/C 都关才停光标观察；sound_enabled 写入用户设置
   - name: UI 操作：主控勾选「自动抛竿」(C)
     type: 对 autofish.AutofishPipeline / cursor_arm / 右键监听的调用 + 设置落盘
-    desc: 勾选 = start_auto_cast + CursorArmWatcher 启用 + 右键监听 + 显示光标小预览（绿=鱼漂、灰=其它）；取消 = cancel_cast_batch + stop_auto_cast + 停认漂与右键并隐藏预览；auto_cast_enabled 写入用户设置（默认 false）；外形翻转不写主控/抛竿日志
+    desc: 勾选 = start_auto_cast + 启用公共光标条（A 或 C 开）+ 右键监听 + 拉漂中冻结 AIM/蓄力；取消 = cancel_cast_batch + stop_auto_cast + 停右键（A 仍开则光标公共条继续）；auto_cast_enabled 写入用户设置（默认 false）；外形翻转不写主控/抛竿日志
   - name: UI 操作：主控「浮窗」按钮 / 紧凑态「主界面」按钮
     type: 主窗显示态 + 设置落盘
     desc: 紧凑态为无边框小仪表盘（阶段 + POS / 抛杆剩余 / 鼠标 + 透明度滑条 + 主界面），窗体整体半透明可调并置顶；compact_mode / hud_opacity 与几何立即写入用户设置
@@ -106,8 +106,9 @@ contract:
   - 一窗两态：完整态与紧凑态是同一个 PreviewApp 窗口的两种显示，不另开独立窗口；完整→紧凑就地缩小（保留左上角），紧凑→完整就地恢复先前尺寸（保留左上角）
   - 仅当启动时已是紧凑态，才把窗口放到上次紧凑拖动落点（hud_x/hud_y），且夹到某块屏幕可用区内
   - 有 ROI 时 Capture + Detect 常开；与 A/B/C 勾选无关；无 ROI 存盘时启动即在 roi_path 写入主屏居中 1/4×1/4 默认 ROI（source=default）并开监控
-  - 主控页为上主卡、下并排次卡：B（拉线·右侧按住松开 + 大号 POS）在上，A（起勾·会话）与 C（抛竿·次数、阶段与光标预览）并排在下；勾选嵌在对应卡顶；日志为独立工具窗；最下方依次为恢复默认框、权限栏（macOS 有屏幕录制授权按钮；Windows 只显示截屏探测状态、不提供测试截屏按钮；控鼠授权在 Windows 非管理员时显示「以管理员重启」；无置顶开关），启动即可直接操作，不必切到「更多」页
-  - C = 自动抛竿：勾选后启工人待命 + 光标低频认外形；C 卡显示次数大字、一行阶段（待命时为鱼漂 / 鱼钩 / 其它）与光标小预览（绿框=鱼漂）；可开抛且空闲时系统右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务进行中系统右键立刻 cancel（不要求认漂）；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停认漂 / 右键并藏预览；外形翻转只改文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
+  - 主控页为上主卡、光标公共条、下并排次卡：B（拉线·右侧按住松开 + 大号 POS）在上；光标公共条（预览 + 鱼漂/鱼钩/其它，A 或 C 开时显示）居中；A（起勾·会话）与 C（抛竿·次数与阶段）并排在下；勾选嵌在对应卡顶；日志为独立工具窗；最下方依次为恢复默认框、权限栏（macOS 有屏幕录制授权按钮；Windows 只显示截屏探测状态、不提供测试截屏按钮；控鼠授权在 Windows 非管理员时显示「以管理员重启」；无置顶开关），启动即可直接操作，不必切到「更多」页
+  - C = 自动抛竿：勾选后启工人待命；光标外形由独立 Module `src/autofish/cursor_arm` 提供（A/C 共用）；C 卡显示次数大字与抛竿阶段（关 / 待命 / 等待 / 蓄力等），外形不嵌在 C 卡；可开抛且空闲时系统右键在 cast_count_lo～hi 内抽样后 start_cast_batch(n)；任务进行中系统右键立刻 cancel（不要求认漂，拉漂中亦然）；拉漂进行中不 AIM/不蓄力；F8/F9 仅 C 开时生效；关 C 则 cancel + stop_auto_cast + 停右键（A 仍开则光标公共条继续）；外形翻转只改公共条文案/边框不写日志；蓄力时长 = cast_full_charge_s × 目标比例
+  - A 与 C 的光标门闩：外形为公共状态；抛杆仅鱼漂可抛；起钩仅鱼钩可点（匹配照旧）；拉漂会话 FISHING（或 A 关且鱼漂态 FISHING 且 Act 开）时抛杆等待 wait_reel
   - 抛竿任务起止醒目：C 开时抛竿卡顶栏标签为「待命」/「抛竿中」（进行中整卡加粗强调描边）；任务开始与结束时整卡短闪约 1.5 s 并显示「已开始 · 共 n 次」/「已结束 · 原因」；紧凑态抛竿行同步显示「抛竿中」标签，阶段短闪「开始抛竿」/「结束抛竿」
   - B = Decide + Act：勾选时策略区间非法（上下限颠倒，或松开下限 − 按住上限 < 1）则弹警告并自动取消勾选，不启动 Decide/Act；主控与紧凑浮窗只显示意图按/松（异常标「异」）；意图/程序/系统三格在自动拉线页
   - A = 会话机：勾选即偏好；A 卡显示会话态大号文案；启动失败（无音频设备 / 无模板 / 监听未运行）时保留勾选并落盘 sound_enabled=true，只在提示与日志中报告；声音页「停止监听」只关当前会话态、保留 A 偏好，「开始监听」时若 A 仍勾选则恢复 WAIT（不得用停听后的 disabled 态判断以致永不恢复）
@@ -131,6 +132,7 @@ depends:
   - src/autofish/detect
   - src/autofish/act
   - src/autofish/first_click_trigger
+  - src/autofish/cursor_arm
   - src/autofish/cast_calibration
   - src/common
 errors:

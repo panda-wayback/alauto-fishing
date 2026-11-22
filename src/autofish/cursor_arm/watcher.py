@@ -7,8 +7,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-from autofish.auto_cast.cursor_arm.detect import classify_cursor_shape
-from autofish.auto_cast.cursor_arm.grab import grab_system_cursor
+from autofish.cursor_arm.detect import classify_cursor_shape
+from autofish.cursor_arm.grab import grab_system_cursor
 
 
 class CursorArmWatcher:

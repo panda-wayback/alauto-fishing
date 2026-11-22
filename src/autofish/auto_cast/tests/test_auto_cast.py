@@ -297,6 +297,55 @@ def test_not_ready_blocks_first_cast(kit):
         w.stop()
 
 
+def test_reel_busy_blocks_aim_until_clear(kit):
+    """拉漂进行中不 AIM；结束后才抛；右键仍可结束。"""
+    busy = {"on": True}
+    w = make_worker(
+        kit.bus, kit.mouse, cursor=(960.0, 540.0), full_charge_s=0.05
+    )
+    w.set_reel_busy(lambda: busy["on"])
+    w.start()
+    try:
+        assert w.start_batch(1)
+        assert wait_event(kit, CastPhase.WAIT, "wait_reel", timeout=2.0)
+        time.sleep(0.1)
+        assert not any(e.phase == CastPhase.AIM for e in kit.events)
+        assert not any(e.phase == CastPhase.CHARGING for e in kit.events)
+        busy["on"] = False
+        assert wait_event(kit, CastPhase.CHARGING, timeout=2.0)
+    finally:
+        w.stop()
+
+
+def test_reel_busy_right_click_still_cancels(kit):
+    busy = {"on": True}
+    right = {"down": False}
+    w = AutoCastWorker(
+        kit.bus,
+        wait_lo_s=0.01,
+        wait_hi_s=0.02,
+        full_charge_s=0.05,
+        hold_jitter_s=0.0,
+        start_settle_s=0.0,
+        mouse=kit.mouse,
+        load_circle=lambda: CIRCLE,
+        cursor_pos=lambda: (960.0, 540.0),
+        screen_size=lambda: (1920, 1080),
+        right_down=lambda: right["down"],
+    )
+    w.set_reel_busy(lambda: busy["on"])
+    w.start()
+    try:
+        assert w.start_batch(1)
+        w._ignore_right_until = 0.0
+        assert wait_event(kit, CastPhase.WAIT, "wait_reel", timeout=2.0)
+        right["down"] = True
+        assert wait_event(kit, CastPhase.DISABLED, "right_click", timeout=2.0)
+        assert not w.active
+    finally:
+        w.stop()
+
+
 def test_batch_exhausts_and_finishes(kit):
     w = make_worker(
         kit.bus, kit.mouse, cursor=(960.0, 540.0),

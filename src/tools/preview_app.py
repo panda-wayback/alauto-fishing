@@ -58,7 +58,7 @@ from autofish.locate.roi import (
     primary_screen_size,
     save_roi,
 )
-from autofish.auto_cast.cursor_arm import CursorArmWatcher
+from autofish.cursor_arm import CursorArmWatcher
 from autofish.pipeline import AutofishPipeline
 from autofish.events.topics import (
     ActionIntentEvent,
@@ -521,28 +521,18 @@ class PreviewApp(QMainWindow):
             self.lbl_cast.setText("关")
             paint_tone(self.lbl_cast, "faint")
             self._set_cast_remain("—", active=False, cap="次数")
-            self._set_arm_preview_visible(False)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
                 self._last_cast_phase = CastPhase.DISABLED
+            self._refresh_arm_public()
             self._refresh_hud_steady()
             return
-        self._set_arm_preview_visible(True)
         if pipe is None or not pipe.auto_cast.active:
-            armed = bool(
-                self._cursor_arm is not None and self._cursor_arm.armed
-            )
-            shape = (
-                self._cursor_arm.shape
-                if self._cursor_arm is not None
-                else "other"
-            )
-            arm_txt = _CURSOR_SHAPE_LABEL.get(shape, "其它")
-            self.lbl_cast.setText(arm_txt)
-            paint_tone(self.lbl_cast, "ok" if armed else "warn")
+            self.lbl_cast.setText("待命")
+            paint_tone(self.lbl_cast, "faint")
             self._set_cast_remain(cfg_txt, active=False, cap="次数")
-            self._paint_arm_border(armed)
             if self._last_cast_phase is not None and self._last_cast_phase != CastPhase.DISABLED:
                 self._last_cast_phase = CastPhase.DISABLED
+            self._refresh_arm_public()
             self._refresh_hud_steady()
             return
         snap = pipe.bus.snapshot()
@@ -554,8 +544,7 @@ class PreviewApp(QMainWindow):
         self.lbl_cast.setText(label)
         paint_tone(self.lbl_cast, "accent")
         self._set_cast_remain(f"{rem}/{total}", active=True, cap="剩/共")
-        armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
-        self._paint_arm_border(armed)
+        self._refresh_arm_public()
         prev = self._last_cast_phase
         if prev is not None and phase != prev:
             self._main_log(
@@ -1754,14 +1743,13 @@ class PreviewApp(QMainWindow):
             chk.blockSignals(block)
 
     def _on_c_toggled(self, checked: bool) -> None:
-        """自动抛杆 = 工人待命 + 光标旁认漂 + 右键 / F8·F9。"""
+        """自动抛杆 = 工人待命 + 共享光标认漂 + 右键 / F8·F9。"""
         if checked:
             pipe = self._ensure_pipe()
             self._apply_cast_wait_from_settings()
             self._apply_cast_full_charge_from_settings()
             if not pipe.auto_cast_on:
                 pipe.start_auto_cast()
-            self._start_cursor_arm()
             self._cast_right_click.start()
             self._main_log("自动抛竿 ON · 认漂后右键开始 / 再右键结束")
             self._cast_log("自动抛竿模块开")
@@ -1771,15 +1759,30 @@ class PreviewApp(QMainWindow):
                 pipe.cancel_cast_batch()
                 if pipe.auto_cast_on:
                     pipe.stop_auto_cast()
-            self._stop_cursor_arm()
             self._cast_right_click.stop()
             self._cast_paused_for_select = False
             self._cast_paused_remaining = 0
             self._main_log("自动抛竿 OFF")
             self._cast_log("自动抛竿模块关")
+        self._sync_cursor_arm()
         self._refresh_cast_label()
         self._refresh_hud_steady()
         self._persist_settings()
+
+    def _cursor_arm_wanted(self) -> bool:
+        """A 或 C 任一开则观察共享光标外形。"""
+        return bool(self.chk_a.isChecked() or self.chk_c.isChecked())
+
+    def _sync_cursor_arm(self) -> None:
+        if self._cursor_arm_wanted():
+            self._ensure_cursor_arm()
+            self._set_arm_bar_visible(True)
+        else:
+            self._stop_cursor_arm()
+        self._bind_cast_ready()
+        self._bind_reel_busy()
+        self._bind_click_cursor_shape()
+        self._refresh_arm_public()
 
     def _bind_cast_ready(self) -> None:
         """每一杆只有光标是鱼漂（就绪）才抛。"""
@@ -1792,7 +1795,43 @@ class PreviewApp(QMainWindow):
             return
         pipe.auto_cast.set_cast_ready(lambda: bool(arm.armed))
 
-    def _start_cursor_arm(self) -> None:
+    def _bind_reel_busy(self) -> None:
+        """拉漂进行中冻结抛杆 AIM/蓄力；右键结束任务仍可用。"""
+        pipe = self._pipe
+        if pipe is None:
+            return
+        if not self.chk_c.isChecked():
+            pipe.auto_cast.set_reel_busy(None)
+            return
+
+        def _busy() -> bool:
+            snap = pipe.bus.snapshot()
+            if snap.cast_session == CastSessionState.FISHING:
+                return True
+            if (
+                snap.cast_session == CastSessionState.DISABLED
+                and snap.fishing_state == FishingState.FISHING
+                and bool(pipe.act_on)
+            ):
+                return True
+            return False
+
+        pipe.auto_cast.set_reel_busy(_busy)
+
+    def _bind_click_cursor_shape(self) -> None:
+        """起钩读共享外形；无观察者时清探针（回退当场抓光标）。"""
+        if self._sound_panel is None:
+            return
+        trig = self._sound_panel.trigger
+        if trig is None:
+            return
+        arm = self._cursor_arm
+        if arm is not None and self._cursor_arm_wanted():
+            trig.set_cursor_shape(lambda: str(arm.shape))
+        else:
+            trig.set_cursor_shape(None)
+
+    def _ensure_cursor_arm(self) -> None:
         if self._cursor_arm is None:
             self._cursor_arm = CursorArmWatcher(
                 # 认漂加严后，偏保守的判定会偶尔让单帧漏判；轮询间隔越大，
@@ -1810,34 +1849,53 @@ class PreviewApp(QMainWindow):
             )
         self._cursor_arm.start()
         self._cursor_arm.set_enabled(True)
-        self._bind_cast_ready()
-        self._set_arm_preview_visible(True)
 
     def _stop_cursor_arm(self) -> None:
         if self._cursor_arm is None:
-            self._bind_cast_ready()
-            self._set_arm_preview_visible(False)
+            self._set_arm_bar_visible(False)
             return
         self._cursor_arm.set_enabled(False)
         self._cursor_arm.stop()
         self._last_armed = None
         self._last_cursor_shape = None
-        self._bind_cast_ready()
-        self._set_arm_preview_visible(False)
+        self._set_arm_bar_visible(False)
 
-    def _set_arm_preview_visible(self, visible: bool) -> None:
+    def _set_arm_bar_visible(self, visible: bool) -> None:
+        bar = getattr(self, "cursor_arm_bar", None)
         prev = getattr(self, "lbl_arm_preview", None)
-        if prev is None:
+        if bar is None:
             return
         if visible:
-            prev.show()
+            bar.show()
+            if prev is not None:
+                prev.show()
         else:
-            prev.clear()
-            prev.hide()
+            if prev is not None:
+                prev.clear()
+            shape = getattr(self, "lbl_arm_shape", None)
+            if shape is not None:
+                shape.setText("—")
+            bar.hide()
+
+    def _refresh_arm_public(self) -> None:
+        """刷新公共光标条：外形名 + 边框。"""
+        if not self._cursor_arm_wanted():
+            self._set_arm_bar_visible(False)
+            return
+        self._set_arm_bar_visible(True)
+        arm = self._cursor_arm
+        shape = arm.shape if arm is not None else "other"
+        armed = bool(arm is not None and arm.armed)
+        lbl = getattr(self, "lbl_arm_shape", None)
+        if lbl is not None:
+            lbl.setText(_CURSOR_SHAPE_LABEL.get(shape, "其它"))
+            paint_tone(lbl, "ok" if armed else "warn")
+        self._paint_arm_border(armed)
 
     def _paint_arm_border(self, armed: bool) -> None:
         prev = getattr(self, "lbl_arm_preview", None)
-        if prev is None or not prev.isVisible():
+        bar = getattr(self, "cursor_arm_bar", None)
+        if prev is None or bar is None or bar.isHidden():
             return
         color = SUCCESS if armed else BORDER
         prev.setStyleSheet(
@@ -1845,7 +1903,7 @@ class PreviewApp(QMainWindow):
         )
 
     def _on_cursor_arm_frame(self, rgb: object, armed: bool, shape: str = "other") -> None:
-        if not self.chk_c.isChecked():
+        if not self._cursor_arm_wanted():
             return
         prev = getattr(self, "lbl_arm_preview", None)
         if prev is None:
@@ -1868,22 +1926,20 @@ class PreviewApp(QMainWindow):
             Qt.TransformationMode.SmoothTransformation,
         )
         prev.setPixmap(pix)
-        self._paint_arm_border(bool(armed))
         shape = str(shape or "other")
         if getattr(self, "_last_cursor_shape", None) != shape:
             self._last_cursor_shape = shape
-            self._refresh_cast_label()
+        self._refresh_arm_public()
 
     def _on_cursor_armed_changed(self, armed: bool) -> None:
-        """只刷新门闩文案与边框，不写状态日志（避免刷屏）。"""
+        """只刷新公共光标条，不写状态日志（避免刷屏）。"""
         armed = bool(armed)
         if self._last_armed is not None and self._last_armed == armed:
             return
         self._last_armed = armed
-        if not self.chk_c.isChecked():
+        if not self._cursor_arm_wanted():
             return
-        self._paint_arm_border(armed)
-        self._refresh_cast_label()
+        self._refresh_arm_public()
 
     def _on_cast_right_click(self) -> None:
         """系统右键：任务进行中 → 立刻结束（不要求认漂）；可开抛且空闲 → 开始；否则不抢。"""
@@ -1936,6 +1992,7 @@ class PreviewApp(QMainWindow):
         if not checked:
             if self._sound_panel is not None:
                 self._sound_panel.set_session_enabled(False)
+            self._sync_cursor_arm()
             self.lbl_hint.setText("自动起勾已关")
             self._main_log("自动起勾 OFF")
             self._refresh_hud_steady()
@@ -1959,6 +2016,7 @@ class PreviewApp(QMainWindow):
             t = self._sound_panel.trigger
             if t is None or not t.has_template or not t.is_running():
                 self._sound_panel.set_session_enabled(False)
+                self._sync_cursor_arm()
                 self.lbl_hint.setText(
                     "自动起勾未就绪：请到「自动起勾」页确认设备与模板后重试"
                 )
@@ -1967,6 +2025,7 @@ class PreviewApp(QMainWindow):
                 if persist:
                     self._persist_settings()
                 return False
+            self._sync_cursor_arm()
             self.lbl_hint.setText("自动起勾中")
             self._main_log("自动起勾 ON")
             self._refresh_hud_steady()
@@ -1978,6 +2037,7 @@ class PreviewApp(QMainWindow):
                 self._sound_panel.set_session_enabled(False)
             except Exception:  # noqa: BLE001
                 pass
+            self._sync_cursor_arm()
             self.lbl_hint.setText(f"自动起勾失败：{exc}")
             self._main_log(f"自动起勾失败：{exc} · 已保留勾选")
             self._refresh_hud_steady()
@@ -2260,6 +2320,7 @@ class PreviewApp(QMainWindow):
         if not pipe.auto_cast_on:
             pipe.start_auto_cast()
         self._bind_cast_ready()
+        self._bind_reel_busy()
         n = sample_cast_batch_count(
             self._settings.cast_count_lo, self._settings.cast_count_hi
         )

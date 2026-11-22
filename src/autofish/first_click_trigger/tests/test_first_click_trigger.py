@@ -132,7 +132,63 @@ def test_no_hook_at_hit_never_enters_first_click(rig, monkeypatch):
     assert t.session_state == S.WAIT
     assert S.FIRST_CLICK not in rig.states()
     assert rig.mouse.presses == 0
+    assert t.is_running()
     assert any("非鱼钩" in m for m in t.drain_logs("sound"))
+
+
+def test_shared_cursor_shape_hook_gates_click(rig, monkeypatch):
+    """共享外形探针为 hook 才起钩；非 hook 不点，匹配仍可跑。"""
+    import autofish.first_click_trigger.trigger as trigger_mod
+
+    # 若误走回退抓光标路径，强制失败
+    monkeypatch.setattr(
+        trigger_mod,
+        "grab_system_cursor",
+        lambda: (_ for _ in ()).throw(RuntimeError("should use shared shape")),
+    )
+    shape = {"v": "bobber"}
+    t = rig.make()
+    t.set_cursor_shape(lambda: shape["v"])
+    t.set_session_enabled(True)
+    stream = rig.start(t)
+    rig.feed(t, stream, rig.kit.clip())
+    time.sleep(0.2)
+    assert S.FIRST_CLICK not in rig.states()
+    assert any("非鱼钩" in m for m in t.drain_logs("sound"))
+    shape["v"] = "hook"
+    t._matcher.reset_buffer()
+    t._matcher.reset_score_baseline()
+    rig.feed(t, stream, rig.kit.noise(0.4))
+    rig.feed(t, stream, rig.kit.clip())
+    rig.wait_state(S.FIRST_CLICK)
+
+
+def test_hook_grab_error_keeps_listening(rig, monkeypatch):
+    """认钩抛错不得打死听声线程（Windows 上曾像「监控停了」）。"""
+    import autofish.first_click_trigger.trigger as trigger_mod
+
+    monkeypatch.setattr(
+        trigger_mod,
+        "grab_system_cursor",
+        lambda: (_ for _ in ()).throw(RuntimeError("cursor boom")),
+    )
+    t = rig.make()
+    t.set_session_enabled(True)
+    stream = rig.start(t)
+    rig.feed(t, stream, rig.kit.clip())
+    time.sleep(0.2)
+    assert t.is_running()
+    assert t.session_state == S.WAIT
+    assert S.FIRST_CLICK not in rig.states()
+    # 恢复认钩后仍能起钩
+    monkeypatch.setattr(trigger_mod, "grab_system_cursor", lambda: np.zeros((8, 8, 4), np.uint8))
+    monkeypatch.setattr(trigger_mod, "see_fishing_hook", lambda _rgb: True)
+    t._matcher.reset_buffer()
+    t._matcher.reset_score_baseline()
+    rig.feed(t, stream, rig.kit.noise(0.4))
+    rig.feed(t, stream, rig.kit.clip())
+    rig.wait_state(S.FIRST_CLICK)
+    assert t.is_running()
 
 
 def test_no_hook_at_press_discards_and_waits_again(rig, monkeypatch):
@@ -270,6 +326,29 @@ def test_audio_start_failure_logs_and_exits(rig):
     assert rig.kit.wait_for(lambda: not t.is_running())
     logs = t.drain_logs("sound")
     assert any("音频启动失败" in m and "no device" in m for m in logs)
+
+
+def test_capture_drop_reconnects_and_keeps_running(rig):
+    t = rig.make()
+    t.set_session_enabled(True)
+    rig.start(t)
+    assert t.is_running()
+    audio = t._audio
+    audio.stop()
+    assert not audio.capture_ok()
+    seen: list[str] = []
+
+    def reconnected() -> bool:
+        seen.extend(t.drain_logs("sound"))
+        return any("音频采集已重连" in m for m in seen)
+
+    assert rig.kit.wait_for(reconnected, timeout=3.0)
+    assert any("音频采集中断" in m for m in seen)
+    assert t.is_running()
+    assert audio.capture_ok()
+    stream = rig.sd.streams[-1]
+    rig.feed(t, stream, rig.kit.clip())
+    rig.wait_state(S.FIRST_CLICK)
 
 
 def test_monitor_wave_keeps_last_20s(rig):

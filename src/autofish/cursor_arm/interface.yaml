@@ -2,22 +2,22 @@ name: cursor_arm
 function: 读系统当前光标位图，判定漂形「可开抛」与鱼钩「可起钩」
 modules: []
 input:
-  - name: autofish.auto_cast.cursor_arm.see_surface_bobber(rgb)
+  - name: autofish.cursor_arm.see_surface_bobber(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
     desc: 判定光标小图是否呈漂形（按不透明像素占比够黄羽 / 红带 / 白肚，三色合计占不透明像素比例够高，且三色加权行质心自上而下依次为黄羽→红带→白肚）；空图或过小为 False
-  - name: autofish.auto_cast.cursor_arm.see_fishing_hook(rgb)
+  - name: autofish.cursor_arm.see_fishing_hook(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
     desc: 判定光标小图是否呈鱼钩（对内置鱼钩模板多尺度匹配够像）；已是漂形、空图、过小、缺模板或读失败为 False
-  - name: autofish.auto_cast.cursor_arm.classify_cursor_shape(rgb)
+  - name: autofish.cursor_arm.classify_cursor_shape(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
     desc: 外形分类；先漂后钩
-  - name: autofish.auto_cast.cursor_arm.grab_system_cursor()
+  - name: autofish.cursor_arm.grab_system_cursor()
     type: 无参
     desc: 读系统当前光标 RGBA；mss 截不到该层。macOS 用 NSCursor.currentSystemCursor；Windows 用 GetCursorInfo；失败 None
-  - name: autofish.auto_cast.cursor_arm.grab_around_cursor(size=100)
+  - name: autofish.cursor_arm.grab_around_cursor(size=100)
     type: "size: int（忽略，兼容旧调用）"
     desc: 等价于 grab_system_cursor 的 RGB 三通道；新代码请用 grab_system_cursor
-  - name: autofish.auto_cast.cursor_arm.CursorArmWatcher(*, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None)
+  - name: autofish.cursor_arm.CursorArmWatcher(*, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None)
     type: "interval_s: float；size 兼容保留；on_armed_changed / on_frame 可选回调"
     desc: 新建观察者；构造不起线程；默认 enabled=False、armed=False、shape=other
   - name: CursorArmWatcher.start() / CursorArmWatcher.stop(timeout=2.0)
@@ -25,7 +25,7 @@ input:
     desc: 起停后台线程；stop 后 armed / last_frame 清空
   - name: CursorArmWatcher.set_enabled(enabled)
     type: "enabled: bool"
-    desc: 仅 enabled 时读光标认漂；关则清 armed 与 last_frame
+    desc: 仅 enabled 时读光标并分类；关则清 armed / shape / last_frame。编排侧在声音开钓(A)或自动抛杆(C)任一开时启用，供抛杆与起钩共用
   - name: CursorArmWatcher.is_running()
     type: 无参
     desc: 后台线程是否存活
@@ -61,10 +61,10 @@ contract:
   - 不 YOLO、不调 Detect / FindBobber
   - see_fishing_hook / classify_cursor_shape 用 assets/cursor_arm/fishing_hook.png；缺文件时钩为 False / other；漂形优先
   - Watcher 仅 enabled 时读取并分类；interval_s 默认 0.3；空闲 sleep；armed 等价于 shape=bobber
+  - 调用方（调试壳）在 A 或 C 开时 set_enabled(True)，都关时关闭；抛杆 / 起钩 / 预览只读本观察者的 shape，不另抓光标各判
   - set_enabled(False) / stop 后 armed=False、shape=other、last_frame=None
   - 读取失败本轮跳过，不改变 armed / shape（关启用除外）
 depends:
-  - src/autofish/act
   - src/common
 errors:
   - code: 不向外抛业务异常

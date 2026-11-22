@@ -1,8 +1,6 @@
 name: auto_cast
 function: 自动抛杆控制：快捷键发起有限次数任务，按鼠标位置定目标力度，按时长蓄力后松开
-modules:
-  - path: cursor_arm
-    function: 读系统光标位图，认漂「可开抛」与认钩「可起钩」
+modules: []
 input:
   - name: autofish.auto_cast.AutoCastWorker(bus, *, wait_lo_s=3.0, wait_hi_s=3.0, full_charge_s=1.0, hold_jitter_s=0.1, start_settle_s=1.0)
     type: "bus: AutofishBus；wait_*: 再次鱼漂就绪后、下一杆 AIM 前的等待；full_charge_s；hold_jitter_s；start_settle_s: 开抛后首杆前短等（默认 1s，避开右键抢键）"
@@ -13,6 +11,9 @@ input:
   - name: AutoCastWorker.set_cast_ready(ready)
     type: "ready: Callable[[], bool] | None"
     desc: 鱼漂就绪探针。None 关闭门闩（两杆之间只走配置等待）。有探针时，仅探针为 True 才 AIM；抛出后须再次进入就绪才抛下一杆
+  - name: AutoCastWorker.set_reel_busy(busy)
+    type: "busy: Callable[[], bool] | None"
+    desc: 拉漂进行中探针。None 关闭。为 True 时不进入 AIM / 不蓄力，停在 WAIT(wait_reel)；系统右键 / cancel_batch 仍可立刻结束任务
   - name: AutoCastWorker.start_batch(count)
     type: "count: int（夹到 1～10）"
     desc: 开始一轮有限次数抛杆；任务进行中再调则忽略并返回 False；成功开始返回 True；首杆先 start_settle_s（默认 1s）再 AIM
@@ -38,7 +39,8 @@ output:
 contract:
   - 闭环：start_batch(N) →（settle）→ 鱼漂就绪 → AIM → CHARGING → DONE|ABORT；每次尝试（成功或失败）消耗 1 次剩余；若仍有剩余且本杆已抛出：再次鱼漂就绪后，在等待区间内抽样再 AIM；瞄准/按下失败则抽样等待后再看就绪；剩余用尽或 cancel_batch → DISABLED
   - 鱼漂门闩：set_cast_ready 之后，只有探针为 True（鱼漂 / 就绪）才 AIM；鱼钩及其它外形一直 WAIT(wait_bobber)，不记失败、不提前消耗下一杆。抛出后约 0.75 秒内须先离开鱼漂再进入，才算下一次就绪；这段时间内若一直仍是鱼漂，允许再抛。未 set_cast_ready 时无此门闩
-  - 系统右键结束：任务进行中读到系统右键按下则 cancel_batch(detail=right_click)，任意阶段（含等鱼漂）立刻停；start_batch 后 settle+短宽限内忽略，避免开抛那一下右键被当成结束；不用左键结束（程序拉漂也会按左键，无法与用户可靠区分）
+  - 拉漂门闩：set_reel_busy 之后，探针为 True（拉漂控鼠中）时 WAIT(wait_reel)，不 AIM、不蓄力；为 False 后才可进入 AIM。未 set_reel_busy 时无此门闩。与鱼漂门闩同时满足才抛
+  - 系统右键结束：任务进行中读到系统右键按下则 cancel_batch(detail=right_click)，任意阶段（含等鱼漂 / 等拉漂结束）立刻停；start_batch 后 settle+短宽限内忽略，避免开抛那一下右键被当成结束；不用左键结束（程序拉漂也会按左键，无法与用户可靠区分）
   - 首杆：start_batch 后先 WAIT(settle，默认 1s)，再等鱼漂就绪，然后 AIM，避免右键开抛与左键蓄力冲突
   - AIM：读一次系统鼠标位置与主屏尺寸，用 CastCircle.target_power_ratio 得 [0,1] 目标比例；缺标定、读不到鼠标或主屏尺寸时不抛，发布 ABORT(detail 说明)，仍消耗 1 次
   - CHARGING：hold_s = full_charge_s×target + U(-hold_jitter_s, +hold_jitter_s)，再夹到极短下限以上；按下后等到时松开并 DONE；不识红条、不订 Frame；可被 cancel / stop 打断并松开
@@ -60,6 +62,7 @@ tests:
   - AIM 用鼠标位置与标定算出目标比例；缺标定 / 读不到鼠标时不抛、ABORT 并消耗 1 次
   - CHARGING 按下后按 full_charge_s×target±jitter 到时松开并发 DONE；detail 含 #n/N 与 hold=秒；cancel 可打断
   - 设了鱼漂门闩时：鱼钩（非就绪）期间不抛下一杆、不出现 no_fish；回到鱼漂后才 AIM
+  - 设了拉漂门闩时：busy 期间不 AIM / 不 CHARGING，发 WAIT(wait_reel)；busy 结束后才 AIM；期间右键仍可 cancel
   - 未设门闩时：抛出后按配置等待再 AIM，不等张力条鱼漂状态
   - start_batch(2) 抛满两次后自动 DISABLED，remaining=0
   - 失败也消耗次数；等待时长在配置区间内；set_wait_range / set_full_charge_s 夹取生效

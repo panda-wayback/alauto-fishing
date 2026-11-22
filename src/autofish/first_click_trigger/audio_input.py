@@ -139,10 +139,27 @@ class AudioInput:
         self._overflow = False
         self.capture_t = 0.0
         self.capture_gap = False
+        self._cap_lock = threading.Lock()
+        self._capture_error: str | None = None
         # 长录音：采集线程直接收原始块（不经可丢块的 _queue）
         self._rec_lock = threading.Lock()
         self._rec_chunks: "list[npt.NDArray[np.float32]] | None" = None
         self._rec_frames = 0
+
+    def capture_ok(self) -> bool:
+        """采集是否仍在跑（Windows 环回线程或 sounddevice 流）。"""
+        with self._cap_lock:
+            sc = self._sc_thread
+            if sc is not None:
+                return sc.is_alive()
+            return self._stream is not None
+
+    def take_capture_error(self) -> str | None:
+        """取出并清空最近一次采集中断原因。"""
+        with self._cap_lock:
+            err = self._capture_error
+            self._capture_error = None
+            return err
 
     def begin_record(self) -> None:
         with self._rec_lock:
@@ -372,8 +389,15 @@ class AudioInput:
             return {"samplerate": 48000, "channels": 1}
 
     def start(self) -> None:
-        if self._stream is not None or self._sc_thread is not None:
-            return
+        with self._cap_lock:
+            if self._stream is not None:
+                return
+            sc = self._sc_thread
+            if sc is not None and sc.is_alive():
+                return
+            # 环回线程已死仍占着引用时，清掉才能重开（Windows 常见）
+            self._sc_thread = None
+            self._capture_error = None
         if self._key.startswith("sc:"):
             self._start_soundcard()
         else:
@@ -393,16 +417,19 @@ class AudioInput:
                 "请选带 (Loopback) 的扬声器项（如 DELL …）。"
             ) from exc
         self._sc_stop.clear()
-        self._sc_thread = threading.Thread(
+        thread = threading.Thread(
             target=self._soundcard_loop,
             args=(mic,),
             name="SoundcardCapture",
             daemon=True,
         )
-        self._sc_thread.start()
+        with self._cap_lock:
+            self._sc_thread = thread
+        thread.start()
 
     def _soundcard_loop(self, mic: Any) -> None:
         # 同 recorder._record_loop：recorder(samplerate, channels) + record(numframes)
+        err: str | None = None
         try:
             with mic.recorder(samplerate=self.samplerate, channels=self.channels) as rec:
                 while not self._sc_stop.is_set():
@@ -416,8 +443,16 @@ class AudioInput:
                     else:
                         mono = arr.reshape(-1).astype(np.float32)
                     self._enqueue_mono(mono)
-        except Exception:
-            pass
+        except Exception as exc:  # noqa: BLE001
+            if not self._sc_stop.is_set():
+                err = str(exc) or exc.__class__.__name__
+        finally:
+            with self._cap_lock:
+                if err is not None:
+                    self._capture_error = err
+                # 仅清掉自己，避免 stop 新建线程后被旧 finally 抹掉
+                if self._sc_thread is threading.current_thread():
+                    self._sc_thread = None
 
     def _start_sounddevice(self) -> None:
         idx = 0
@@ -454,12 +489,13 @@ class AudioInput:
 
     def stop(self) -> None:
         self._sc_stop.set()
-        thread = self._sc_thread
-        self._sc_thread = None
+        with self._cap_lock:
+            thread = self._sc_thread
+            self._sc_thread = None
+            stream = self._stream
+            self._stream = None
         if thread is not None and thread.is_alive():
             thread.join(timeout=2.0)
-        stream = self._stream
-        self._stream = None
         if stream is not None:
             try:
                 stream.abort()
@@ -480,6 +516,8 @@ class AudioInput:
                     break
             self._overflow = False
             self.capture_gap = False
+        with self._cap_lock:
+            self._capture_error = None
 
     def _enqueue_mono(self, mono: "npt.NDArray[np.float32]") -> None:
         stamped = (mono, _capture_clock())

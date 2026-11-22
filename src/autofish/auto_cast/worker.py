@@ -83,6 +83,7 @@ class AutoCastWorker(WorkerBase):
         self._need_reenter = False
         self._ignore_right_until = 0.0
         self._cast_ready: Callable[[], bool] | None = None
+        self._reel_busy: Callable[[], bool] | None = None
         self._lock = threading.Lock()
         self._wake = threading.Condition()
         self._phase: CastPhase = CastPhase.DISABLED
@@ -176,6 +177,12 @@ class AutoCastWorker(WorkerBase):
             self._cast_ready = ready
         self._notify()
 
+    def set_reel_busy(self, busy: Callable[[], bool] | None) -> None:
+        """拉漂进行中探针。True 时不 AIM / 不蓄力；右键结束仍可用。"""
+        with self._lock:
+            self._reel_busy = busy
+        self._notify()
+
     def start(self) -> None:
         super().start()
 
@@ -204,6 +211,8 @@ class AutoCastWorker(WorkerBase):
                     continue
                 if not self._wait_bobber():
                     continue
+                if not self._wait_not_reeling():
+                    continue
                 self._need_reenter = False
                 if self._cast_index > 0:
                     self._wait_round()
@@ -211,6 +220,8 @@ class AutoCastWorker(WorkerBase):
                         continue
                     if self._ready_now() is False:
                         self._need_reenter = self._has_ready_gate()
+                        continue
+                    if not self._wait_not_reeling():
                         continue
                 target = self._aim()
                 if self._stop.is_set() or not self._active:
@@ -454,6 +465,45 @@ class AutoCastWorker(WorkerBase):
                 self._publish(
                     CastPhase.WAIT,
                     f"wait_bobber #{nxt}/{total}",
+                )
+            with self._wake:
+                self._wake.wait(timeout=_TICK_S)
+        return False
+
+    def _has_reel_gate(self) -> bool:
+        with self._lock:
+            return self._reel_busy is not None
+
+    def _reel_busy_now(self) -> bool:
+        with self._lock:
+            fn = self._reel_busy
+        if fn is None:
+            return False
+        try:
+            return bool(fn())
+        except Exception:  # noqa: BLE001
+            traceback.print_exc()
+            return True
+
+    def _wait_not_reeling(self) -> bool:
+        """拉漂进行中则等待；右键仍可结束任务。"""
+        if not self._has_reel_gate():
+            return True
+        announced = False
+        while not self._stop.is_set() and self._active:
+            if not self._reel_busy_now():
+                return True
+            if self._poll_right_cancel():
+                return False
+            if not announced:
+                announced = True
+                with self._lock:
+                    nxt = self._cast_index + 1
+                    total = self._batch_total
+                    self._phase = CastPhase.WAIT
+                self._publish(
+                    CastPhase.WAIT,
+                    f"wait_reel #{nxt}/{total}",
                 )
             with self._wake:
                 self._wake.wait(timeout=_TICK_S)

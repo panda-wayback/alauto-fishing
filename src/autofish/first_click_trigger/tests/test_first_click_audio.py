@@ -97,12 +97,37 @@ def test_long_record_keeps_raw_channels(fake_sd):
 def test_stop_aborts_stream_and_clears_queue(fake_sd):
     a = AudioInput(device=0)
     a.start()
+    assert a.capture_ok() is True
     s = fake_sd.streams[0]
     s.push(np.ones(32, dtype=np.float32))
     a.stop()
     assert s.aborted and s.closed
+    assert a.capture_ok() is False
     assert a.read() is None
     a.stop()
+
+
+def test_start_reopens_after_dead_soundcard_thread(fake_sd, monkeypatch):
+    a = AudioInput(device=0)
+    a._key = "sc:dead"
+    dead = type("Dead", (), {"is_alive": lambda self: False})()
+    a._sc_thread = dead  # type: ignore[assignment]
+    a._capture_error = "wasapi gone"
+    opened: list[str] = []
+
+    def fake_start_sc():
+        opened.append("sc")
+        a._sc_thread = type("Live", (), {"is_alive": lambda self: True})()  # type: ignore[assignment]
+
+    monkeypatch.setattr(a, "_start_soundcard", fake_start_sc)
+    assert a.capture_ok() is False
+    assert a.take_capture_error() == "wasapi gone"
+    assert a.take_capture_error() is None
+    a.start()
+    assert opened == ["sc"]
+    assert a.capture_ok() is True
+    a.start()
+    assert opened == ["sc"]
 
 
 @pytest.mark.parametrize(

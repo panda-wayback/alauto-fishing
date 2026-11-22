@@ -68,6 +68,8 @@ class FakeAutoCast:
         self._wait_lo = 3.0
         self._wait_hi = 3.0
         self._full_charge_s = 1.0
+        self.cast_ready = None
+        self.reel_busy = None
 
     def start_batch(self, count: int) -> bool:
         if self.active:
@@ -88,6 +90,9 @@ class FakeAutoCast:
 
     def set_cast_ready(self, ready) -> None:
         self.cast_ready = ready
+
+    def set_reel_busy(self, busy) -> None:
+        self.reel_busy = busy
 
 
 class FakeCursorArm:
@@ -432,17 +437,23 @@ def test_toggle_c_gates_cast_and_right_click(env):
     win.chk_c.setChecked(True)
     assert pipe.auto_cast_on
     assert win._cursor_arm is not None and win._cursor_arm.enabled
+    assert pipe.auto_cast.cast_ready is not None
+    assert pipe.auto_cast.reel_busy is not None
+    assert not win.cursor_arm_bar.isHidden()
     assert not win.lbl_arm_preview.isHidden()
     win._cursor_arm.force_armed(True)
-    assert win.lbl_cast.text() == "鱼漂"
+    win._refresh_arm_public()
+    assert win.lbl_cast.text() == "待命"
+    assert win.lbl_arm_shape.text() == "鱼漂"
     win._cursor_arm.force_shape("hook")
-    win._refresh_cast_label()
-    assert win.lbl_cast.text() == "鱼钩"
+    win._refresh_arm_public()
+    assert win.lbl_arm_shape.text() == "鱼钩"
     win._cursor_arm.force_shape("other")
-    win._refresh_cast_label()
-    assert win.lbl_cast.text() == "其它"
+    win._refresh_arm_public()
+    assert win.lbl_arm_shape.text() == "其它"
     win._cursor_arm.force_armed(True)
-    assert win.lbl_cast.text() == "鱼漂"
+    win._refresh_arm_public()
+    assert win.lbl_arm_shape.text() == "鱼漂"
     assert win.lbl_cast_remain.text() == "5"
     assert "抛杆认漂" not in win.log.toPlainText()
     win._on_cast_right_click()
@@ -452,9 +463,27 @@ def test_toggle_c_gates_cast_and_right_click(env):
     assert not pipe.auto_cast.active
     win.chk_c.setChecked(False)
     assert not pipe.auto_cast_on
-    assert win.lbl_arm_preview.isHidden()
+    assert win.cursor_arm_bar.isHidden()
     assert win.lbl_cast_remain.text() == "—"
     assert _settings(env)["auto_cast_enabled"] is False
+    _close(win, env)
+
+
+def test_a_shows_shared_cursor_arm_bar(env):
+    """仅 A 开时也显示公共光标条；关 A 后隐藏。"""
+    win = _make(env)
+    assert win._cursor_arm is None or not win._cursor_arm.enabled
+    win.chk_a.setChecked(True)
+    assert win._cursor_arm is not None and win._cursor_arm.enabled
+    assert not win.cursor_arm_bar.isHidden()
+    win.chk_c.setChecked(True)
+    assert not win.cursor_arm_bar.isHidden()
+    win.chk_c.setChecked(False)
+    assert win._cursor_arm.enabled
+    assert not win.cursor_arm_bar.isHidden()
+    win.chk_a.setChecked(False)
+    assert not win._cursor_arm.enabled
+    assert win.cursor_arm_bar.isHidden()
     _close(win, env)
 
 
