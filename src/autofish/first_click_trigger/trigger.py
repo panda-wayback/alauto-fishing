@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 
 from autofish.act.mouse import MouseActuator
+from autofish.auto_cast.cursor_arm import grab_system_cursor, see_fishing_hook
 from autofish.first_click_trigger.audio_input import AudioInput
 from autofish.first_click_trigger.ring_buffer import AudioRingBuffer
 from autofish.first_click_trigger.template_matcher import TemplateMatcher
@@ -40,11 +41,32 @@ _MAX_AFTER_RELEASE_S = 0.8
 _WAIT_BOBBER_TIMEOUT_S = 3.0
 _LOST_BOBBER_END_S = 1.0
 _WAIT_LISTEN_COOLDOWN_S = 3.0
+# 一次水声识别从采集到按下的最长寿命；超时整次丢掉，不补点
+_MAX_SPLASH_AGE_S = 2.0
 _DEFAULT_THRESHOLD = 0.70
 _RING_SECONDS = 20.0
 _LIVE_WAVE_SECONDS = 20.0
 # 试听时峰值归一化目标（只影响播放，不改模板文件）
 _AUDITION_PEAK = 0.85
+
+
+def remaining_click_wait(
+    delay_s: float,
+    queue_lag_s: float,
+    match_tail_s: float,
+    *,
+    max_age_s: float = _MAX_SPLASH_AGE_S,
+) -> float | None:
+    """按水声采集时刻计算第一下还要等多久。
+
+    年龄 = 队列等待 + 模板结束到最新样本。超过 max_age_s（默认 2 秒）整次丢掉。
+    实际再等 = min(delay, max_age) − 年龄（不小于 0），保证按下不晚于采集后 max_age。
+    """
+    age = max(0.0, float(queue_lag_s)) + max(0.0, float(match_tail_s))
+    limit = max(0.0, float(max_age_s))
+    if age >= limit:
+        return None
+    return max(0.0, min(float(delay_s), limit) - age)
 
 
 def _audition_wave(wave: "npt.NDArray[np.float32]") -> "npt.NDArray[np.float32]":
@@ -541,16 +563,23 @@ class FirstClickTrigger(WorkerBase):
         try:
             while not self._stop.is_set():
                 self._check_timeouts()
-                block = self._audio.read()
-                if block is None:
+                parts: list[npt.NDArray[np.float32]] = []
+                t_end = 0.0
+                saw_gap = False
+                while True:
+                    block = self._audio.read()
+                    if block is None:
+                        break
+                    # 队列丢过旧块：缺口之前的声音作废，只留缺口之后的连续段
+                    if self._audio.capture_gap:
+                        parts.clear()
+                        saw_gap = True
+                    parts.append(block)
+                    t_end = float(self._audio.capture_t)
+                if not parts:
                     self._sleep_interruptible(0.005)
                     continue
-                # 匹配一次比一块音频时长还久：积压块一次取完再匹配，否则采集队列丢块
-                parts = [block]
-                while (nxt := self._audio.read()) is not None:
-                    parts.append(nxt)
-                if len(parts) > 1:
-                    block = np.concatenate(parts, axis=0)
+                block = parts[0] if len(parts) == 1 else np.concatenate(parts, axis=0)
 
                 mono = block.mean(axis=1) if block.ndim > 1 else block
                 mono = np.asarray(mono, dtype=np.float32)
@@ -572,6 +601,8 @@ class FirstClickTrigger(WorkerBase):
                         # 进入听声：基线归零，与回测独立匹配器一致
                         self._matcher.reset_score_baseline()
                     self._was_listening = can_listen
+                    if saw_gap:
+                        self._matcher.reset_buffer()
                     if can_listen and self._matcher.has_template:
                         triggered, score = self._matcher.feed(
                             mono, update_baseline=True
@@ -607,7 +638,9 @@ class FirstClickTrigger(WorkerBase):
                             )
 
                 if triggered and can_listen and not self._stop.is_set():
-                    self._do_first_click(score)
+                    queue_lag = max(0.0, time.monotonic() - t_end)
+                    tail = max(0.0, self._matcher.last_match_tail_s)
+                    self._do_first_click(score, queue_lag=queue_lag, match_tail=tail)
         finally:
             try:
                 self._audio.stop()
@@ -645,7 +678,9 @@ class FirstClickTrigger(WorkerBase):
             return False
         return self.bus.snapshot().cast_phase == CastPhase.CHARGING
 
-    def _do_first_click(self, score: float = 0.0) -> None:
+    def _do_first_click(
+        self, score: float = 0.0, *, queue_lag: float = 0.0, match_tail: float = 0.0
+    ) -> None:
         with self._lock:
             if (
                 not self._session_enabled
@@ -656,10 +691,26 @@ class FirstClickTrigger(WorkerBase):
                 # C 蓄力中：忽略本次水声，留在 WAIT 等下一轮
                 self._emit_log("自动抛竿蓄力中 · 让鼠不点第一下")
                 return
+            cursor = grab_system_cursor()
+            if cursor is None or not see_fishing_hook(cursor):
+                self._matcher.reset_buffer()
+                self._matcher.bump_score_baseline(score)
+                self._emit_log("非鱼钩 · 起钩未生效 · 丢掉等下次")
+                return
             thr = float(self._matcher.threshold)
             delay_s = random.uniform(self._delay_lo_s, self._delay_hi_s)
             hold_s = random.uniform(self._hold_lo_s, self._hold_hi_s)
             after_s = random.uniform(self._after_lo_s, self._after_hi_s)
+            acoustic_lag = max(0.0, queue_lag) + max(0.0, match_tail)
+            wait_s = remaining_click_wait(delay_s, queue_lag, match_tail)
+            if wait_s is None:
+                self._matcher.reset_buffer()
+                self._matcher.bump_score_baseline(score)
+                self._emit_log(
+                    f"水声已过期 · 晚了 {acoustic_lag:.2f}s · "
+                    f"上限 {_MAX_SPLASH_AGE_S:.0f}s · 丢掉等下次"
+                )
+                return
             splash = SplashHit(
                 score=float(score),
                 delay_s=float(delay_s),
@@ -675,12 +726,15 @@ class FirstClickTrigger(WorkerBase):
             )
             self._emit_log(
                 f"命中水花 · 相似 {score:.2f} / 阈值 {thr:.2f} · "
-                f"等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s · "
-                f"松开后 {after_s:.2f}s"
+                f"水声已过 {acoustic_lag:.2f}s · 再等 {wait_s:.2f}s · "
+                f"按住 {hold_s:.2f}s · 松开后 {after_s:.2f}s"
+            )
+            press_deadline = time.monotonic() + max(
+                0.0, _MAX_SPLASH_AGE_S - acoustic_lag
             )
 
         try:
-            if self._sleep_interruptible(delay_s):
+            if self._sleep_interruptible(wait_s):
                 with self._lock:
                     if self._session_enabled:
                         self._set_session(CastSessionState.WAIT, "stopped")
@@ -692,6 +746,25 @@ class FirstClickTrigger(WorkerBase):
                     or self._stop.is_set()
                 ):
                     return
+            if time.monotonic() >= press_deadline:
+                with self._lock:
+                    self._matcher.reset_buffer()
+                    self._matcher.bump_score_baseline(score)
+                    if self._session_enabled and self._session == CastSessionState.FIRST_CLICK:
+                        self._set_session(CastSessionState.WAIT, "splash_expired")
+                        self._emit_log(
+                            f"水声已过期 · 上限 {_MAX_SPLASH_AGE_S:.0f}s · 丢掉等下次"
+                        )
+                return
+            cursor = grab_system_cursor()
+            if cursor is None or not see_fishing_hook(cursor):
+                with self._lock:
+                    self._matcher.reset_buffer()
+                    self._matcher.bump_score_baseline(score)
+                    if self._session_enabled and self._session == CastSessionState.FIRST_CLICK:
+                        self._set_session(CastSessionState.WAIT, "no_hook")
+                        self._emit_log("到点非鱼钩 · 丢掉等下次")
+                return
             self._emit_log(f"开始按住 · {hold_s:.2f}s")
             self._mouse.set_holding(True)
             if self._sleep_interruptible(hold_s):
@@ -724,8 +797,8 @@ class FirstClickTrigger(WorkerBase):
                 self._last_trigger_at = time.time()
                 self._trigger_count += 1
                 self._emit_log(
-                    f"第一下完成 · 等待 {delay_s:.2f}s · 按住 {hold_s:.2f}s · "
-                    f"松开后 {after_s:.2f}s"
+                    f"第一下完成 · 水声已过 {acoustic_lag:.2f}s · 再等 {wait_s:.2f}s · "
+                    f"按住 {hold_s:.2f}s · 松开后 {after_s:.2f}s"
                 )
                 self._set_session(CastSessionState.WAIT_BOBBER, "clicked")
         except Exception as exc:  # noqa: BLE001

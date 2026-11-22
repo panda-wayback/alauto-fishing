@@ -196,7 +196,7 @@ def build_main_page(host: "PreviewApp") -> QWidget:
     host.lbl_arm_preview = QLabel()
     host.lbl_arm_preview.setFixedSize(36, 36)
     host.lbl_arm_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
-    host.lbl_arm_preview.setToolTip("系统光标 · 绿=就绪 · 灰=等待")
+    host.lbl_arm_preview.setToolTip("系统光标 · 绿=鱼漂可开抛 · 灰=鱼钩或其它")
     host.lbl_arm_preview.setStyleSheet(
         f"background:{BORDER}; border:2px solid {BORDER}; border-radius:6px;"
     )

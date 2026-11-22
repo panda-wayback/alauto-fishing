@@ -307,6 +307,24 @@ def test_fsm_pos_driven_transitions():
     assert h.bus.snapshot().fishing_state == FishingState.IDLE
 
 
+def test_default_lost_after_outlasts_bar_lock_clear():
+    from autofish.detect.bobber_anchor import _BAR_LOCK_AUTO_CLEAR_FRAMES
+
+    fsm = FishingStateMachine(AutofishBus())
+    assert fsm._lost_after > _BAR_LOCK_AUTO_CLEAR_FRAMES
+    h = FsmHarness(lost_after=fsm._lost_after, idle_after=60)
+    h.roi()
+    h.pos(40.0)
+    assert h.fsm._state == FishingState.FISHING
+    for _ in range(_BAR_LOCK_AUTO_CLEAR_FRAMES):
+        h.pos(None)
+    assert h.fsm._state == FishingState.FISHING
+    for _ in range(fsm._lost_after - _BAR_LOCK_AUTO_CLEAR_FRAMES):
+        h.pos(None)
+    assert h.fsm._state == FishingState.LOST
+    assert h.trail()[-1] == (FishingState.LOST, "pos_miss")
+
+
 def test_fsm_roi_cleared_and_no_roi():
     h = FsmHarness()
     h.pos(50.0)  # 尚无 ROI

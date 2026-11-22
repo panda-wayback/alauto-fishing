@@ -97,6 +97,7 @@ class FakeCursorArm:
         self, *, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None
     ):
         self._armed = False
+        self._shape = "other"
         self._enabled = False
         self._on = on_armed_changed
         self._on_frame = on_frame
@@ -106,6 +107,10 @@ class FakeCursorArm:
     @property
     def armed(self) -> bool:
         return self._armed
+
+    @property
+    def shape(self) -> str:
+        return self._shape
 
     @property
     def enabled(self) -> bool:
@@ -123,6 +128,7 @@ class FakeCursorArm:
         self._enabled = False
         was = self._armed
         self._armed = False
+        self._shape = "other"
         self._last_frame = None
         if was and self._on is not None:
             self._on(False)
@@ -131,6 +137,7 @@ class FakeCursorArm:
         self._enabled = bool(enabled)
         if not self._enabled:
             self._last_frame = None
+            self._shape = "other"
             if self._armed:
                 self._armed = False
                 if self._on is not None:
@@ -141,8 +148,20 @@ class FakeCursorArm:
 
     def force_armed(self, armed: bool) -> None:
         armed = bool(armed)
-        if self._armed == armed:
+        shape = "bobber" if armed else "other"
+        if self._armed == armed and self._shape == shape:
             return
+        self._armed = armed
+        self._shape = shape
+        if self._on is not None:
+            self._on(armed)
+
+    def force_shape(self, shape: str) -> None:
+        shape = str(shape)
+        armed = shape == "bobber"
+        if self._shape == shape and self._armed == armed:
+            return
+        self._shape = shape
         self._armed = armed
         if self._on is not None:
             self._on(armed)
@@ -415,7 +434,15 @@ def test_toggle_c_gates_cast_and_right_click(env):
     assert win._cursor_arm is not None and win._cursor_arm.enabled
     assert not win.lbl_arm_preview.isHidden()
     win._cursor_arm.force_armed(True)
-    assert win.lbl_cast.text() == "就绪"
+    assert win.lbl_cast.text() == "鱼漂"
+    win._cursor_arm.force_shape("hook")
+    win._refresh_cast_label()
+    assert win.lbl_cast.text() == "鱼钩"
+    win._cursor_arm.force_shape("other")
+    win._refresh_cast_label()
+    assert win.lbl_cast.text() == "其它"
+    win._cursor_arm.force_armed(True)
+    assert win.lbl_cast.text() == "鱼漂"
     assert win.lbl_cast_remain.text() == "5"
     assert "抛杆认漂" not in win.log.toPlainText()
     win._on_cast_right_click()

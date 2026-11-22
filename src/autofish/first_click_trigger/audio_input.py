@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import math
 import queue
 import sys
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -17,6 +19,13 @@ try:
     import sounddevice as sd
 except ImportError as exc:  # pragma: no cover
     raise ImportError("需要安装 sounddevice：pip install sounddevice") from exc
+
+# 匹配慢于实时时仍保留最近这段水声；更旧的丢掉，避免拿过期声音起钩
+_KEEP_S = 3.0
+
+
+def _capture_clock() -> float:
+    return time.monotonic()
 
 _sc: Any = None
 if sys.platform == "win32":
@@ -119,7 +128,17 @@ class AudioInput:
         self._stream: Any = None
         self._sc_thread: threading.Thread | None = None
         self._sc_stop = threading.Event()
-        self._queue: "queue.Queue[npt.NDArray[np.float32]]" = queue.Queue(maxsize=8)
+        self.queue_limit = max(
+            8,
+            int(math.ceil(_KEEP_S * self.samplerate / max(1, self.blocksize))) + 1,
+        )
+        self._queue: "queue.Queue[tuple[npt.NDArray[np.float32], float]]" = queue.Queue(
+            maxsize=self.queue_limit
+        )
+        self._q_lock = threading.Lock()
+        self._overflow = False
+        self.capture_t = 0.0
+        self.capture_gap = False
         # 长录音：采集线程直接收原始块（不经可丢块的 _queue）
         self._rec_lock = threading.Lock()
         self._rec_chunks: "list[npt.NDArray[np.float32]] | None" = None
@@ -396,14 +415,7 @@ class AudioInput:
                         mono = arr.mean(axis=1).astype(np.float32)
                     else:
                         mono = arr.reshape(-1).astype(np.float32)
-                    try:
-                        self._queue.put_nowait(mono)
-                    except queue.Full:
-                        try:
-                            self._queue.get_nowait()
-                            self._queue.put_nowait(mono)
-                        except queue.Empty:
-                            pass
+                    self._enqueue_mono(mono)
         except Exception:
             pass
 
@@ -460,17 +472,43 @@ class AudioInput:
                 stream.close()
             except Exception:
                 pass
-        while not self._queue.empty():
+        with self._q_lock:
+            while not self._queue.empty():
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
+            self._overflow = False
+            self.capture_gap = False
+
+    def _enqueue_mono(self, mono: "npt.NDArray[np.float32]") -> None:
+        stamped = (mono, _capture_clock())
+        with self._q_lock:
+            try:
+                self._queue.put_nowait(stamped)
+                return
+            except queue.Full:
+                pass
             try:
                 self._queue.get_nowait()
             except queue.Empty:
-                break
+                pass
+            self._overflow = True
+            try:
+                self._queue.put_nowait(stamped)
+            except queue.Full:
+                pass
 
     def read(self) -> "npt.NDArray[np.float32]" | None:
-        try:
-            return self._queue.get_nowait()
-        except queue.Empty:
-            return None
+        with self._q_lock:
+            try:
+                mono, t_end = self._queue.get_nowait()
+            except queue.Empty:
+                return None
+            self.capture_t = t_end
+            self.capture_gap = self._overflow
+            self._overflow = False
+            return mono
 
     def _callback(
         self,
@@ -486,11 +524,4 @@ class AudioInput:
             mono = indata.mean(axis=1).astype(np.float32)
         else:
             mono = indata.reshape(-1).astype(np.float32)
-        try:
-            self._queue.put_nowait(mono)
-        except queue.Full:
-            try:
-                self._queue.get_nowait()
-                self._queue.put_nowait(mono)
-            except queue.Empty:
-                pass
+        self._enqueue_mono(mono)

@@ -136,11 +136,38 @@ def test_seed_program_bar_locks_without_follow():
     det.seed_program_bar(box)
     assert det.program_bar == pytest.approx(box)
     assert det.bar_locked is True
-    assert det._follow_xy is None
+    assert det._follow_scale is not None
     hit2 = assert_full_hit(det.detect(load_rgb(SAMPLE["file"])))
     assert hit2.pos == pytest.approx(hit.pos, abs=3.0)
     det.seed_program_bar(None)
     assert det.program_bar is None and det.bar_locked is False
+
+
+def test_locked_bar_searches_full_neighborhood_every_frame():
+    from autofish.detect.find_bobber import fit_detect_frame
+
+    det = BobberAnchorDetector()
+    rgb = load_rgb(SAMPLE["file"])
+    hit = assert_full_hit(det.detect(rgb))
+    _work, sf = fit_detect_frame(rgb)
+    boxes = []
+    real = det._finder.find
+
+    def spy(image, search_box=None, scale_hint=None):
+        boxes.append(search_box)
+        return real(image, search_box=search_box, scale_hint=scale_hint)
+
+    det._finder.find = spy
+    for _ in range(3):
+        assert_full_hit(det.detect(rgb))
+    assert len(boxes) == 3
+    bar_left = hit.bar_left * sf
+    bar_right = (hit.bar_left + hit.bar_width) * sf
+    for box in boxes:
+        assert box is not None
+        assert box[0] <= bar_left - 3
+        assert box[0] + box[2] >= bar_right + 3
+        assert box[2] == pytest.approx(hit.bar_width * sf + 8.0, abs=1.0)
 
 
 def test_program_lock_survives_miss():

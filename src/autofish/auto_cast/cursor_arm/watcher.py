@@ -1,4 +1,4 @@
-"""后台低频认漂：enabled 时循环读取系统光标位图并更新 armed。"""
+"""后台低频认光标外形：enabled 时循环读取系统光标位图并更新 armed / shape。"""
 
 from __future__ import annotations
 
@@ -7,12 +7,12 @@ from collections.abc import Callable
 
 import numpy as np
 
-from autofish.auto_cast.cursor_arm.detect import see_surface_bobber
+from autofish.auto_cast.cursor_arm.detect import classify_cursor_shape
 from autofish.auto_cast.cursor_arm.grab import grab_system_cursor
 
 
 class CursorArmWatcher:
-    """系统光标外形认漂观察者；构造不起线程。"""
+    """系统光标外形观察者；构造不起线程。"""
 
     def __init__(
         self,
@@ -20,7 +20,7 @@ class CursorArmWatcher:
         interval_s: float = 0.3,
         size: int = 100,
         on_armed_changed: Callable[[bool], None] | None = None,
-        on_frame: Callable[[np.ndarray, bool], None] | None = None,
+        on_frame: Callable[[np.ndarray, bool, str], None] | None = None,
     ) -> None:
         self._interval_s = max(0.05, float(interval_s))
         self._size = max(16, int(size))  # 保留兼容；不再用于截屏边长
@@ -28,6 +28,7 @@ class CursorArmWatcher:
         self._on_frame = on_frame
         self._enabled = False
         self._armed = False
+        self._shape = "other"
         self._last_frame: np.ndarray | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -42,6 +43,12 @@ class CursorArmWatcher:
     def armed(self) -> bool:
         with self._lock:
             return self._armed
+
+    @property
+    def shape(self) -> str:
+        """当前外形：bobber / hook / other。"""
+        with self._lock:
+            return self._shape
 
     @property
     def last_frame(self) -> np.ndarray | None:
@@ -61,11 +68,13 @@ class CursorArmWatcher:
             self._enabled = enabled
             if not enabled and self._armed:
                 self._armed = False
+                self._shape = "other"
                 cb = self._on_armed_changed
             else:
                 cb = None
             if not enabled:
                 self._last_frame = None
+                self._shape = "other"
         if cb is not None:
             try:
                 cb(False)
@@ -91,6 +100,7 @@ class CursorArmWatcher:
             self._thread = None
             was = self._armed
             self._armed = False
+            self._shape = "other"
             self._enabled = False
             self._last_frame = None
             cb = self._on_armed_changed if was else None
@@ -121,14 +131,16 @@ class CursorArmWatcher:
                 try:
                     frame = grab_system_cursor()
                     if frame is not None:
-                        armed = see_surface_bobber(frame)
+                        shape = classify_cursor_shape(frame)
+                        armed = shape == "bobber"
                         with self._lock:
                             self._last_frame = np.asarray(frame).copy()
+                            self._shape = shape
                             frame_cb = self._on_frame
                         self._set_armed(armed)
                         if frame_cb is not None:
                             try:
-                                frame_cb(frame, armed)
+                                frame_cb(frame, armed, shape)
                             except Exception:  # noqa: BLE001
                                 pass
                 except Exception:  # noqa: BLE001

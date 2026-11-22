@@ -1,10 +1,16 @@
 name: cursor_arm
-function: 读系统当前光标位图，判定是否漂形「可开抛」门闩
+function: 读系统当前光标位图，判定漂形「可开抛」与鱼钩「可起钩」
 modules: []
 input:
   - name: autofish.auto_cast.cursor_arm.see_surface_bobber(rgb)
     type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
     desc: 判定光标小图是否呈漂形（按不透明像素占比够黄羽 / 红带 / 白肚，三色合计占不透明像素比例够高，且三色加权行质心自上而下依次为黄羽→红带→白肚）；空图或过小为 False
+  - name: autofish.auto_cast.cursor_arm.see_fishing_hook(rgb)
+    type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
+    desc: 判定光标小图是否呈鱼钩（对内置鱼钩模板多尺度匹配够像）；已是漂形、空图、过小、缺模板或读失败为 False
+  - name: autofish.auto_cast.cursor_arm.classify_cursor_shape(rgb)
+    type: "rgb: np.ndarray uint8 (H, W, 3|4) RGB(A)"
+    desc: 外形分类；先漂后钩
   - name: autofish.auto_cast.cursor_arm.grab_system_cursor()
     type: 无参
     desc: 读系统当前光标 RGBA；mss 截不到该层。macOS 用 NSCursor.currentSystemCursor；Windows 用 GetCursorInfo；失败 None
@@ -13,7 +19,7 @@ input:
     desc: 等价于 grab_system_cursor 的 RGB 三通道；新代码请用 grab_system_cursor
   - name: autofish.auto_cast.cursor_arm.CursorArmWatcher(*, interval_s=0.3, size=100, on_armed_changed=None, on_frame=None)
     type: "interval_s: float；size 兼容保留；on_armed_changed / on_frame 可选回调"
-    desc: 新建观察者；构造不起线程；默认 enabled=False、armed=False
+    desc: 新建观察者；构造不起线程；默认 enabled=False、armed=False、shape=other
   - name: CursorArmWatcher.start() / CursorArmWatcher.stop(timeout=2.0)
     type: "无参 / timeout: float"
     desc: 起停后台线程；stop 后 armed / last_frame 清空
@@ -27,18 +33,24 @@ output:
   - name: see_surface_bobber(rgb)
     type: bool
     desc: True=光标图三色各自占比达标、三色合计占比达标、且纵向顺序（黄羽→红带→白肚）符合漂形
+  - name: see_fishing_hook(rgb)
+    type: bool
+    desc: True=光标图与内置鱼钩模板匹配分达到门槛，且不是漂形
+  - name: classify_cursor_shape(rgb)
+    type: "str：bobber | hook | other"
+    desc: 当前外形
   - name: grab_system_cursor()
     type: "np.ndarray uint8 (H, W, 4) RGBA | None"
     desc: 当前系统光标位图
   - name: grab_around_cursor(size=100)
     type: "np.ndarray uint8 (H, W, 3) RGB | None"
     desc: 光标图 RGB；失败 None
-  - name: CursorArmWatcher.armed / enabled / last_frame
-    type: "bool / bool / ndarray|None"
-    desc: 门闩、是否启用、最近光标图副本
-  - name: on_armed_changed(armed) / on_frame(rgba, armed)
+  - name: CursorArmWatcher.armed / enabled / shape / last_frame
+    type: "bool / bool / str（bobber|hook|other） / ndarray|None"
+    desc: 可开抛门闩、是否启用、当前外形、最近光标图副本
+  - name: on_armed_changed(armed) / on_frame(rgba, armed, shape)
     type: 回调
-    desc: 翻转 / 每帧成功读取时在观察者线程回调
+    desc: 门闩翻转 / 每帧成功读取时在观察者线程回调（shape 同 classify_cursor_shape）
 contract:
   - 认漂输入是系统光标位图，不是 mss 游戏画面截屏（mss 不含系统合成光标）
   - 认漂不只看三色各自占比：还要求黄 / 红 / 肚三色合计占不透明像素比例 ≥ 45%，
@@ -47,17 +59,20 @@ contract:
   - 还要求黄羽 / 红带 / 白肚三掩膜的加权行质心自上而下依次排列（容差 4% 图高），
     排除色调偏金黄但非该纵向分层结构的图标（如系统光标主题里的箭头 / 忙碌 / 链接选择图标）
   - 不 YOLO、不调 Detect / FindBobber
-  - Watcher 仅 enabled 时读取；interval_s 默认 0.3；空闲 sleep
-  - set_enabled(False) / stop 后 armed=False、last_frame=None
-  - 读取失败本轮跳过，不改变 armed（关启用除外）
+  - see_fishing_hook / classify_cursor_shape 用 assets/cursor_arm/fishing_hook.png；缺文件时钩为 False / other；漂形优先
+  - Watcher 仅 enabled 时读取并分类；interval_s 默认 0.3；空闲 sleep；armed 等价于 shape=bobber
+  - set_enabled(False) / stop 后 armed=False、shape=other、last_frame=None
+  - 读取失败本轮跳过，不改变 armed / shape（关启用除外）
 depends:
   - src/autofish/act
+  - src/common
 errors:
   - code: 不向外抛业务异常
-    desc: 读光标失败以 None 或跳过本轮表达
+    desc: 读光标失败以 None 或跳过本轮表达；缺鱼钩模板时 see_fishing_hook 为 False、classify 为 other（除非已是漂）
 tests:
   - 合成含黄+红+白的不透明斑、按漂形自上而下排列 → see_surface_bobber True；透明/纯蓝 → False
   - 合成同样凑够黄+红+白占比但纵向顺序相反（白肚在上、黄羽在下）的图标 → see_surface_bobber False
   - 合成顺序与占比均达标、但整图被三色之外的不透明装饰色占满（三色合计占比不足）的图标 → see_surface_bobber False
+  - 内置鱼钩模板 → see_fishing_hook True、classify=hook；漂形 classify=bobber；纯蓝 classify=other
   - grab_system_cursor 在 mock 下返回帧；失败 None
-  - Watcher：enabled 后 armed 随 detect；on_frame 收到帧；False 清空
+  - Watcher：enabled 后 armed/shape 随 detect；on_frame 收到 (rgb, armed, shape)；False 清空

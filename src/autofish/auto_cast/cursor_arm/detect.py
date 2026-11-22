@@ -1,8 +1,18 @@
-"""当前光标位图是否为漂形（自上而下：黄羽 → 红带 → 白肚）；输入可为 RGB 或 RGBA。"""
+"""当前光标位图：漂形（可开抛）与鱼钩（可起钩）。输入可为 RGB 或 RGBA。"""
 
 from __future__ import annotations
 
+from functools import lru_cache
+from pathlib import Path
+
 import numpy as np
+
+try:
+    import cv2
+except ImportError as exc:  # pragma: no cover
+    raise ImportError("需要安装 opencv-python-headless") from exc
+
+from common.paths import assets_dir
 
 # 相对「不透明像素」占比下限（系统光标大量透明）
 _MIN_YELLOW = 0.02
@@ -18,6 +28,10 @@ _ORDER_TOL_FRAC = 0.04
 # 凑够三色各自占比、顺序也对，但图标里还混了大片背景/描边/装饰（如水纹涟漪）
 # 等三色之外的颜色，合计占比明显偏低，用这条再排除一批
 _MIN_COLOR_COVERAGE = 0.45
+
+_HOOK_TEMPLATE_REL = Path("cursor_arm") / "fishing_hook.png"
+_HOOK_MATCH_MIN = 0.55
+_HOOK_SCALES = (0.55, 0.70, 0.85, 1.0, 1.15, 1.35, 1.60)
 
 
 def see_surface_bobber(rgb: np.ndarray) -> bool:
@@ -90,6 +104,31 @@ def see_surface_bobber(rgb: np.ndarray) -> bool:
     return yc <= rc + tol and rc <= bc + tol
 
 
+def see_fishing_hook(rgb: np.ndarray) -> bool:
+    """光标小图是否呈鱼钩外形（对内置鱼钩模板够像）；漂形直接否。"""
+    return classify_cursor_shape(rgb) == "hook"
+
+
+def classify_cursor_shape(rgb: np.ndarray) -> str:
+    """光标外形：bobber / hook / other。先漂后钩。"""
+    if rgb is None or not isinstance(rgb, np.ndarray) or rgb.ndim != 3:
+        return "other"
+    h, w, c = rgb.shape
+    if c < 3 or h * w < 16:
+        return "other"
+    if see_surface_bobber(rgb):
+        return "bobber"
+    tpl = _hook_template_bgr()
+    if tpl is None:
+        return "other"
+    probe = _cursor_bgr_masked(rgb)
+    if probe is None:
+        return "other"
+    if _match_hook_template(probe, tpl) >= _HOOK_MATCH_MIN:
+        return "hook"
+    return "other"
+
+
 def _row_centroid(mask: np.ndarray) -> float | None:
     """掩膜的加权行质心（0=最上）；无命中像素时 None。"""
     weights = mask.sum(axis=1).astype(np.float64)
@@ -98,3 +137,79 @@ def _row_centroid(mask: np.ndarray) -> float | None:
         return None
     rows = np.arange(mask.shape[0], dtype=np.float64)
     return float((rows * weights).sum() / total)
+
+
+@lru_cache(maxsize=1)
+def _hook_template_bgr() -> np.ndarray | None:
+    path = assets_dir() / _HOOK_TEMPLATE_REL
+    if not path.is_file():
+        return None
+    data = np.fromfile(path, dtype=np.uint8)
+    if data.size == 0:
+        return None
+    raw = cv2.imdecode(data, cv2.IMREAD_UNCHANGED)
+    if raw is None or raw.ndim != 3 or raw.shape[2] < 3:
+        return None
+    if raw.shape[2] >= 4:
+        rgba = cv2.cvtColor(raw, cv2.COLOR_BGRA2RGBA)
+    else:
+        rgb = cv2.cvtColor(raw, cv2.COLOR_BGR2RGB)
+        alpha = np.full(rgb.shape[:2], 255, dtype=np.uint8)
+        rgba = np.dstack([rgb, alpha])
+    return _cursor_bgr_masked(rgba)
+
+
+def _cursor_bgr_masked(img: np.ndarray) -> np.ndarray | None:
+    """转 BGR，并把非前景涂黑，便于模板匹配。"""
+    arr = np.asarray(img)
+    if arr.ndim != 3 or arr.shape[2] < 3:
+        return None
+    rgb = np.asarray(arr[..., :3], dtype=np.uint8)
+    if arr.shape[2] >= 4:
+        opaque = np.asarray(arr[..., 3], dtype=np.uint8) > 24
+    else:
+        r = rgb[..., 0].astype(np.int16)
+        g = rgb[..., 1].astype(np.int16)
+        b = rgb[..., 2].astype(np.int16)
+        opaque = (r + g + b) > 40
+    if int(opaque.sum()) < _MIN_OPAQUE:
+        return None
+    out = np.zeros_like(rgb)
+    out[opaque] = rgb[opaque]
+    return cv2.cvtColor(out, cv2.COLOR_RGB2BGR)
+
+
+def _match_hook_template(probe_bgr: np.ndarray, tpl_bgr: np.ndarray) -> float:
+    ph, pw = probe_bgr.shape[:2]
+    th, tw = tpl_bgr.shape[:2]
+    best = 0.0
+    for scale in _HOOK_SCALES:
+        nh = max(8, int(round(th * scale)))
+        nw = max(8, int(round(tw * scale)))
+        if nh > ph or nw > pw:
+            # 模板比光标大：反过来把光标放大到模板再比一次
+            if scale >= 0.99:
+                sh = max(8, int(round(ph * (th / max(ph, 1)))))
+                sw = max(8, int(round(pw * (tw / max(pw, 1)))))
+                if sh <= th and sw <= tw:
+                    resized = cv2.resize(probe_bgr, (sw, sh), interpolation=cv2.INTER_AREA)
+                    canvas = np.zeros_like(tpl_bgr)
+                    canvas[:sh, :sw] = resized
+                    score = _ncc(tpl_bgr, canvas)
+                    if score > best:
+                        best = score
+            continue
+        resized = cv2.resize(tpl_bgr, (nw, nh), interpolation=cv2.INTER_AREA)
+        score = _ncc(probe_bgr, resized)
+        if score > best:
+            best = score
+    return float(best)
+
+
+def _ncc(hay_bgr: np.ndarray, needle_bgr: np.ndarray) -> float:
+    hh, hw = hay_bgr.shape[:2]
+    nh, nw = needle_bgr.shape[:2]
+    if nh > hh or nw > hw or nh < 8 or nw < 8:
+        return 0.0
+    result = cv2.matchTemplate(hay_bgr, needle_bgr, cv2.TM_CCOEFF_NORMED)
+    return float(result.max()) if result.size else 0.0

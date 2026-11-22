@@ -20,9 +20,10 @@ class FishingStateMachine:
         self,
         bus: AutofishBus,
         *,
-        lost_after: int = 15,
+        lost_after: int = 30,
         idle_after: int = 60,
     ) -> None:
+        # 默认 30：大于程序锁自动清除的 15 帧，清锁后的全图重找失败才算丢漂。
         self._bus = bus
         self._lost_after = lost_after
         self._idle_after = idle_after

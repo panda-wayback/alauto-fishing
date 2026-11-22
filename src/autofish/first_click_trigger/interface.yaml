@@ -51,7 +51,7 @@ input:
     desc: 新建采集器（只探测设备，不打开流）
   - name: AudioInput.start() / AudioInput.stop() / AudioInput.read()
     type: 无参
-    desc: 打开 / 关闭采集流；read 非阻塞取一块单声道音频
+    desc: 打开 / 关闭采集流；read 非阻塞取一块单声道音频。read 成功后 capture_t 为该块结束的单调钟时刻，capture_gap 表示这次读取之前队列丢过旧块
   - name: AudioInput.begin_record() / AudioInput.end_record() / AudioInput.record_snapshot()
     type: 无参
     desc: 起止长录音（原始多声道，不丢块）/ 取当前已录块副本
@@ -113,7 +113,7 @@ input:
 output:
   - name: 发布 Topic.CAST_SESSION
     type: "autofish.events.topics.CastSessionEvent(state: CastSessionState, ts, detail: str, splash: SplashHit | None)"
-    desc: 会话切态；进入 FIRST_CLICK 时 detail="splash" 且 splash=SplashHit(score, delay_s, hold_s, after_s, threshold)；其它切态 splash=None，detail 为短说明（a_on / a_off / clicked / bobber / bobber_timeout / lost_1s / stopped / error）
+    desc: 会话切态；进入 FIRST_CLICK 时 detail="splash" 且 splash=SplashHit(score, delay_s, hold_s, after_s, threshold)；其它切态 splash=None，detail 为短说明（a_on / a_off / clicked / bobber / bobber_timeout / lost_1s / stopped / error / no_hook / splash_expired）
   - name: 系统鼠标左键按下 / 松开
     type: 经 autofish.act.MouseActuator
     desc: FIRST_CLICK 内的第一下（按住 hold_s 后松开）
@@ -159,6 +159,9 @@ output:
   - name: AudioInput.read()
     type: "np.ndarray float32 (N,) | None"
     desc: 多声道取均值后的一块；无数据时 None
+  - name: AudioInput.capture_t / capture_gap / queue_limit
+    type: "float 单调钟秒 / bool / int"
+    desc: 最近一次 read 到的块的结束时刻；该次读取前是否丢过旧块；队列最多保留的块数（约 3 秒，至少 8）
   - name: AudioInput.samplerate / channels / blocksize / record_frames
     type: int
     desc: 采集参数与已录帧数
@@ -213,18 +216,22 @@ contract:
   - 只有 WAIT 且听声冷却已过才会因水声进入 FIRST_CLICK；FIRST_CLICK / WAIT_BOBBER / FISHING 中的水声一律忽略
   - 从本轮其它态回到 WAIT 后至少 3s 不听声（冷却），并清空匹配缓冲；从 DISABLED 进入 WAIT 无冷却
   - 每次进入可听声状态，抬升基线归零
-  - FIRST_CLICK 内依次：等待 delay_s → 按住 hold_s → 松开 → 停顿 after_s → 进入 WAIT_BOBBER；三值在 set_click_timing 区间内均匀随机，并随进入 FIRST_CLICK 的事件 SplashHit 带出
+  - 水声命中当下系统光标必须已是鱼钩才进入 FIRST_CLICK；否则清匹配缓冲、抬基线，记「非鱼钩 · 起钩未生效」，保持 WAIT
+  - FIRST_CLICK 内依次：再等一段时间 → 未超过采集后 2 秒且光标仍为鱼钩才按住 hold_s → 松开 → 停顿 after_s → 进入 WAIT_BOBBER。delay / hold / after 在 set_click_timing 区间内均匀随机，并随 SplashHit 带出
+  - 一次水声从采集到按下最多 2 秒：年龄 = 队列等待 + 模板结束到最新样本；再等 = min(delay, 2) − 年龄（不小于 0）。年龄已 ≥ 2 秒则不进 FIRST_CLICK；等到点仍超则回 WAIT（detail=splash_expired）。均清缓冲、抬基线，记「水声已过期」
+  - 到点时光标不是鱼钩（含读失败）：回 WAIT（detail=no_hook），清匹配缓冲、抬基线，记「到点非鱼钩」
   - set_click_timing 各值夹到 0～5s（长按下限 0.05s），区间上下限颠倒时自动互换；缺省等待 0.3～1.5s、长按 0.7～1.5s、松开后 0.2～0.8s
   - 只订阅 Topic.POS（start 时订、stop 时退）；不订阅 Topic.ACTION_INTENT；只发布 Topic.CAST_SESSION
   - bus 为 None 时会话机照常运行但不发事件
   - FIRST_CLICK 中关 A 立即松开本程序按下的鼠标；stop 可打断第一下的任一等待段，返回前松开鼠标、关闭音频流；stop 后 A 开为 WAIT、A 关为 DISABLED，detail=stopped
-  - 后台匹配慢于实时时把积压的块一次取完再匹配，不丢块
+  - 后台匹配慢于实时时把队列里的块一次取完再匹配；队列保留最近约 3 秒，更旧的丢弃。丢过块之后先清空匹配缓冲，再匹配缺口之后的连续音频
+  - 认钩经 autofish.auto_cast.cursor_arm.grab_system_cursor + see_fishing_hook；不经 mss 截屏
   - 音频流打开失败不抛出：后台线程记日志「音频启动失败 · <原因>」后退出（is_running() 变 False）
   - 无模板时不触发；实时缓冲保留最近 20s 供 recent_monitor_wave
   - "命中判定：缓冲短时峰值 RMS ≥ min_energy_db（否则 score=0、last_reject=太静、基线衰减）且 score ≥ threshold 且 score − 基线 ≥ min_score_rise；命中且 update_baseline 时基线抬到该分数，同一段声音不连发"
   - 模板最长 max(template_duration_s, 2.0) 秒（超出截前段）；设模板后 template_duration_s 等于模板实际时长，匹配缓冲与基线清零
   - backtest_recording 使用 matcher 的独立副本，不改变传入 matcher 的缓冲与基线；近邻命中（相差 < 0.5s）只留最高分
-  - AudioInput 未及时 read 时队列最多积压 8 块，超出丢最旧；长录音直接收原始块不丢
+  - AudioInput 未及时 read 时队列最多积压约 3 秒（至少 8 块），超出丢最旧，下一次 read 的 capture_gap 为真；长录音直接收原始块不丢
   - AudioInput.start 重复调用不重复开流；stop 可重复调用并清空未读块
   - 模板库写操作只落在 user_template_dir()（data_root()/audio_template）；内置 assets/audio 只读；选中记录在 user_template_dir()/active.json
   - save_wave_as_library_template 只写用户库（给出库外路径时按同名放入用户库），float32 保存并设为选中；改名后若原为选中则选中跟随
@@ -234,6 +241,7 @@ contract:
 depends:
   - src/autofish/events
   - src/autofish/act
+  - src/autofish/auto_cast/cursor_arm
   - src/common
 errors:
   - code: RuntimeError
@@ -254,7 +262,9 @@ tests:
   - preferred_capture_key 取虚拟采集，没有时为 None
   - 构造只探测设备采样率与声道，不打开流
   - start 只开一次流，read 返回多声道均值的单声道块，无数据为 None
-  - 未读块最多保留最新 8 块
+  - 未读块最多保留最近约 3 秒；超出后丢掉最旧，下一次 read 的 capture_gap 为真
+  - 起钩等待扣掉水声年龄；满 2 秒丢掉并记「水声已过期」
+  - 命中时非鱼钩不进 FIRST_CLICK；到点非鱼钩回 WAIT（no_hook）；mock 鱼钩时仍可完成第一下
   - 长录音保留原始多声道，end_record 后清零，未录到数据返回 None
   - stop 中止并关闭流、清空未读块，可重复调用
   - 多输出设备与无输入声道设备 start 抛 RuntimeError

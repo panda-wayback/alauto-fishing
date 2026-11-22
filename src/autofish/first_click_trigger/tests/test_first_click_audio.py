@@ -53,16 +53,24 @@ def test_start_opens_stream_once_and_read_returns_mono(fake_sd):
     a.stop()
 
 
-def test_unread_blocks_keep_newest_eight(fake_sd):
+def test_unread_blocks_keep_recent_window_and_mark_gap(fake_sd):
     a = AudioInput(device=0)
     a.start()
     s = fake_sd.streams[0]
-    for i in range(10):
+    assert a.queue_limit >= 8
+    n = a.queue_limit + 2
+    for i in range(n):
         s.push(np.full(4, float(i), dtype=np.float32))
     got = []
+    gaps = []
     while (b := a.read()) is not None:
         got.append(float(b[0]))
-    assert got == [2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+        gaps.append(a.capture_gap)
+    assert len(got) == a.queue_limit
+    assert got[0] == float(n - a.queue_limit)
+    assert got[-1] == float(n - 1)
+    assert gaps[0] is True
+    assert not any(gaps[1:])
     a.stop()
 
 

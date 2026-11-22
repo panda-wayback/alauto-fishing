@@ -2,7 +2,7 @@ name: auto_cast
 function: 自动抛杆控制：快捷键发起有限次数任务，按鼠标位置定目标力度，按时长蓄力后松开
 modules:
   - path: cursor_arm
-    function: 光标旁小窗低频认水面漂，对外暴露「可开抛」门闩
+    function: 读系统光标位图，认漂「可开抛」与认钩「可起钩」
 input:
   - name: autofish.auto_cast.AutoCastWorker(bus, *, wait_lo_s=3.0, wait_hi_s=3.0, full_charge_s=1.0, hold_jitter_s=0.1, start_settle_s=1.0)
     type: "bus: AutofishBus；wait_*: 再次鱼漂就绪后、下一杆 AIM 前的等待；full_charge_s；hold_jitter_s；start_settle_s: 开抛后首杆前短等（默认 1s，避开右键抢键）"

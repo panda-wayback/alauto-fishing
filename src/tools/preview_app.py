@@ -152,11 +152,18 @@ class RightClickBridge(QObject):
     pressed = Signal()
 
 
+_CURSOR_SHAPE_LABEL = {
+    "bobber": "鱼漂",
+    "hook": "鱼钩",
+    "other": "其它",
+}
+
+
 class ArmBridge(QObject):
-    """认漂观察者线程 → UI 线程。"""
+    """光标外形观察者线程 → UI 线程。"""
 
     armed_changed = Signal(bool)
-    frame = Signal(object, bool)  # rgb ndarray, armed
+    frame = Signal(object, bool, str)  # rgb ndarray, armed, shape
 
 
 def _hold_word(on: bool | None) -> str:
@@ -237,6 +244,7 @@ class PreviewApp(QMainWindow):
         self._arm_bridge.frame.connect(self._on_cursor_arm_frame)
         self._cursor_arm: CursorArmWatcher | None = None
         self._last_armed: bool | None = None
+        self._last_cursor_shape: str | None = None
 
         self._compact = False
         self._full_geo = None
@@ -523,7 +531,12 @@ class PreviewApp(QMainWindow):
             armed = bool(
                 self._cursor_arm is not None and self._cursor_arm.armed
             )
-            arm_txt = "就绪" if armed else "等待认漂"
+            shape = (
+                self._cursor_arm.shape
+                if self._cursor_arm is not None
+                else "other"
+            )
+            arm_txt = _CURSOR_SHAPE_LABEL.get(shape, "其它")
             self.lbl_cast.setText(arm_txt)
             paint_tone(self.lbl_cast, "ok" if armed else "warn")
             self._set_cast_remain(cfg_txt, active=False, cap="次数")
@@ -949,7 +962,12 @@ class PreviewApp(QMainWindow):
             cast_s, cast_c = f"{rem}/{total} · {phase}", ACCENT
         else:
             armed = bool(self._cursor_arm is not None and self._cursor_arm.armed)
-            ready = "就绪" if armed else "等待"
+            shape = (
+                self._cursor_arm.shape
+                if self._cursor_arm is not None
+                else "other"
+            )
+            ready = _CURSOR_SHAPE_LABEL.get(shape, "其它")
             cast_s = f"{cfg_txt} · {ready}"
             cast_c = SUCCESS if armed else WARN
 
@@ -1786,7 +1804,9 @@ class PreviewApp(QMainWindow):
                 on_armed_changed=lambda armed: self._arm_bridge.armed_changed.emit(
                     bool(armed)
                 ),
-                on_frame=lambda rgb, armed: self._arm_bridge.frame.emit(rgb, bool(armed)),
+                on_frame=lambda rgb, armed, shape: self._arm_bridge.frame.emit(
+                    rgb, bool(armed), str(shape)
+                ),
             )
         self._cursor_arm.start()
         self._cursor_arm.set_enabled(True)
@@ -1801,6 +1821,7 @@ class PreviewApp(QMainWindow):
         self._cursor_arm.set_enabled(False)
         self._cursor_arm.stop()
         self._last_armed = None
+        self._last_cursor_shape = None
         self._bind_cast_ready()
         self._set_arm_preview_visible(False)
 
@@ -1823,7 +1844,7 @@ class PreviewApp(QMainWindow):
             f"background:{BORDER}; border:2px solid {color}; border-radius:4px;"
         )
 
-    def _on_cursor_arm_frame(self, rgb: object, armed: bool) -> None:
+    def _on_cursor_arm_frame(self, rgb: object, armed: bool, shape: str = "other") -> None:
         if not self.chk_c.isChecked():
             return
         prev = getattr(self, "lbl_arm_preview", None)
@@ -1848,6 +1869,10 @@ class PreviewApp(QMainWindow):
         )
         prev.setPixmap(pix)
         self._paint_arm_border(bool(armed))
+        shape = str(shape or "other")
+        if getattr(self, "_last_cursor_shape", None) != shape:
+            self._last_cursor_shape = shape
+            self._refresh_cast_label()
 
     def _on_cursor_armed_changed(self, armed: bool) -> None:
         """只刷新门闩文案与边框，不写状态日志（避免刷屏）。"""

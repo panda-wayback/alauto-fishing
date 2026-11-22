@@ -67,7 +67,7 @@ input:
     type: "AutofishBus / FishingStateMachine / CaptureWorker / DetectorWorker / DecideWorker / ActWorker / AutoCastWorker"
     desc: 各段实例，按各子 Module 接口使用（如 bus.publish_press_interval、decide.current_thresholds、act.poll / act.pressed / act.yielding、auto_cast.phase）
   # ---- 鱼漂状态机 ----
-  - name: autofish.fishing_fsm.FishingStateMachine(bus, *, lost_after=15, idle_after=60)
+  - name: autofish.fishing_fsm.FishingStateMachine(bus, *, lost_after=30, idle_after=60)
     type: "bus: AutofishBus; lost_after, idle_after: int（连续无读数的 Pos 帧数）"
     desc: 构造即订阅 bus 的 Topic.ROI 与 Topic.POS，并经 bus.publish_fishing_state 发布 Topic.FISHING_STATE
   # ---- CLI ----
@@ -113,7 +113,7 @@ contract:
   - stop_decide 发布一次松开意图（若上次意图不是松开）；stop_act 若本程序按着左键则松开；stop_auto_cast 先 cancel_batch 再停线程并松开抛杆鼠标
   - Act 仅在鱼漂 FISHING（声音开钓关闭时）或会话 FISHING（声音开钓开启时）才按下系统左键；自动抛杆 CHARGING 时 Act 让鼠
   - 自动抛杆与 Act / 声音开钓互斥：蓄力期发布 Topic.CAST_PHASE=CHARGING，Act 与 FirstClickTrigger 据此让鼠；无任务或非蓄力时不影响 A / B
-  - FishingStateMachine：初始 IDLE；ROI 非空且 Pos.pos 非 None → FISHING；FISHING 下连续 lost_after 个 pos=None → LOST；连续 idle_after 个 pos=None（自开始丢读数起计）且处于 LOST → IDLE；LOST 下读数恢复 → FISHING；ROI 清空 → IDLE 并清零丢读计数；无 ROI 时收到 Pos → IDLE
+  - FishingStateMachine：初始 IDLE；ROI 非空且 Pos.pos 非 None → FISHING；FISHING 下连续 lost_after 个 pos=None → LOST；连续 idle_after 个 pos=None（自开始丢读数起计）且处于 LOST → IDLE；LOST 下读数恢复 → FISHING；ROI 清空 → IDLE 并清零丢读计数；无 ROI 时收到 Pos → IDLE；默认 lost_after 为 30，大于识别侧程序锁自动清除的约 15 帧，清锁并全图重找仍无读数才进入 LOST（此前仍保持上一手）
   - FishingStateMachine 只发布状态变化；相同 state 与 detail 不重复发布
   - autofish.preview 不加 --image 时按 ROI 存盘截一帧屏幕；不提供界面入口（--ui 已移除）
 depends:
@@ -138,6 +138,7 @@ tests:
   - set_roi_manual / clear_roi 发布的 ROI 事件版本连续递增、source 与 score 正确
   - set_decide_ranges 生效于 decide.current_thresholds，非法范围抛 ValueError
   - FishingStateMachine：IDLE → FISHING → LOST → FISHING → LOST → IDLE 的读数驱动转移与 detail
+  - FishingStateMachine 默认 lost_after 大于程序锁自动清除帧数；满清除帧数仍为 FISHING，满 lost_after 才 LOST
   - FishingStateMachine：ROI 清空回 IDLE（roi_cleared），无 ROI 时收到 Pos 为 IDLE（no_roi），相同状态不重复发布
   - preview --image 有漂图退出 0、打印 pos 并写出同尺寸调试图
   - preview --image 无漂图退出 2 并仍写出调试图

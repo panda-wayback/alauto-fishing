@@ -184,6 +184,19 @@ def fake_mouse(monkeypatch):
 
 
 @pytest.fixture
+def fake_hook(monkeypatch):
+    """起钩门闩：默认认作鱼钩，避免 CI 上真实光标是箭头。"""
+    import autofish.first_click_trigger.trigger as trigger_mod
+
+    hook = np.zeros((32, 32, 4), dtype=np.uint8)
+    hook[..., :3] = 180
+    hook[..., 3] = 255
+    monkeypatch.setattr(trigger_mod, "grab_system_cursor", lambda: hook)
+    monkeypatch.setattr(trigger_mod, "see_fishing_hook", lambda _rgb: True)
+    return hook
+
+
+@pytest.fixture
 def lib_dirs(tmp_path, monkeypatch):
     """把模板库 / 会话 / 内置 / 包内种子目录全部重定向到 tmp_path。"""
     from autofish.first_click_trigger import paths

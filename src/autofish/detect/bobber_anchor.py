@@ -152,8 +152,6 @@ class BobberAnchorDetector:
         self._manual_bar: tuple[float, float, float, float] | None = None
         self._program_bar: tuple[float, float, float, float] | None = None
         self._follow_scale: float | None = None
-        self._follow_xy: tuple[float, float] | None = None
-        self._recover_tick: int = 0
         # 程序锁与当前画面不一致时连续无 pos → 自动清锁并回到全图定界
         self._bar_pos_miss_streak: int = 0
         # 预热端帽常见尺度，减轻首次定界尖峰
@@ -166,18 +164,15 @@ class BobberAnchorDetector:
         self._locked_bar = None
         self._program_bar = None
         self._follow_scale = None
-        self._follow_xy = None
-        self._recover_tick = 0
         self._bar_pos_miss_streak = 0
         self._finder.clear_locked_scale()
 
     def seed_program_bar(
         self, box: tuple[float, float, float, float] | None
     ) -> None:
-        """注入程序条界，不带跟漂点（由后续直播帧重建）。
+        """注入程序条界，并按条高重估漂尺度（不沿用上一档）。
 
-        用于载入/刷新参考图后恢复条内搜索，避免全图色种定界失败时永远锁不上；
-        也避免把参考图上的跟点写进直播导致条内跟丢。
+        用于载入/刷新参考图后恢复条内搜索，避免全图定界失败时永远锁不上。
         """
         if box is None:
             self.clear_bar_lock()
@@ -188,9 +183,7 @@ class BobberAnchorDetector:
         bar = (left, top, bw, bh)
         self._locked_bar = bar
         self._program_bar = bar
-        self._follow_xy = None
         self._follow_scale = self._scale_hint_from_bar(bar)
-        self._recover_tick = 0
         self._bar_pos_miss_streak = 0
         self._finder.clear_locked_scale()
 
@@ -201,8 +194,6 @@ class BobberAnchorDetector:
         self._manual_bar = box
         if box is None:
             self._follow_scale = None
-            self._follow_xy = None
-            self._recover_tick = 0
             self._finder.clear_locked_scale()
 
     @property
@@ -222,8 +213,6 @@ class BobberAnchorDetector:
         if tw > 0 and loc.width > 0:
             self._follow_scale = float(loc.width) / tw
             self._finder.lock_scale(self._follow_scale)
-        self._follow_xy = (float(loc.x), float(loc.y))
-        self._recover_tick = 0
 
     def _scale_hint_from_bar(
         self, bar: tuple[float, float, float, float]
@@ -241,88 +230,6 @@ class BobberAnchorDetector:
         left, top, bw, bh = bar
         y_pad = max(20.0, bh * 1.0)
         return (left - 4.0, top - y_pad, bw + 8.0, bh + y_pad)
-
-    def _follow_y_span(
-        self,
-        bar: tuple[float, float, float, float],
-        *,
-        up: float,
-    ) -> tuple[float, float]:
-        """跟漂竖直范围：底=条底，顶不超过漂心−up，且至少高出条顶一截。"""
-        _left, top, _bw, bh = bar
-        bar_bottom = top + bh
-        assert self._follow_xy is not None
-        _cx, cy = self._follow_xy
-        y0 = min(cy - up, top - max(16.0, bh * 0.4))
-        min_h = max(20.0, bh + max(20.0, bh * 0.5))
-        if bar_bottom - y0 < min_h:
-            y0 = bar_bottom - min_h
-        return y0, bar_bottom
-
-    def _intersect_box(
-        self,
-        box: tuple[float, float, float, float],
-        limit: tuple[float, float, float, float],
-    ) -> tuple[float, float, float, float] | None:
-        """box 与 limit 求交；过小则 None。保证 mid 不超出 full-nbr。"""
-        ax, ay, aw, ah = box
-        bx, by, bw, bh = limit
-        x0 = max(ax, bx)
-        y0 = max(ay, by)
-        x1 = min(ax + aw, bx + bw)
-        y1 = min(ay + ah, by + bh)
-        if x1 - x0 < 28 or y1 - y0 < 20:
-            return None
-        return (x0, y0, x1 - x0, y1 - y0)
-
-    def _follow_x_span(
-        self,
-        bar: tuple[float, float, float, float],
-        *,
-        target_w: float,
-        x_limit: tuple[float, float],
-    ) -> tuple[float, float] | None:
-        """水平跟窗：目标宽度；限制在 [x_lo,x_hi] 内，靠边向内平移保宽。"""
-        if self._follow_xy is None:
-            return None
-        cx, _cy = self._follow_xy
-        x_lo, x_hi = x_limit
-        span = max(28.0, x_hi - x_lo)
-        tw = float(np.clip(target_w, 28.0, span))
-        x0 = cx - tw * 0.5
-        x1 = cx + tw * 0.5
-        if x0 < x_lo:
-            x0 = x_lo
-            x1 = x_lo + tw
-        if x1 > x_hi:
-            x1 = x_hi
-            x0 = x1 - tw
-        x0 = max(x_lo, x0)
-        x1 = min(x_hi, x1)
-        if x1 - x0 < 28:
-            return None
-        return x0, x1
-
-    def _mid_follow_box(
-        self, bar: tuple[float, float, float, float]
-    ) -> tuple[float, float, float, float]:
-        """中等跟窗：水平≈条长 1/2；底贴条底、只向上扩；长宽夹在 full-nbr 内。"""
-        full = self._bar_neighborhood(bar)
-        if self._follow_xy is None:
-            return full
-        _left, _top, bw, bh = bar
-        fx, fy, fw, fh = full
-        xs = self._follow_x_span(
-            bar, target_w=bw / 2.0, x_limit=(fx, fx + fw)
-        )
-        if xs is None:
-            return full
-        x0, x1 = xs
-        up = max(48.0, bh * 1.8)
-        y0, y1 = self._follow_y_span(bar, up=up)
-        mid = (x0, y0, x1 - x0, y1 - y0)
-        clipped = self._intersect_box(mid, full)
-        return clipped if clipped is not None else full
 
     def _hit_from_bar(
         self,
@@ -484,18 +391,8 @@ class BobberAnchorDetector:
         inv = 1.0 / sf
         active_o = self._active_bar()
         active = scale_box(active_o, sf) if active_o is not None else None
-        follow_o = self._follow_xy
-        if follow_o is not None:
-            self._follow_xy = (follow_o[0] * sf, follow_o[1] * sf)
         locked_before = self._locked_bar
-        try:
-            hit = self._detect_work(work, active, t0=t0)
-        finally:
-            if self._follow_xy is not None:
-                self._follow_xy = (
-                    self._follow_xy[0] * inv,
-                    self._follow_xy[1] * inv,
-                )
+        hit = self._detect_work(work, active, t0=t0)
         # 本帧新锁的条界在工作图坐标 → 映回原图存盘
         if (
             self._locked_bar is not None
@@ -531,30 +428,17 @@ class BobberAnchorDetector:
         *,
         t0: float,
     ) -> BobberHit | None:
-        """在已压入 1000×1000 的工作图上识别；条界/跟点均为工作图坐标。"""
+        """在已压入限幅的工作图上识别；条界为工作图坐标。"""
         if active is not None:
             hint = self._follow_scale
             if hint is None:
                 hint = self._scale_hint_from_bar(active)
-            if self._follow_xy is None:
-                # 无跟点：在条邻域内每帧找漂（隔帧会闪 pos，拉线不稳）
-                self._recover_tick += 1
-                loc = self._finder.find(
-                    rgb,
-                    search_box=self._bar_neighborhood(active),
-                    scale_hint=hint,
-                )
-            else:
-                # 只扫 mid；禁止同帧再扫 full-nbr（重钓尖峰）
-                loc = self._finder.find(
-                    rgb,
-                    search_box=self._mid_follow_box(active),
-                    scale_hint=hint,
-                )
-                if loc is None:
-                    self._follow_xy = None
-                    self._recover_tick = 0
-                    return None
+            # 锁定后每帧只扫整条邻域，不缩半条、不空一帧
+            loc = self._finder.find(
+                rgb,
+                search_box=self._bar_neighborhood(active),
+                scale_hint=hint,
+            )
             if loc is None:
                 return None
             hit = self._hit_from_bar(

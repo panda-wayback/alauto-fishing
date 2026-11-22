@@ -78,7 +78,7 @@ class Rig:
 
 
 @pytest.fixture
-def rig(kit, fake_sd, fake_mouse, tmp_path):
+def rig(kit, fake_sd, fake_mouse, fake_hook, tmp_path):
     r = Rig(kit, fake_sd, fake_mouse, tmp_path)
     yield r
     r.close()
@@ -92,6 +92,68 @@ def test_construct_does_not_open_audio_and_starts_disabled(rig):
     np.testing.assert_allclose(t.template_wave, rig.kit.splash())
     assert t.trigger_count == 0 and not t.is_running()
     assert rig.events == []
+
+
+def test_remaining_click_wait_shrinks_and_skips_when_late():
+    from autofish.first_click_trigger.trigger import remaining_click_wait
+
+    assert remaining_click_wait(0.8, 0.0, 0.3) == pytest.approx(0.5)
+    assert remaining_click_wait(0.4, 0.0, 0.9) == pytest.approx(0.0)
+    assert remaining_click_wait(0.8, 2.0, 0.2) is None
+    assert remaining_click_wait(0.0, 0.0, 1.3) == pytest.approx(0.0)
+    assert remaining_click_wait(1.5, 0.0, 1.8) == pytest.approx(0.0)
+    assert remaining_click_wait(0.8, 0.0, 2.0) is None
+
+
+def test_stale_splash_does_not_click(rig, monkeypatch):
+    import autofish.first_click_trigger.audio_input as audio_input
+
+    real = time.monotonic
+    monkeypatch.setattr(audio_input, "_capture_clock", lambda: real() - 5.0)
+    t = rig.make()
+    t.set_session_enabled(True)
+    stream = rig.start(t)
+    rig.feed(t, stream, rig.kit.clip())
+    assert rig.kit.wait_for(lambda: any("水声已过期" in m for m in t.drain_logs("sound")))
+    assert t.session_state == S.WAIT
+    assert S.FIRST_CLICK not in rig.states()
+    assert rig.mouse.presses == 0
+
+
+def test_no_hook_at_hit_never_enters_first_click(rig, monkeypatch):
+    import autofish.first_click_trigger.trigger as trigger_mod
+
+    monkeypatch.setattr(trigger_mod, "see_fishing_hook", lambda _rgb: False)
+    t = rig.make()
+    t.set_session_enabled(True)
+    stream = rig.start(t)
+    rig.feed(t, stream, rig.kit.clip())
+    time.sleep(0.2)
+    assert t.session_state == S.WAIT
+    assert S.FIRST_CLICK not in rig.states()
+    assert rig.mouse.presses == 0
+    assert any("非鱼钩" in m for m in t.drain_logs("sound"))
+
+
+def test_no_hook_at_press_discards_and_waits_again(rig, monkeypatch):
+    import autofish.first_click_trigger.trigger as trigger_mod
+
+    calls = {"n": 0}
+
+    def hook_once(_rgb):
+        calls["n"] += 1
+        return calls["n"] == 1
+
+    monkeypatch.setattr(trigger_mod, "see_fishing_hook", hook_once)
+    t = rig.make()
+    t.set_click_timing(0.15, 0.15, 0.05, 0.05, 0.0, 0.0)
+    t.set_session_enabled(True)
+    stream = rig.start(t)
+    rig.feed(t, stream, rig.kit.clip())
+    back = rig.wait_state(S.WAIT, after=1)
+    assert back.detail == "no_hook"
+    assert rig.mouse.presses == 0
+    assert any("到点非鱼钩" in m for m in t.drain_logs("sound"))
 
 
 def test_full_cycle_wait_click_bobber_fishing_lost_and_cooldown(rig):
@@ -131,7 +193,8 @@ def test_full_cycle_wait_click_bobber_fishing_lost_and_cooldown(rig):
     assert back.detail == "lost_1s" and back.ts - lost_at >= 0.95
 
     n = len(rig.events)
-    rig.feed(t, stream, kit.clip())
+    # 冷却中只喂底噪，避免旧水声留在匹配缓冲里拖成过期命中
+    rig.feed(t, stream, kit.noise(0.3))
     time.sleep(0.1)
     assert t.session_state == S.WAIT and len(rig.events) == n
 

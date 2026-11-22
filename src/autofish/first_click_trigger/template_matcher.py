@@ -65,6 +65,8 @@ class TemplateMatcher:
         self.last_ambient: float = 0.0
         self.last_rise: float = 0.0
         self.last_window: str = ""
+        # 最近一次匹配：模板结束点到缓冲末尾的秒数（0=水声贴在最新样本上）
+        self.last_match_tail_s: float = 0.0
 
     @staticmethod
     def _fft_params(samplerate: int) -> tuple[int, int]:
@@ -120,6 +122,7 @@ class TemplateMatcher:
         self.last_prominence = 0.0
         self.last_rise = 0.0
         self.last_window = ""
+        self.last_match_tail_s = 0.0
 
     def reset_buffer(self) -> None:
         self._buffer.fill(0.0)
@@ -128,6 +131,7 @@ class TemplateMatcher:
         self.last_prominence = 0.0
         self.last_rise = 0.0
         self.last_window = ""
+        self.last_match_tail_s = 0.0
 
     def reset_score_baseline(self) -> None:
         """入听声态时清抬升基线（保留音频缓冲），与回测从零基线一致。"""
@@ -200,6 +204,9 @@ class TemplateMatcher:
         report = self.analyze_buffer(
             self._buffer, update_baseline=update_baseline
         )
+        end = int(report["match_start"]) + self._template_len
+        tail = max(0, len(self._buffer) - end)
+        self.last_match_tail_s = tail / float(self.samplerate)
         self.last_prominence = float(report["prominence"])
         self.last_rise = float(report["rise"])
         self.last_ambient = float(report["ambient"])

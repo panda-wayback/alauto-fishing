@@ -9,10 +9,13 @@ import pytest
 
 from autofish.auto_cast.cursor_arm import (
     CursorArmWatcher,
+    classify_cursor_shape,
     grab_around_cursor,
     grab_system_cursor,
+    see_fishing_hook,
     see_surface_bobber,
 )
+from common.paths import assets_dir
 
 
 def _blob(h: int, w: int, cy: int, cx: int, r: int) -> np.ndarray:
@@ -95,6 +98,23 @@ def test_see_surface_bobber_empty_false():
     assert see_surface_bobber(np.zeros((2, 2, 4), dtype=np.uint8)) is False
 
 
+def test_see_fishing_hook_template_true_bobber_and_blue_false():
+    from PIL import Image
+
+    path = assets_dir() / "cursor_arm" / "fishing_hook.png"
+    assert path.is_file()
+    hook = np.asarray(Image.open(path).convert("RGBA"), dtype=np.uint8)
+    assert see_fishing_hook(hook) is True
+    assert classify_cursor_shape(hook) == "hook"
+    assert classify_cursor_shape(_bobber_rgba()) == "bobber"
+    assert see_fishing_hook(_bobber_rgba()) is False
+    blue = np.zeros((80, 80, 4), dtype=np.uint8)
+    blue[..., 0:3] = (40, 90, 160)
+    blue[..., 3] = 255
+    assert see_fishing_hook(blue) is False
+    assert classify_cursor_shape(blue) == "other"
+
+
 def test_grab_system_cursor_mocked(monkeypatch):
     from autofish.auto_cast.cursor_arm import grab as grab_mod
 
@@ -120,27 +140,27 @@ def test_watcher_armed_follows_detect(monkeypatch):
     from autofish.auto_cast.cursor_arm import watcher as wmod
 
     flips: list[bool] = []
-    frames: list[tuple[np.ndarray, bool]] = []
+    frames: list[tuple[np.ndarray, bool, str]] = []
     frame = _bobber_rgba()
     monkeypatch.setattr(wmod, "grab_system_cursor", lambda: frame)
     w = CursorArmWatcher(
         interval_s=0.05,
         on_armed_changed=flips.append,
-        on_frame=lambda rgb, armed: frames.append((rgb, armed)),
+        on_frame=lambda rgb, armed, shape: frames.append((rgb, armed, shape)),
     )
     w.start()
     try:
-        assert w.armed is False
+        assert w.armed is False and w.shape == "other"
         w.set_enabled(True)
         deadline = time.monotonic() + 2.0
         while time.monotonic() < deadline and not w.armed:
             time.sleep(0.05)
-        assert w.armed is True
+        assert w.armed is True and w.shape == "bobber"
         assert True in flips
-        assert frames and frames[-1][1] is True
+        assert frames and frames[-1][1] is True and frames[-1][2] == "bobber"
         assert w.last_frame is not None
         w.set_enabled(False)
-        assert w.armed is False
+        assert w.armed is False and w.shape == "other"
         assert w.last_frame is None
         assert flips[-1] is False
     finally:
